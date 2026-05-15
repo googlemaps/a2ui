@@ -62,6 +62,8 @@ For more information about the environment variables, see the **Google API Key C
 
 This package provides the core Python agent implementations for the Agentic UI Toolkit (MAUI). It includes the base `MAUIAgent` and the extended `MAUIAgentWithGrounding` that uses Vertex Grounding.
 
+This section refers to the file structure within [agent/python-agent](agent/python-agent).
+
 ### File Structure
 
 *   `agent.py`: Contains the `MAUIAgent` class, which handles session management, LLM interaction, and A2UI schema loading.
@@ -72,7 +74,7 @@ This package provides the core Python agent implementations for the Agentic UI T
 
 ### How to Integrate
 
-To integrate these agents into an existing application (like a server), you can refer to the sample in `a2ui-samples/agent/python`.
+To integrate these agents into an existing application (like a server), you can refer to the sample in [a2ui-samples/agent/python](https://github.com/googlemaps-samples/a2ui/tree/main/agent/python).
 
 #### 1. Add Dependency
 In your application's `pyproject.toml`, add `maui-a2ui-python` to your dependencies:
@@ -111,6 +113,8 @@ async for item in agent.stream(query, session_id, ui_version):
 ## MAUI Web Client Library (`@googlemaps/a2ui`)
 
 This package provides the Web (Lit-based) client library for the Agentic UI Toolkit (MAUI). It includes components and utilities to render A2UI surfaces and communicate with an A2A agent server.
+
+This section refers to the file structure within [client/web](client/web).
 
 ### How to Build
 
