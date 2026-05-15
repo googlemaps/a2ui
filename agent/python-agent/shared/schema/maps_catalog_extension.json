@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "catalogId": "a2ui://maps-agentic-ui-catalog.json",
+  "title": "Google Maps Agentic UI Catalog Extensions",
+  "components": {
+    "GoogleMap": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "common_types.json#/$defs/ComponentCommon"
+        },
+        {
+          "$ref": "#/$defs/CatalogComponentCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "component",
+            "center",
+            "zoom"
+          ],
+          "properties": {
+            "component": {
+              "const": "GoogleMap"
+            },
+            "center": {
+              "$ref": "#/$defs/DynamicLatLng",
+              "description": "The center point of the map in lat, lng."
+            },
+            "zoom": {
+              "$ref": "common_types.json#/$defs/DynamicNumber",
+              "description": "The zoom level."
+            },
+            "tilt": {
+              "$ref": "common_types.json#/$defs/DynamicNumber",
+              "description": "The tilt angle."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "roadmap",
+                "satellite"
+              ],
+              "description": "The map mode."
+            },
+            "anchorMarker": {
+              "$ref": "#/$defs/DynamicLatLng",
+              "description": "The anchor marker location."
+            },
+            "markers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MapPin"
+              },
+              "description": "List of markers."
+            },
+            "routes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "origin": {
+                    "$ref": "#/$defs/MapPin"
+                  },
+                  "destination": {
+                    "$ref": "#/$defs/MapPin"
+                  }
+                },
+                "required": [
+                  "origin",
+                  "destination"
+                ]
+              }
+            },
+            "travelMode": {
+              "type": "string",
+              "enum": [
+                "driving",
+                "walking",
+                "bicycling",
+                "transit"
+              ],
+              "description": "Travel mode for routes."
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "PlaceCard": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "common_types.json#/$defs/ComponentCommon"
+        },
+        {
+          "$ref": "#/$defs/CatalogComponentCommon"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "component": {
+              "const": "PlaceCard"
+            },
+            "placeId": {
+              "$ref": "common_types.json#/$defs/DynamicString",
+              "description": "The unique identifier for the place."
+            }
+          },
+          "required": [
+            "component",
+            "placeId"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  },
+  "$defs": {
+    "DynamicLatLng": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "lat": {
+              "type": "number"
+            },
+            "lng": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "lat",
+            "lng"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "$ref": "common_types.json#/$defs/DataBinding"
+        }
+      ]
+    },
+    "MapPin": {
+      "type": "object",
+      "properties": {
+        "lat": {
+          "type": "number"
+        },
+        "lng": {
+          "type": "number"
+        },
+        "label": {
+          "type": "string"
+        },
+        "placeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lat",
+        "lng",
+        "label"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
