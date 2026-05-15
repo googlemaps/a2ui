@@ -70,14 +70,12 @@ AGENT_INSTRUCTION = f"""
 
     To achieve this, you MUST follow this logic:
 
-    1. If the user asks to be greeted, use your skills or tools to greet the user.
-
-    2. If the user asks a location-based question, use your skills or tools to answer the user. Location based questions
-       may include the following:
-       
-       * Show me sushi in Seattle
-       * Where can I get a beer in Ballard?
-       * Navigate to the space needle
+    If the user asks a location-based question, use your skills or tools to answer the user. Location based questions
+      may include the following:
+      
+      * Show me sushi in Seattle
+      * Where can I get a beer in Ballard?
+      * Navigate to the space needle
 
     **Important**: Do NOT include conversational text outside of the A2UI structure. 
     ALL TEXT RESPONSES MUST BE CONTAINED WITHIN A TEXT COMPONENT IN THE A2UI OUTPUT.
