@@ -16,6 +16,48 @@ It makes use of the following technologies:
 
 To quickly get started, we recommend using the sample project in [a2ui-samples](https://github.com/googlemapssamples/a2ui-samples). This sample project contains the necessary components to run the Python Agent and a React web client that allows you to interact with the agent.
 
+### Prerequisites and Tool Setup
+
+If you are new to any of these tools or services, here is exactly what you need and how to set them up:
+
+#### 1. Google API Keys
+You need two API keys configured as environment variables for the agent to function and render maps correctly:
+
+*   **`GEMINI_API_KEY`**: Your Google Gemini API key. You can get one for free at [Google AI Studio](https://aistudio.google.com/).
+*   **`GOOGLE_MAPS_API_KEY`**: Your Google Maps Platform API key. You can create one and enable the Maps JavaScript API in the [Google Cloud Console](https://mapsplatform.google.com/).
+
+These variables must be configured for _both_ your backend (Python agent) and frontend (Web frontend).
+
+For more information about the environment variables, see the **Google API Key Configuration** below.
+
+**How to set your environment variables:**
+
+* **macOS / Linux (Terminal):**
+  ```bash
+  export GEMINI_API_KEY="your_gemini_api_key_here"
+  export GOOGLE_MAPS_API_KEY="your_google_maps_api_key_here"
+  ```
+* **Windows (PowerShell):**
+  ```powershell
+  $env:GEMINI_API_KEY="your_gemini_api_key_here"
+  $env:GOOGLE_MAPS_API_KEY="your_google_maps_api_key_here"
+  ```
+* **Windows (Command Prompt):**
+  ```cmd
+  set GEMINI_API_KEY=your_gemini_api_key_here
+  set GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
+  ```
+
+#### 2. `uv` (Python Package Manager)
+`uv` is an extremely fast Python package and environment manager. It automatically handles creating virtual environments and installing dependencies so you don't have to do it manually.
+*   **Installation:** If you do not have `uv` installed, you can install it easily following the official guide at [https://docs.astral.sh/uv/](https://docs.astral.sh/uv/) (for example, on macOS/Linux run `curl -LsSf https://astral.sh/uv/install.sh | sh`).
+
+#### 3. `Node.js` and `npm` (JavaScript Runtime & Package Manager)
+`npm` is the standard package manager for JavaScript and TypeScript web applications, used to download frontend libraries and run development servers.
+*   **Installation:** Download and install Node.js (which includes `npm`) from [https://nodejs.org/](https://nodejs.org/).
+
+---
+
 ## MAUI Python Agent Package (`maui-a2ui-python`)
 
 This package provides the core Python agent implementations for the Agentic UI Toolkit (MAUI). It includes the base `MAUIAgent` and the extended `MAUIAgentWithGrounding` that uses Vertex Grounding.
@@ -143,6 +185,49 @@ return (
   </maui-providers>
 );
 ```
+
+## Google API Keys
+
+### Google Maps API Key
+
+Agentic UI Toolkit requires an API Key to use Google Maps Platform products. To create a Google Maps API Key, follow the instructions in the [Google Maps Platform documentation](https://developers.google.com/maps/documentation/javascript/get-api-key).
+
+Your API Key must have the following APIs enabled in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials):
+
+* Geocoding API  
+* Maps JavaScript API  
+* Places UI Kit  
+* Routes API
+
+To use Grounding Lite MCP, you must also enable:
+
+* Maps Grounding Lite API
+
+To support the use of Grounding Lite within the Python ADK backend, this API Key must be exported or contained within a `.env` file as `GOOGLE_MAPS_API_KEY`.
+
+**Loading the Google Maps JavaScript API**
+
+Your API Key must also be included when loading the Google Maps JavaScript API code. See the [Google Maps Platform Documentation](https://developers.google.com/maps/documentation/javascript/load-maps-js-api) for instructions on how to load the API, including configuring the API Key.
+
+Agentic UI Toolkit requires features available in the Alpha channel. You must use `v=alpha` when loading the Maps JavaScript API. Learn more about versions in the [Google Maps Platform Documentation](https://developers.google.com/maps/documentation/javascript/versions).
+
+Use of Agentic UI Toolkit requires several [Maps JavaScript API libraries](https://developers.google.com/maps/documentation/javascript/libraries). When loading the Google Maps JavaScript API, you must include the following libraries:
+
+* maps  
+* maps3d  
+* marker  
+* places  
+* routes
+
+### Gemini API Key
+
+*Note: This API is variously referred to in Google Cloud as the* Gemini API *and the* Generative Language API.
+
+If you are using Gemini as your LLM, you will also need a Google Cloud API Key with the *Generative Language API* enabled. In order to enable this API for your API Key, the *Gemini API* must be enabled for your Google Cloud project. You can enable this API in the [API Library](https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com).
+
+To create a new Google Cloud API Key, follow the instructions here in the [Google Cloud docs](https://docs.cloud.google.com/docs/authentication/api-keys#create).
+
+This key must be exported or contained within a `.env` file as `GEMINI_API_KEY`
 
 ## Contributing
 
