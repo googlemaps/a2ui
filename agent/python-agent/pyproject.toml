@@ -1,12 +1,19 @@
 [project]
 name = "maui-a2ui-python"
 version = "0.1.0"
+requires-python = ">=3.12"
 dependencies = [
     "google-genai>=1.64.0",
     "a2a-sdk>=0.3.0",
     "google-adk>=1.28.0",
     "a2ui-agent-sdk>=0.2.1",
     "jsonschema>=4.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.391",
+    "ruff>=0.9.1",
 ]
 
 [build-system]

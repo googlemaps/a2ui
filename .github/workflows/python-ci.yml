@@ -1,0 +1,36 @@
+name: Python CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "agent/python-agent/uv.lock"
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+        working-directory: agent/python-agent
+
+      - name: Type check with pyright
+        run: uv run --frozen pyright
+        working-directory: agent/python-agent
+        continue-on-error: true
+
+      - name: Lint with ruff
+        run: uv run --frozen ruff check .
+        working-directory: agent/python-agent
+        continue-on-error: true
