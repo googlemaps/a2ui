@@ -1,5 +1,10 @@
 # Google Maps Agentic UI Toolkit
 
+![Alpha](https://img.shields.io/badge/release-alpha-orange)
+[![Python CI](https://github.com/googlemaps/a2ui/actions/workflows/python-ci.yml/badge.svg)](https://github.com/googlemaps/a2ui/actions/workflows/python-ci.yml)
+[![Web CI](https://github.com/googlemaps/a2ui/actions/workflows/web-ci.yml/badge.svg)](https://github.com/googlemaps/a2ui/actions/workflows/web-ci.yml)
+[![GitHub License](https://img.shields.io/github/license/googlemaps/a2ui?color=blue)](LICENSE)
+
 > **Note:** This toolkit is in **Experimental** status.
 
 This repository contains the A2UI reference implementation for the Google Maps Agentic UI Toolkit. It includes tools for implementing the Agent-to-User Interface (A2UI) standard, allowing agents to present rich, interactive interfaces across different platforms.
