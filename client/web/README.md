@@ -1,27 +1,15 @@
-# Maps Agentic UI Toolkit Web Client Library (`@googlemaps/a2ui`)
+# Maps Agentic UI Toolkit Web Client Library
 
 This package provides the Web (Lit-based) client library for the Maps Agentic UI Toolkit (MAUI). It includes components and utilities to render A2UI surfaces and communicate with an A2A agent server.
-
-## How to Build
-
-To build the package for use in an application:
-
-1.  Open this directory in a terminal.
-2.  Install dependencies and link:
-    ```bash
-    npm run build-and-link
-    ```
 
 ## How to Integrate
 
 To integrate these components into an existing application, you can refer to the [Agentic UI Toolkit samples project](https://github.com/googlemaps-samples/a2ui).
 
+### 1. Install
 
-### 1. Link or Install the Package
-You can consume the package via npm linking for local development:
 ```bash
-# In your application directory
-npm link @googlemaps/a2ui
+npm i @googlemaps/a2ui
 ```
 
 ### 2. Import and Use
@@ -75,4 +63,26 @@ return (
     }}
   </maui-providers>
 );
+```
+
+## Local Development
+
+To make changes to this package and test them in an application:
+
+### 1. Build and Prepare the Package
+
+To build the package for use in an application:
+
+1.  Open this directory in a terminal.
+2.  Install dependencies and link:
+    ```bash
+    npm run build-and-link
+    ```
+
+
+### 2. Link the Package
+You can consume the package via npm linking for local development:
+```bash
+# In your application directory
+npm link @googlemaps/a2ui
 ```
