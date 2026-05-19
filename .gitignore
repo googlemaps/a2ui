@@ -3,4 +3,5 @@ node_modules
 .wireit
 dist
 .venv
-
+.jetskicli
+.geminicli
