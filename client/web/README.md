@@ -2,6 +2,8 @@
 
 This package provides the Web (Lit-based) client library for the Maps Agentic UI Toolkit (MAUI). It includes components and utilities to render A2UI surfaces and communicate with an A2A agent server.
 
+Note: This library only works when paired with an Agent that can generate A2UI. See [Agentic UI Toolkit samples](https://github.com/googlemaps-samples/a2ui) for a reference implementation of an A2A Agent.
+
 ## How to Integrate
 
 To integrate these components into an existing application, you can refer to the [Agentic UI Toolkit samples project](https://github.com/googlemaps-samples/a2ui).
