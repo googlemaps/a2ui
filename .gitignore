@@ -1,7 +1,8 @@
-node_modules
 .DS_STORE
 .wireit
-dist
 .venv
 .jetskicli
 .geminicli
+__pycache__
+dist
+node_modules
