@@ -192,7 +192,7 @@ npm i @googlemaps/a2ui
 In your application code (e.g., a React component):
 
 ```tsx
-import { A2UIClient, A2UIRenderer, themeStyleSheet } from '@googlemaps/a2ui';
+import { A2UIClient, A2UIRenderer, themeStyleSheet } from '@googlemaps/a2ui/lit';
 
 // 1. Adopt the theme stylesheet globally
 document.adoptedStyleSheets = [...document.adoptedStyleSheets, themeStyleSheet];
