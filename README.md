@@ -7,7 +7,7 @@
 
 > **Note:** This toolkit is in **Experimental** status.
 
-This repository contains the A2UI implementation for the Google Maps Agentic UI Toolkit. It includes components and handlers implementing the Agent-to-User Interface (A2UI) standard, allowing agents to present rich, interactive interfaces across different platforms.
+This repository contains the A2UI implementation for the Maps Agentic UI Toolkit. It includes components and handlers implementing the Agent-to-User Interface (A2UI) standard, allowing agents to present rich, interactive interfaces across different platforms.
 
 It makes use of the following technologies:
 
