@@ -14,7 +14,8 @@ To build the package for use in an application:
 
 ## How to Integrate
 
-To integrate these components into an existing application, you can refer to the sample in `a2ui-samples/client/web/react`.
+To integrate these components into an existing application, you can refer to the [Agentic UI Toolkit samples project](https://github.com/googlemaps-samples/a2ui).
+
 
 ### 1. Link or Install the Package
 You can consume the package via npm linking for local development:

@@ -7,7 +7,7 @@
 
 > **Note:** This toolkit is in **Experimental** status.
 
-This repository contains the A2UI reference implementation for the Google Maps Agentic UI Toolkit. It includes tools for implementing the Agent-to-User Interface (A2UI) standard, allowing agents to present rich, interactive interfaces across different platforms.
+This repository contains the A2UI implementation for the Google Maps Agentic UI Toolkit. It includes components and handlers implementing the Agent-to-User Interface (A2UI) standard, allowing agents to present rich, interactive interfaces across different platforms.
 
 It makes use of the following technologies:
 
@@ -19,7 +19,7 @@ It makes use of the following technologies:
 
 ## Quickstart Guide
 
-To quickly get started, we recommend using the sample project in [a2ui-samples](https://github.com/googlemapssamples/a2ui-samples). This sample project contains the necessary components to run the Python Agent and a React web client that allows you to interact with the agent.
+To quickly get started, we recommend using the [Agentic UI Toolkit samples project](https://github.com/googlemaps-samples/a2ui). This sample project contains the necessary components to run the Python Agent and a React web client that allows you to interact with the agent.
 
 ### Prerequisites and Tool Setup
 
@@ -67,8 +67,6 @@ For more information about the environment variables, see the **Google API Key C
 
 This package provides the core Python agent implementations for the Agentic UI Toolkit (MAUI). It includes the base `MAUIAgent` and the extended `MAUIAgentWithGrounding` that uses Vertex Grounding.
 
-This section refers to the file structure within [agent/python-agent](agent/python-agent).
-
 ### File Structure
 
 *   `agent.py`: Contains the `MAUIAgent` class, which handles session management, LLM interaction, and A2UI schema loading.
@@ -79,7 +77,7 @@ This section refers to the file structure within [agent/python-agent](agent/pyth
 
 ### How to Integrate
 
-To integrate these agents into an existing application (like a server), you can refer to the sample in [a2ui-samples/agent/python](https://github.com/googlemaps-samples/a2ui/tree/main/agent/python).
+To integrate these agents into an existing application (like a server), you can refer to the sample in [Agentic UI Toolkit Samples](https://github.com/googlemaps-samples/a2ui).
 
 #### 1. Add Dependency
 In your application's `pyproject.toml`, add `maui-a2ui-python` to your dependencies:
@@ -94,32 +92,90 @@ maui-a2ui-python = { path = "path/to/a2ui/agent/python-agent" }
 ```
 
 #### 2. Import and Use
-In your Python code (e.g., `__main__.py` or `agent_executor.py`):
+
+The Agentic UI Toolkit includes two agents, one that uses Grounding Lite and one that uses Grounding with Google Maps. The Python integration steps are the same for each, but if you use Grounding with Google Maps, you must follow the instructions to configure your local environment. See the [Accessing Google Maps grounding data](#accessing-google-maps-grounding-data) section below for more information on configuring these services.
+
+Tip: See the [agent_executor.py](https://github.com/googlemaps-samples/a2ui/blob/main/agent/python/agent_executor.py) example in the Agentic UI Toolkit Samples repository for a working example.
+
+Import the MAUIAgent into your Python code (e.g., `__main__.py` or `agent_executor.py`) and
+configure the ADK Agent Executor to call it.
 
 ```python
+# A2UI, ADK, and A2A imports
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.events import EventQueue
+from a2a.server.tasks import TaskUpdater
+from a2a.types import (
+    DataPart,
+    Part,
+    Task,
+    TaskState,
+    TextPart,
+    UnsupportedOperationError,
+)
+from a2a.utils import (
+    new_agent_parts_message,
+    new_agent_text_message,
+    new_task,
+)
+from a2a.utils.errors import ServerError
+from a2ui.a2a.extension import try_activate_a2ui_extension
+
+# MAUI Agent import
 from agent import MAUIAgent
-from agent_with_grounding import MAUIAgentWithGrounding
 
-# Initialize the agent
-agent = MAUIAgent(base_url="http://localhost:10002")
+class MAUIAgentExecutor(AgentExecutor):
 
-# Use the agent to stream responses
-async for item in agent.stream(query, session_id, ui_version):
-    if "parts" in item:
-        # Process A2UI parts
-        pass
-    elif "updates" in item:
-        # Process text updates
-        pass
+  def __init__(self, agent: MAUIAgent):
+    self.agent = agent
+
+  async def execute(
+      self,
+      context: RequestContext,
+      event_queue: EventQueue,
+  ) -> None:
+    query = context.get_user_input()
+    active_ui_version = try_activate_a2ui_extension(context, self.agent.agent_card)
+    task = context.current_task
+
+    # Create a new task if necessary
+    if not task:
+      task = new_task(context.message)
+      await event_queue.enqueue_event(task)
+    updater = TaskUpdater(event_queue, task.id, task.context_id)
+
+    # Handle each item in the streamed response.
+    async for item in self.agent.stream(query, task.context_id, active_ui_version):
+      is_task_complete = item["is_task_complete"]
+      if not is_task_complete:
+        message = None
+        if "parts" in item:
+          message = new_agent_parts_message(item["parts"], task.context_id, task.id)
+        elif "updates" in item:
+          message = new_agent_text_message(item["updates"], task.context_id, task.id)
+
+        if message:
+          await updater.update_status(TaskState.working, message)
+        continue
+
+      final_parts = item["parts"]
+
+      await updater.update_status(
+          TaskState.completed,
+          new_agent_parts_message(final_parts, task.context_id, task.id),
+          final=True,
+      )
+      break
+
+  async def cancel(
+      self, request: RequestContext, event_queue: EventQueue
+  ) -> Task | None:
+    raise ServerError(error=UnsupportedOperationError())
 ```
-
-
 
 ## MAUI Web Client Library (`@googlemaps/a2ui`)
 
 This package provides the Web (Lit-based) client library for the Agentic UI Toolkit (MAUI). It includes components and utilities to render A2UI surfaces and communicate with an A2A agent server.
-
-This section refers to the file structure within [client/web](client/web).
 
 ### How to Build
 
@@ -133,7 +189,7 @@ To build the package for use in an application:
 
 ### How to Integrate
 
-To integrate these components into an existing application, you can refer to the sample in `a2ui-samples/client/web/react`.
+To integrate these components into an existing application, you can refer to the [Agentic UI Toolkit samples project](https://github.com/googlemaps-samples/a2ui).
 
 #### 1. Link or Install the Package
 You can consume the package via npm linking for local development:
@@ -237,6 +293,42 @@ If you are using Gemini as your LLM, you will also need a Google Cloud API Key w
 To create a new Google Cloud API Key, follow the instructions here in the [Google Cloud docs](https://docs.cloud.google.com/docs/authentication/api-keys#create).
 
 This key must be exported or contained within a `.env` file as `GEMINI_API_KEY`
+
+## Accessing Google Maps grounding data
+
+Your agent can access Google Maps grounding data in two ways, depending on your project setup and needs: 
+
+1. [Grounding Lite MCP](https://developers.google.com/maps/ai/grounding-lite)
+2. [Grounding with Google Maps](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/grounding/grounding-with-google-maps)
+
+### Grounding Lite MCP
+
+To use Grounding Lite MCP, you must first enable the Maps Grounding Lite API and create or update an API Key to support the required APIs following the [documentation](https://developers.google.com/maps/ai/grounding-lite#configure_llms_to_use_the_mcp_server).
+
+### Grounding with Google Maps
+
+To use Grounding with Google Maps, there are additional steps you must take to configure your environment:
+
+1. Ensure you have the latest version of the genai python package.
+```bash
+pip install --upgrade google-genai
+```
+
+2. Configure additional environment variables to connect to your project.
+```bash
+## Replace the `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` values
+## with appropriate values for your project.
+export GOOGLE_CLOUD_PROJECT=GOOGLE_CLOUD_PROJECT
+export GOOGLE_CLOUD_LOCATION=global
+export GOOGLE_GENAI_USE_VERTEXAI=True
+```
+
+3. Ensure you are authenticated to Google Cloud.
+```bash
+gcloud auth application-default login
+```
+
+See the [documentation](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/grounding/grounding-with-google-maps#googlegenaisdk_tools_google_maps_with_txt-python_genai_sdk) for more information.
 
 ## Contributing
 
