@@ -1,4 +1,4 @@
-# Google Maps Agentic UI Toolkit
+# Maps Agentic UI Toolkit
 
 ![Alpha](https://img.shields.io/badge/release-alpha-orange)
 [![Python CI](https://github.com/googlemaps/a2ui/actions/workflows/python-ci.yml/badge.svg)](https://github.com/googlemaps/a2ui/actions/workflows/python-ci.yml)
