@@ -23,8 +23,6 @@ import { z } from 'zod';
 import { ComponentApi, DynamicNumberSchema, DynamicStringSchema } from "@a2ui/web_core/v0_9";
 import { A2uiLitElement, A2uiController } from "@a2ui/lit/v0_9";
 
-
-
 const LatLngSchema = z.object({
   lat: DynamicNumberSchema,
   lng: DynamicNumberSchema,
@@ -175,18 +173,20 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
         lat: marker.lat ?? 0 as number,
         lng: marker.lng ?? 0 as number,
         label: marker.label as string,
-        placeId: marker.placeId as string
+        placeId: marker.placeId as string,
+        collisionBehavior: marker.collisionBehavior as google.maps.CollisionBehavior | undefined,
       })).filter(filterMarkerFn);
     }
 
     return [];
   }
 
-  #create3DMarkerElement({ position, placeId, label, zIndex }: {
+  #create3DMarkerElement({ position, placeId, label, zIndex, collisionBehavior }: {
     position?: google.maps.LatLngLiteral,
     placeId?: string | null,
     label?: string | null,
     zIndex?: number | null,
+    collisionBehavior?: google.maps.CollisionBehavior,
   }) {
     const marker = document.createElement("gmp-marker-3d") as any;
     marker.autofitsCamera = true;
@@ -194,6 +194,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     position && (marker.position = position);
     placeId && (marker.placeId = placeId);
     label && (marker.label = label);
+    collisionBehavior && (marker.collisionBehavior = collisionBehavior);
     (zIndex != null) && (marker.zIndex = zIndex);
 
     return marker;
@@ -287,6 +288,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
       const originMarker = this.#create3DMarkerElement({
         position: { lat: route.origin.lat as number, lng: route.origin.lng as number },
         label: route.origin.label as string || "Origin",
+        collisionBehavior: google.maps.CollisionBehavior.OPTIONAL_AND_HIDES_LOWER_PRIORITY,
         placeId: route.origin.placeId as string,
       });
       this.map3dElement.appendChild(originMarker);
@@ -295,6 +297,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
       const destMarker = this.#create3DMarkerElement({
         position: { lat: route.destination.lat as number, lng: route.destination.lng as number },
         label: route.destination.label as string || "Destination",
+        collisionBehavior: google.maps.CollisionBehavior.OPTIONAL_AND_HIDES_LOWER_PRIORITY,
         placeId: route.destination.placeId as string,
       });
       this.map3dElement.appendChild(destMarker);
