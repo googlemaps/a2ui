@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/client/web"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/agent/python-agent"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
