@@ -1,6 +1,6 @@
 {
   "name": "@googlemaps/a2ui",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Maps Agentic UI Toolkit Library",
   "main": "./dist/src/lit/index.js",
   "types": "./dist/src/lit/index.d.ts",
