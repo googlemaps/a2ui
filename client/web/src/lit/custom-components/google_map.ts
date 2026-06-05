@@ -345,7 +345,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
           max-tilt=${mode === "roadmap" ? "0" : nothing}
           heading="${heading}"
           map-id="2d6e1a27a57efe3c9479f6fc"
-          internal-usage-attribution-ids="gmp_aikit_ai_kit_v0.0.1_exp"
+          internal-usage-attribution-ids="gmp_web_a2ui_v0.0.2_exp"
         >${routes.map((route: any) => html`
           <gmp-route-3d
             origin="${route.origin.lat},${route.origin.lng}"
