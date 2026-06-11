@@ -14,14 +14,13 @@
  limitations under the License.
  */
 
-import { html, css, nothing, PropertyValues, unsafeCSS } from "lit";
-import { customElement, property, query } from "lit/decorators.js";
-import * as Primitives from "@a2ui/web_core/types/primitives";
-import { styleMap } from "lit/directives/style-map.js";
-import { structuralStyles } from "@a2ui/web_core";
-import { z } from 'zod';
-import { ComponentApi, DynamicNumberSchema, DynamicStringSchema } from "@a2ui/web_core/v0_9";
-import { A2uiLitElement, A2uiController } from "@a2ui/lit/v0_9";
+import {A2uiController, A2uiLitElement} from '@a2ui/lit/v0_9';
+import {structuralStyles} from '@a2ui/web_core';
+import {ComponentApi, DynamicNumberSchema, DynamicStringSchema} from '@a2ui/web_core/v0_9';
+import {css, html, nothing, PropertyValues, unsafeCSS} from 'lit';
+import {customElement} from 'lit/decorators.js';
+import {styleMap} from 'lit/directives/style-map.js';
+import {z} from 'zod';
 
 const LatLngSchema = z.object({
   lat: DynamicNumberSchema,
@@ -40,6 +39,7 @@ const MapPinSchema = z.object({
   placeId: DynamicStringSchema.optional(),
 }).strict();
 
+/** A2UI GoogleMap interface. */
 export const GoogleMapApi = {
   name: 'GoogleMap',
   schema: z
@@ -91,41 +91,18 @@ declare global {
   }
 }
 
-type A2UIParam<T> = LiteralOrPath<T> | null;
-
-interface LiteralOrPath<T> {
-  path?: string;
-  literal?: T;
-}
-
-// Marker interface for A2UI data
-interface MarkerValue {
-  lat: Primitives.NumberValue;
-  lng: Primitives.NumberValue;
-  label: Primitives.StringValue;
-  placeId: Primitives.StringValue;
-}
-
-// Translated marker interface for use in UI
-interface Marker {
-  lat: number;
-  lng: number;
-  label: string | null;
-}
-
+/** A2UI Custom Component for GoogleMap */
 @customElement("a2ui-googlemap")
 export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
-  @property()
-  accessor heading: Primitives.NumberValue | null = null;
-
-  @query("gmp-map-3d")
-  accessor map3dElement!: HTMLElement & Map3DElement;
+  get map3dElement(): HTMLElement&Map3DElement {
+    return this.renderRoot.querySelector('gmp-map-3d') as HTMLElement &
+        Map3DElement;
+  }
 
   protected createController() {
     return new A2uiController(this, GoogleMapApi);
   }
 
-  #geocoder: google.maps.Geocoder | null = null;
   #markers: HTMLElement[] = [];
   #prevCenter: { lat: number; lng: number } | null = null;
   #prevMarkers: any = null;
@@ -342,7 +319,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
           center="${lat},${lng},0"
           tilt="${tilt}"
           mode="${mode}"
-          max-tilt=${mode === "roadmap" ? "0" : nothing}
+          max-tilt=${mode === 'roadmap' ? '0' : nothing}
           heading="${heading}"
           map-id="2d6e1a27a57efe3c9479f6fc"
           internal-usage-attribution-ids="gmp_web_a2ui_v0.0.2_exp"
@@ -351,6 +328,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
             origin="${route.origin.lat},${route.origin.lng}"
             destination="${route.destination.lat},${route.destination.lng}"
             autofits-camera
+            internal-usage-attribution-ids="gmp_web_a2ui_v0.0.2_exp"
           ></gmp-route-3d>`)}
         </gmp-map-3d>
       </section>
@@ -358,6 +336,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
   }
 }
 
+/** A2UI Definition for GoogleMap component */
 export const A2uiGoogleMap = {
   ...GoogleMapApi,
   tagName: "a2ui-googlemap",
