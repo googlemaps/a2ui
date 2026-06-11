@@ -1,6 +1,14 @@
 # Maps Agentic UI Toolkit Web Client Library
 
-This package provides the Web (Lit-based) client library for the Maps Agentic UI Toolkit (MAUI). It includes components and utilities to render A2UI surfaces and communicate with an A2A agent server.
+![Alpha](https://img.shields.io/badge/release-alpha-orange)
+[![Python CI](https://github.com/googlemaps/a2ui/actions/workflows/python-ci.yml/badge.svg)](https://github.com/googlemaps/a2ui/actions/workflows/python-ci.yml)
+[![Web CI](https://github.com/googlemaps/a2ui/actions/workflows/web-ci.yml/badge.svg)](https://github.com/googlemaps/a2ui/actions/workflows/web-ci.yml)
+[![GitHub License](https://img.shields.io/github/license/googlemaps/a2ui?color=blue&v=1)](https://github.com/googlemaps/a2ui/blob/main/LICENSE)
+[![npm](https://img.shields.io/npm/v/@googlemaps/a2ui)](https://npmjs.com/package/@googlemaps/a2ui)
+
+This package provides the Web (Lit-based) client library for the Maps Agentic UI
+Toolkit (MAUI). It includes components and utilities to render A2UI surfaces and
+communicate with an A2A agent server.
 
 Note: This library only works when paired with an Agent that can generate A2UI. See [Agentic UI Toolkit samples](https://github.com/googlemaps-samples/a2ui) for a reference implementation of an A2A Agent.
 

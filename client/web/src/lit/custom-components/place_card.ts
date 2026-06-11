@@ -14,15 +14,13 @@
  limitations under the License.
  */
 
-import { html, css, nothing, unsafeCSS } from "lit";
-import { z } from 'zod'
-import { customElement, property } from "lit/decorators.js";
-
-import * as Primitives from "@a2ui/web_core/types/primitives";
-import { styleMap } from "lit/directives/style-map.js";
-import { structuralStyles } from "@a2ui/web_core";
-import { A2uiController, A2uiLitElement } from "@a2ui/lit/v0_9";
-import { ComponentApi, DynamicStringSchema } from "@a2ui/web_core/v0_9";
+import {A2uiController, A2uiLitElement} from '@a2ui/lit/v0_9';
+import {structuralStyles} from '@a2ui/web_core';
+import {ComponentApi, DynamicStringSchema} from '@a2ui/web_core/v0_9';
+import {css, html, nothing, unsafeCSS} from 'lit';
+import {customElement} from 'lit/decorators.js';
+import {styleMap} from 'lit/directives/style-map.js';
+import {z} from 'zod'
 
 
 export const PlaceCardApi = {
@@ -42,11 +40,9 @@ declare global {
   }
 }
 
-@customElement("a2ui-placecard")
+/** A2UI Custom Component for PlaceCard */
+@customElement('a2ui-placecard')
 export class PlaceCard extends A2uiLitElement<typeof PlaceCardApi> {
-
-
-
   protected createController() {
     return new A2uiController(this, PlaceCardApi);
   }
@@ -81,8 +77,11 @@ export class PlaceCard extends A2uiLitElement<typeof PlaceCardApi> {
 
     return html`
       <section style=${styleMap(style)}>
-        <gmp-place-details-compact orientation="horizontal" place="${placeId}">
-          <gmp-place-details-place-request place="${placeId}"></gmp-place-details-place-request>
+        <gmp-place-details-compact orientation="horizontal"
+            place="${placeId}"
+            internal-usage-attribution-ids="gmp_web_a2ui_v0.0.2_exp">
+          <gmp-place-details-place-request place="${placeId}">
+          </gmp-place-details-place-request>
             <gmp-place-content-config>
               <gmp-place-media lightbox-preferred></gmp-place-media>
               <gmp-place-rating></gmp-place-rating>
@@ -99,6 +98,7 @@ export class PlaceCard extends A2uiLitElement<typeof PlaceCardApi> {
   }
 }
 
+/** A2UI Definition for PlaceCard component */
 export const A2uiPlaceCard = {
   ...PlaceCardApi,
   tagName: "a2ui-placecard",
