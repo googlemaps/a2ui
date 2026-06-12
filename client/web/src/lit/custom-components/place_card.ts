@@ -43,7 +43,7 @@ declare global {
 /** A2UI Custom Component for PlaceCard */
 @customElement('a2ui-placecard')
 export class PlaceCard extends A2uiLitElement<typeof PlaceCardApi> {
-  protected createController() {
+  protected override createController() {
     return new A2uiController(this, PlaceCardApi);
   }
 
@@ -61,7 +61,7 @@ export class PlaceCard extends A2uiLitElement<typeof PlaceCardApi> {
     `,
   ];
 
-  render() {
+  override render() {
     const props = this.controller.props;
     if (!props) return nothing;
 
@@ -79,7 +79,7 @@ export class PlaceCard extends A2uiLitElement<typeof PlaceCardApi> {
       <section style=${styleMap(style)}>
         <gmp-place-details-compact orientation="horizontal"
             place="${placeId}"
-            internal-usage-attribution-ids="gmp_web_a2ui_v0.0.2_exp">
+            internal-usage-attribution-ids="gmp_web_maui_v0.1.7_exp">
           <gmp-place-details-place-request place="${placeId}">
           </gmp-place-details-place-request>
             <gmp-place-content-config>

@@ -21,24 +21,24 @@ import * as v0_9 from "@a2ui/web_core/v0_9";
 const A2UI_MIME_TYPE = "application/json+a2ui";
 
 export class A2UIClient {
-  #serverUrl: string;
-  #client: A2AClient | null = null;
+  private serverUrl: string;
+  private client: A2AClient | null = null;
 
   constructor(serverUrl: string = "") {
-    this.#serverUrl = serverUrl;
+    this.serverUrl = serverUrl;
   }
 
-  #ready: Promise<void> = Promise.resolve();
+  private readonly readyPromise: Promise<void> = Promise.resolve();
   get ready() {
-    return this.#ready;
+    return this.readyPromise;
   }
 
-  async #getClient() {
-    if (!this.#client) {
+  private async getClient() {
+    if (!this.client) {
       // Default to localhost:10002 if no URL provided (fallback for restaurant app default)
-      const baseUrl = this.#serverUrl || "http://localhost:10002";
+      const baseUrl = this.serverUrl || "http://localhost:10002";
 
-      this.#client = await A2AClient.fromCardUrl(
+      this.client = await A2AClient.fromCardUrl(
         `${baseUrl}/.well-known/agent-card.json`,
         {
           fetchImpl: async (url, init) => {
@@ -52,13 +52,13 @@ export class A2UIClient {
         }
       );
     }
-    return this.#client;
+    return this.client;
   }
 
   async send(
     message: any | string
   ): Promise<Array<{ type: "text", text: string } | { type: "a2ui", message: any }>> {
-    const client = await this.#getClient();
+    const client = await this.getClient();
     let parts: Part[] = [];
 
     if (typeof message === 'string') {

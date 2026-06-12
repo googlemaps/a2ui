@@ -23,10 +23,15 @@ import * as Types from "@a2ui/web_core/types/types";
 import { mapsAgenticUICatalog } from "./catalog";
 
 export class MAUIProviders extends LitElement {
-  #markdownProvider = new ContextProvider(this, { context: Context.markdown, initialValue: async (markdown: string, options?: Types.MarkdownRendererOptions) => renderMarkdown(markdown, options) });
+  private markdownProvider = new ContextProvider(this, {
+    context: Context.markdown,
+    initialValue: async (
+        markdown: string,
+        options?: Types.MarkdownRendererOptions,
+        ) => renderMarkdown(markdown, options),
+  });
 
-
-  protected render() {
+  protected override render() {
     return html`<slot></slot>`;
   }
 }
@@ -44,33 +49,33 @@ export type TimelineItem =
 const A2UI_TOP_LEVEL_KEYS = ['createSurface', 'updateComponents', 'updateDataModel', 'deleteSurface', 'beginRendering', 'surfaceUpdate', 'dataModelUpdate'];
 
 export class A2UIRenderer {
-  #processor = new v0_9.MessageProcessor(
+  private readonly messageProcessor = new v0_9.MessageProcessor(
     [mapsAgenticUICatalog],
     async (action: v0_9.A2uiClientAction): Promise<any> => {
       console.warn("Action handling is unimplemented", action);
     },
   );
-  #timeline: TimelineItem[] = [];
+  private timelineItems: TimelineItem[] = [];
 
   /**
    * Returns the current timeline of messages and surfaces.
    */
   get timeline() {
-    return this.#timeline;
+    return this.timelineItems;
   }
 
   /**
    * Returns the A2UI message processor.
    */
   get processor() {
-    return this.#processor;
+    return this.messageProcessor;
   }
 
   /**
    * Gets a surface by it's ID.
    */
   getSurface(surfaceId: string) {
-    return this.#processor.model.surfacesMap.get(surfaceId);
+    return this.messageProcessor.model.surfacesMap.get(surfaceId);
   }
 
   private getSurfaceId(msg: any) {
@@ -97,15 +102,15 @@ export class A2UIRenderer {
         const surfaceId = this.getSurfaceId(part.message);
 
         // Record the surface in the timeline if it's new
-        if (!this.#timeline.find(t => t.type === "surface" && t.surfaceId === surfaceId) &&
+        if (!this.timelineItems.find(t => t.type === "surface" && t.surfaceId === surfaceId) &&
           !newItems.find(t => t.type === "surface" && t.surfaceId === surfaceId)) {
           newItems.push({ type: "surface", surfaceId });
         }
       }
     }
 
-    this.#timeline = [...this.#timeline, ...newItems];
-    this.#processor.processMessages(uiMessages);
+    this.timelineItems = [...this.timelineItems, ...newItems];
+    this.messageProcessor.processMessages(uiMessages);
 
     return newItems;
   }
@@ -114,6 +119,6 @@ export class A2UIRenderer {
    * Adds a user message to the timeline.
    */
   addUserMessage(text: string) {
-    this.#timeline = [...this.#timeline, { type: "user", text }];
+    this.timelineItems = [...this.timelineItems, { type: "user", text }];
   }
 }
