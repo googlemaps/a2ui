@@ -1,0 +1,13 @@
+# Built artifacts
+bin/
+gen/
+out/
+build/
+
+# Gradle
+.gradle/
+.kotlin/
+local.properties
+
+# Android Studio / IntelliJ
+.idea/

@@ -5,6 +5,8 @@
 [![Web CI](https://github.com/googlemaps/a2ui/actions/workflows/web-ci.yml/badge.svg)](https://github.com/googlemaps/a2ui/actions/workflows/web-ci.yml)
 [![GitHub License](https://img.shields.io/github/license/googlemaps/a2ui?color=blue&v=1)](LICENSE)
 [![npm](https://img.shields.io/npm/v/@googlemaps/a2ui)](https://npmjs.com/package/@googlemaps/a2ui)
+[![Android Library](https://img.shields.io/badge/Android_Library-Kotlin-3DDC84)](https://github.com/googlemaps/a2ui/tree/main/client/android)
+[![iOS Library](https://img.shields.io/badge/iOS_Library-SwiftUI-007AFF)](https://github.com/googlemaps/a2ui/tree/main/client/ios)
 
 > **Note:** This toolkit is in **Experimental** status.
 
@@ -16,11 +18,14 @@ It makes use of the following technologies:
 * [A2UI](https://a2ui.org/) for the Agent-driven dynamic UI protocol.
 * [ADK](https://google.github.io/adk-docs/) for defining the Agent implementation.
 * [A2A Python](https://github.com/a2aproject/a2a-python) for the A2A server implementation.
-* [Lit](https://lit.dev/) for the rendering framework for A2UI components.
+* Client rendering frameworks for multi-platform support:
+  * [Lit](https://lit.dev/) for the Web A2UI client rendering.
+  * Native rendering libraries for Android (Android Views) and iOS (SwiftUI).
 
 ## Quickstart Guide
 
-To quickly get started, we recommend using the [Agentic UI Toolkit samples project](https://github.com/googlemaps-samples/a2ui). This sample project contains the necessary components to run the Python Agent and a React web client that allows you to interact with the agent.
+To quickly get started, we recommend using the [Agentic UI Toolkit samples project](https://github.com/googlemaps-samples/a2ui). This sample project contains the necessary components to run the Python Agent and interactive client applications (React for Web, Android Views for Android, and SwiftUI for iOS) to interact with the agent.
+
 
 ### Prerequisites and Tool Setup
 
@@ -61,6 +66,10 @@ For more information about the environment variables, see the **Google API Key C
 #### 3. `Node.js` and `npm` (JavaScript Runtime & Package Manager)
 `npm` is the standard package manager for JavaScript and TypeScript web applications, used to download frontend libraries and run development servers.
 *   **Installation:** Download and install Node.js (which includes `npm`) from [https://nodejs.org/](https://nodejs.org/).
+
+#### 4. Mobile Development Tools (for Android & iOS)
+*   **Android Development**: [Android Studio](https://developer.android.com/studio) and the Android SDK (API 24+ recommended).
+*   **iOS Development**: macOS with [Xcode](https://developer.apple.com/xcode/) (v15.0+ recommended) and CocoaPods or Swift Package Manager (SPM).
 
 ---
 
@@ -174,11 +183,13 @@ class MAUIAgentExecutor(AgentExecutor):
     raise ServerError(error=UnsupportedOperationError())
 ```
 
-## Agentic UI Toolkit Web Client Library
+## Agentic UI Toolkit Client Libraries
+
+This repository provides A2UI client libraries across multiple platforms (Web, Android, and iOS) to render interactive A2UI surfaces and communicate with an A2A agent server.
+
+### 🌐 Web Client Library (`@googlemaps/a2ui`)
 
 This package provides the Web (Lit-based) client library for the Maps Agentic UI Toolkit (MAUI). It includes components and utilities to render A2UI surfaces and communicate with an A2A agent server.
-
-### How to Integrate
 
 To integrate these components into an existing application, you can refer to the [Agentic UI Toolkit samples project](https://github.com/googlemaps-samples/a2ui).
 
@@ -241,11 +252,11 @@ return (
 );
 ```
 
-### Local Development
+#### Local Development
 
 To make changes to this package and test them in an application:
 
-#### 1. Build and Prepare the Package
+##### 1. Build and Prepare the Package
 
 To build the package for use in an application:
 
@@ -256,12 +267,26 @@ To build the package for use in an application:
     ```
 
 
-#### 2. Link the Package
+##### 2. Link the Package
 You can consume the package via npm linking for local development:
 ```bash
 # In your application directory
 npm link @googlemaps/a2ui
 ```
+
+### 🤖 Android Client Library
+
+This package provides the native Android client library for the Maps Agentic UI Toolkit (MAUI), implemented using Android Views and the Google Maps SDK for Android. It includes native Android View components to render A2UI surfaces in Android apps.
+
+For complete integration instructions, setup, and configuration details, refer to the [Android Client README](client/android/README.md).
+
+### 🍎 iOS Client Library
+
+This package provides the native iOS client library for the Maps Agentic UI Toolkit (MAUI), implemented using SwiftUI and the Google Maps SDK for iOS. It includes native SwiftUI components to render A2UI surfaces in iOS apps.
+
+For complete integration instructions, setup, and configuration details, refer to the [iOS Client README](client/ios/README.md).
+
+
 ## Google API Keys
 
 ### Google Maps API Key
