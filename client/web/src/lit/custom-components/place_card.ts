@@ -79,7 +79,7 @@ export class PlaceCard extends A2uiLitElement<typeof PlaceCardApi> {
       <section style=${styleMap(style)}>
         <gmp-place-details-compact orientation="horizontal"
             place="${placeId}"
-            internal-usage-attribution-ids="gmp_web_maui_v0.1.7_exp">
+            internal-usage-attribution-ids="${(window as any).A2UI_ATTRIBUTION_ID || 'gmp_web_maui_v0.1.7_exp'}">
           <gmp-place-details-place-request place="${placeId}">
           </gmp-place-details-place-request>
             <gmp-place-content-config>
