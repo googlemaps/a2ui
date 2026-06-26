@@ -13,7 +13,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pyright>=1.1.391",
-    "ruff>=0.9.1",
+    "ruff>=0.15.20",
 ]
 
 [build-system]
