@@ -7,7 +7,7 @@ The `GoogleMapsA2UI` library is an iOS library designed to encapsulate the parsi
 It makes use of the following technologies:
 * [Google Maps Platform](https://mapsplatform.google.com/) for rendering maps and places.
 * [A2UI](https://a2ui.org/) for the Agent-driven dynamic UI protocol.
-* [SwiftUI](https://developer.apple.com/xcode/swiftui/) for the native UI layer.
+* [SwiftUI](https://developer.apple.com/swiftui/) for the native UI layer.
 * `WKWebView` for rendering the web-based A2UI components securely.
 
 ## Quickstart Guide
