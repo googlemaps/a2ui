@@ -4,11 +4,16 @@ updates:
     directory: "/client/web"
     schedule:
       interval: "weekly"
-  - package-ecosystem: "pip"
-    directory: "/agent/python-agent"
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: "pip" # Can also be "uv" since you have a uv.lock
+    directory: "/agent/python_agent"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0

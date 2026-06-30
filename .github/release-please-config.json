@@ -1,0 +1,8 @@
+{
+  "packages": {
+    "client/web": {
+      "release-type": "node",
+      "package-name": "@googlemaps/a2ui"
+    }
+  }
+}
