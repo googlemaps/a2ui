@@ -68,7 +68,7 @@ return (
             surface={surface}
           ></a2ui-surface>
         </div>
-      ); 
+      );
     }
     }}
   </maui-providers>

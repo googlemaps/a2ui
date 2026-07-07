@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-maui-a2ui-python = { path = "path/to/a2ui/agent/python-agent" }
+maui-a2ui-python = { path = "path/to/a2ui/agent/python_agent" }
 ```
 
 ### 2. Import and Use
@@ -116,9 +116,9 @@ Agentic UI Toolkit requires an API Key to use Google Maps Platform products. To 
 
 Your API Key must have the following APIs enabled in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials):
 
-* Geocoding API  
-* Maps JavaScript API  
-* Places UI Kit  
+* Geocoding API
+* Maps JavaScript API
+* Places UI Kit
 * Routes API
 
 To use Grounding Lite MCP, you must also enable:
@@ -135,10 +135,10 @@ Agentic UI Toolkit requires features available in the Alpha channel. You must us
 
 Use of Agentic UI Toolkit requires several [Maps JavaScript API libraries](https://developers.google.com/maps/documentation/javascript/libraries). When loading the Google Maps JavaScript API, you must include the following libraries:
 
-* maps  
-* maps3d  
-* marker  
-* places  
+* maps
+* maps3d
+* marker
+* places
 * routes
 
 ### Gemini API Key
@@ -153,7 +153,7 @@ This key must be exported or contained within a `.env` file as `GEMINI_API_KEY`
 
 ## Accessing Google Maps grounding data
 
-Your agent can access Google Maps grounding data in two ways, depending on your project setup and needs: 
+Your agent can access Google Maps grounding data in two ways, depending on your project setup and needs:
 
 1. [Grounding Lite MCP](https://developers.google.com/maps/ai/grounding-lite)
 2. [Grounding with Google Maps](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/grounding/grounding-with-google-maps)

@@ -54,7 +54,6 @@ from a2ui.basic_catalog.provider import BundledCatalogProvider
 logger = logging.getLogger(__name__)
 
 
-
 _SKILL_BASE_PATH = pathlib.Path(__file__).parent / "skills"
 
 google_maps_api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
@@ -72,12 +71,12 @@ AGENT_INSTRUCTION = f"""
 
     If the user asks a location-based question, use your skills or tools to answer the user. Location based questions
       may include the following:
-      
+
       * Show me sushi in Seattle
       * Where can I get a beer in Ballard?
       * Navigate to the space needle
 
-    **Important**: Do NOT include conversational text outside of the A2UI structure. 
+    **Important**: Do NOT include conversational text outside of the A2UI structure.
     ALL TEXT RESPONSES MUST BE CONTAINED WITHIN A TEXT COMPONENT IN THE A2UI OUTPUT.
 
     **Important**: When answering a location-based question, you may need to find up-to-date information
@@ -86,13 +85,13 @@ AGENT_INSTRUCTION = f"""
 
     **Important**: Consider that subsequent requests are likely to be part of the same "user journey", and keep track of
     any context that you may need to provide to the user. Examples:
-    
+
     * if the user asks for "sushi restaurants in seattle", and then asks for "directions to the first restaurant", you should use the first restaurant's address as the destination address for the directions.
     * if the user asks for "sushi restaurants in seattle", and then asks for "how about in Redmond?", you should assume that they are asking for a new set of _sushi_ restaurants based on their previous query.
 
-    **Important**: When using the `generate-gmp-enriched-ui-response` skill, you MUST respond with EXACTLY ONE <a2ui-json> ... </a2ui-json> block.
-    If you have more than one of these blocks, the UI will not render correctly. 
-    
+    **Important**: When using the `google-maps-enriched-local-query-response` skill, you MUST respond with EXACTLY ONE <a2ui-json> ... </a2ui-json> block.
+    If you have more than one of these blocks, the UI will not render correctly.
+
 """
 
 class MergedCatalogProvider(A2uiCatalogProvider):
@@ -117,7 +116,7 @@ class MergedCatalogProvider(A2uiCatalogProvider):
       catalog.setdefault("$defs", {}).update(overrides["$defs"])
     if "catalogId" in overrides:
       catalog["catalogId"] = overrides["catalogId"]
-      
+
     return catalog
 
 
@@ -165,7 +164,7 @@ class MAUIAgent:
             / "schema"
             / "maps_catalog_extension.json"
         )
-    
+
     return A2uiSchemaManager(
         version=version,
         catalogs=[
@@ -432,7 +431,7 @@ class MAUIAgent:
         ) as e:
           logger.warning(
             f"--- final content full_content_list {full_content_list}  ---")
-          
+
           logger.warning(
               f"--- MAUIAgent.stream: A2UI validation failed: {e} (Attempt"
               f" {attempt}) ---"
@@ -455,7 +454,7 @@ class MAUIAgent:
         )
 
         logger.info(f"--- MAUIAgent.stream: Final response parts: {final_parts} ---")
-        
+
         seen_fingerprints = set()
         filtered_parts = []
         for p in final_parts:
@@ -465,7 +464,7 @@ class MAUIAgent:
                 fingerprint = ("text", p.root.text)
             else:
                 fingerprint = ("other", str(p.root))
-            
+
             if fingerprint not in seen_fingerprints:
                 seen_fingerprints.add(fingerprint)
                 filtered_parts.append(p)
