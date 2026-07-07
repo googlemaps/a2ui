@@ -78,7 +78,7 @@
   "devDependencies": {
     "@types/google.maps": "^3.64.0",
     "@types/markdown-it": "^14.1.2",
-    "@types/node": "^24.10.1",
+    "@types/node": "^26.0.1",
     "google-artifactregistry-auth": "^3.5.0",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
