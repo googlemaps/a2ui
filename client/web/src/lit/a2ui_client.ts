@@ -41,7 +41,7 @@ export class A2UIClient {
       this.client = await A2AClient.fromCardUrl(
         `${baseUrl}/.well-known/agent-card.json`,
         {
-          fetchImpl: async (url, init) => {
+          fetchImpl: async (url: RequestInfo | URL, init?: RequestInit) => {
             const headers = new Headers(init?.headers);
             headers.set(
               "X-A2A-Extensions",

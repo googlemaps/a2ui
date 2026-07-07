@@ -21,7 +21,8 @@
     "build:tsc": "wireit",
     "dev": "npm run serve --watch",
     "serve": "wireit",
-    "build-and-link": "npm install && npm run build && npm link"
+    "build-and-link": "npm install && npm run build && npm link",
+    "release": "semantic-release"
   },
   "wireit": {
     "serve": {
