@@ -56,8 +56,6 @@ jobs:
 
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: client/web/package-lock.json
 
       - if: ${{ steps.release.outputs.release_created }}
         name: Install Dependencies

@@ -17,10 +17,13 @@
 import {A2uiController, A2uiLitElement} from '@a2ui/lit/v0_9';
 import {structuralStyles} from '@a2ui/web_core';
 import {ComponentApi, DynamicStringSchema} from '@a2ui/web_core/v0_9';
-import {css, html, nothing, unsafeCSS} from 'lit';
+import {css, html, LitElement, nothing} from 'lit';
 import {customElement} from 'lit/decorators.js';
 import {styleMap} from 'lit/directives/style-map.js';
 import {z} from 'zod'
+
+const sheet = new CSSStyleSheet();
+sheet.replaceSync(structuralStyles);
 
 
 export const PlaceCardApi = {
@@ -43,12 +46,17 @@ declare global {
 /** A2UI Custom Component for PlaceCard */
 @customElement('a2ui-placecard')
 export class PlaceCard extends A2uiLitElement<typeof PlaceCardApi> {
+  static override shadowRootOptions: ShadowRootInit = {
+    ...LitElement.shadowRootOptions,
+    mode: 'closed',
+  };
+
   protected override createController() {
     return new A2uiController(this, PlaceCardApi);
   }
 
-  static styles = [
-    unsafeCSS(structuralStyles),
+  static override styles = [
+    sheet,
     css`
       :host {
         display: block;

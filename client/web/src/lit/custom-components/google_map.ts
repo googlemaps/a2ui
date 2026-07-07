@@ -17,10 +17,13 @@
 import {A2uiController, A2uiLitElement} from '@a2ui/lit/v0_9';
 import {structuralStyles} from '@a2ui/web_core';
 import {ComponentApi, DynamicNumberSchema, DynamicStringSchema} from '@a2ui/web_core/v0_9';
-import {css, html, nothing, PropertyValues, unsafeCSS} from 'lit';
+import {css, html, LitElement, nothing, PropertyValues} from 'lit';
 import {customElement} from 'lit/decorators.js';
 import {styleMap} from 'lit/directives/style-map.js';
 import {z} from 'zod';
+
+const sheet = new CSSStyleSheet();
+sheet.replaceSync(structuralStyles);
 
 const LatLngSchema = z.object({
   lat: DynamicNumberSchema,
@@ -102,6 +105,11 @@ interface ResolvedMarker {
 /** A2UI Custom Component for GoogleMap */
 @customElement("a2ui-googlemap")
 export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
+  static override shadowRootOptions: ShadowRootInit = {
+    ...LitElement.shadowRootOptions,
+    mode: 'closed',
+  };
+
   get map3dElement(): HTMLElement&Map3DElement {
     return this.renderRoot.querySelector('gmp-map-3d') as HTMLElement &
         Map3DElement;
@@ -116,8 +124,8 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
   private prevMarkers: unknown = null;
   private prevRoutes: unknown = null;
 
-  static styles = [
-    unsafeCSS(structuralStyles),
+  static override styles = [
+    sheet,
     css`
       :host {
         display: block;

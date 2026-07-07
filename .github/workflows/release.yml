@@ -17,8 +17,7 @@
 ##   NPM package, and update the CHANGELOG.md.
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -43,8 +42,6 @@ jobs:
 
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: client/web/package-lock.json
 
       - name: Install dependencies
         working-directory: client/web
@@ -58,8 +55,8 @@ jobs:
           registry-url: "https://wombat-dressing-room.appspot.com/"
 
       - name: Run Semantic Release
+        working-directory: client/web
         env:
           GITHUB_TOKEN: ${{ secrets.SYNCED_GITHUB_TOKEN_REPO }}
           NPM_TOKEN: ${{ secrets.NPM_WOMBAT_TOKEN }}
-          NODE_PATH: ${{ github.workspace }}/client/web/node_modules
-        run: npx semantic-release
+        run: npm run release
