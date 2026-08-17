@@ -12,59 +12,69 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-import logging
-import pathlib
-import os
+"""MAUI Agent definition and implementation."""
+
 from collections import OrderedDict
 from collections.abc import AsyncIterable
-from typing import Any, Optional, Dict
+import json
+import logging
+import os
+import pathlib
+from typing import Any
 
-import jsonschema
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
-    AgentSkill,
     DataPart,
     Part,
     TextPart,
 )
+from google.adk import skills as adk_skills
 from google.adk.agents import run_config
 from google.adk.agents.llm_agent import LlmAgent
-from google.adk.artifacts import InMemoryArtifactService
+from google.adk.artifacts import in_memory_artifact_service
 from google.adk.memory.in_memory_memory_service import InMemoryMemoryService
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.genai import types
-from google.adk.tools.mcp_tool import McpToolset
-from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
-from google.adk.skills import load_skill_from_dir
+from google.adk.sessions import in_memory_session_service
 from google.adk.tools import skill_toolset
-from a2ui.schema.constants import VERSION_0_8, VERSION_0_9, A2UI_OPEN_TAG, A2UI_CLOSE_TAG
-from a2ui.schema.manager import A2uiSchemaManager
-from a2ui.parser.parser import parse_response, ResponsePart
-from a2ui.schema.common_modifiers import remove_strict_validation
-from a2ui.a2a.extension import get_a2ui_agent_extension
+from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
+from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
+from google.genai import types
+import jsonschema
+
+import a2ui.a2a.extension as a2ui_extension
 from a2ui.a2a.parts import parse_response_to_parts, stream_response_to_parts
+from a2ui.basic_catalog.provider import BundledCatalogProvider
+from a2ui.parser.parser import parse_response
+from a2ui.parser.streaming import A2uiStreamParser
 from a2ui.schema.catalog import CatalogConfig
 from a2ui.schema.catalog_provider import A2uiCatalogProvider
-from a2ui.basic_catalog.provider import BundledCatalogProvider
+from a2ui.schema.common_modifiers import remove_strict_validation
+from a2ui.schema.constants import A2UI_CLOSE_TAG, A2UI_OPEN_TAG, VERSION_0_9
+from a2ui.schema.manager import A2uiSchemaManager
 
 logger = logging.getLogger(__name__)
 
+InMemorySessionService = in_memory_session_service.InMemorySessionService
+InMemoryArtifactService = in_memory_artifact_service.InMemoryArtifactService
 
 _SKILL_BASE_PATH = pathlib.Path(__file__).parent / "skills"
 
 google_maps_api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
 
 if not google_maps_api_key:
-    # Fallback or direct assignment for testing - NOT RECOMMENDED FOR PRODUCTION
-    google_maps_api_key = "YOUR_GOOGLE_MAPS_API_KEY_HERE" # Replace if not using env var
-    if google_maps_api_key == "YOUR_GOOGLE_MAPS_API_KEY_HERE":
-        print("WARNING: GOOGLE_MAPS_API_KEY is not set. Please set it as an environment variable or in the script.")
+  # Fallback or direct assignment for testing - NOT RECOMMENDED FOR PRODUCTION
+  google_maps_api_key = (  # Replace if not using env var
+      "YOUR_GOOGLE_MAPS_API_KEY_HERE"
+  )
+  if google_maps_api_key == "YOUR_GOOGLE_MAPS_API_KEY_HERE":
+    print(
+        "WARNING: GOOGLE_MAPS_API_KEY is not set. Please set it as an"
+        " environment variable or in the script."
+    )
 
-AGENT_INSTRUCTION = f"""
+AGENT_INSTRUCTION = """
     You are a helpful location expert and assistant. Your goal is to help provide effective answers to a user's location based questions.
 
     To achieve this, you MUST follow this logic:
@@ -90,28 +100,41 @@ AGENT_INSTRUCTION = f"""
     * if the user asks for "sushi restaurants in seattle", and then asks for "how about in Redmond?", you should assume that they are asking for a new set of _sushi_ restaurants based on their previous query.
 
     **Important**: When using the `google-maps-enriched-local-query-response` skill, you MUST respond with EXACTLY ONE <a2ui-json> ... </a2ui-json> block.
+    All A2UI message objects (e.g., `createSurface`, `updateComponents`, `updateDataModel`) MUST include a `"version": "v0.9"` property.
+    When generating a `PlaceCard`, you MUST explicitly set the `"orientation"` property: use `"vertical"` for single results and `"horizontal"` for lists.
     If you have more than one of these blocks, the UI will not render correctly.
 
 """
 
+
 class MergedCatalogProvider(A2uiCatalogProvider):
   """Dynamically loads the bundled basic catalog and extends it with local definitions."""
+
   def __init__(self, version: str, extension_catalog_path: str):
     self.version = version
     self.extension_catalog_path = extension_catalog_path
 
-  def load(self) -> Dict[str, Any]:
+  def load(self) -> dict[str, Any]:
     # 1. Load the bundled base catalog from the package
     base_provider = BundledCatalogProvider(self.version)
     catalog = base_provider.load()
 
     # 2. Load extension definitions from local JSON
-    with open(self.extension_catalog_path, 'r') as f:
+    with open(self.extension_catalog_path, "r") as f:
       overrides = json.load(f)
 
     # 3. Merge custom extensions into the schema
     if "components" in overrides:
       catalog.setdefault("components", {}).update(overrides["components"])
+      any_comp = catalog.setdefault("$defs", {}).setdefault("anyComponent", {})
+      one_of = any_comp.setdefault("oneOf", [])
+      existing_refs = {
+          item.get("$ref") for item in one_of if isinstance(item, dict)
+      }
+      for comp_name in overrides["components"]:
+        ref = f"#/components/{comp_name}"
+        if ref not in existing_refs:
+          one_of.append({"$ref": ref})
     if "$defs" in overrides:
       catalog.setdefault("$defs", {}).update(overrides["$defs"])
     if "catalogId" in overrides:
@@ -125,14 +148,23 @@ class MAUIAgent:
 
   SUPPORTED_CONTENT_TYPES = ["text", "text/plain"]
 
-  def __init__(self, base_url: str, agent_name: str = "MAUI Agent"):
+  def __init__(
+      self,
+      base_url: str,
+      agent_name: str = "MAUI Agent",
+      model_name: str = "gemini/gemini-3-flash-preview",
+  ) -> None:
     self.base_url = base_url
     self._agent_name = agent_name
+    self._model_name = model_name
     self._user_id = "remote_agent"
-    self._text_runner: Optional[Runner] = self._build_runner(self._build_llm_agent())
+    self._shared_session_service = InMemorySessionService()
+    self._text_runner: Runner | None = self._build_runner(
+        self._build_llm_agent()
+    )
 
-    self._schema_managers: Dict[str, A2uiSchemaManager] = {}
-    self._ui_runners: Dict[str, Runner] = {}
+    self._schema_managers: dict[str, A2uiSchemaManager] = {}
+    self._ui_runners: dict[str, Runner] = {}
     self._parsers = OrderedDict()
     self._max_parsers = 1000  # Max active sessions to keep in memory
 
@@ -149,6 +181,7 @@ class MAUIAgent:
     return self._agent_card
 
   def _build_schema_manager(self, version: str) -> A2uiSchemaManager:
+    """Builds the schema manager for a specific protocol version."""
     # Try sibling directory first (local dev)
     extension_path = (
         pathlib.Path(__file__).parent.parent
@@ -158,40 +191,48 @@ class MAUIAgent:
     )
     # Fallback to nested directory (deployed environment)
     if not extension_path.exists():
-        extension_path = (
-            pathlib.Path(__file__).parent
-            / "shared"
-            / "schema"
-            / "maps_catalog_extension.json"
-        )
+      extension_path = (
+          pathlib.Path(__file__).parent
+          / "shared"
+          / "schema"
+          / "maps_catalog_extension.json"
+      )
 
     return A2uiSchemaManager(
         version=version,
         catalogs=[
             CatalogConfig(
                 name="maps-agentic-ui-catalog",
-                provider=MergedCatalogProvider(version, str(extension_path))
+                provider=MergedCatalogProvider(version, str(extension_path)),
             )
         ],
         schema_modifiers=[remove_strict_validation],
     )
 
   def make_grounding_lite_mcp(self):
+    """Creates an MCP toolset for grounding with Google Maps tools."""
+    headers = {}
+    if (
+        google_maps_api_key
+        and google_maps_api_key != "YOUR_GOOGLE_MAPS_API_KEY_HERE"
+    ):
+      headers["X-Goog-Api-Key"] = google_maps_api_key
     return McpToolset(
-                connection_params=StreamableHTTPConnectionParams(
-                    url="https://mapstools.googleapis.com/mcp",
-                    headers={"X-Goog-Api-Key": google_maps_api_key} if google_maps_api_key and google_maps_api_key != "YOUR_GOOGLE_MAPS_API_KEY_HERE" else {},
-                    timeout=30.0,
-                ),
-                # You can filter for specific Maps tools if needed:
-                # tool_filter=['get_directions', 'find_place_by_id']
-            )
+        connection_params=StreamableHTTPConnectionParams(
+            url="https://mapstools.googleapis.com/mcp",
+            headers=headers,
+            timeout=30.0,
+        ),
+        # You can filter for specific Maps tools if needed:
+        # tool_filter=['get_directions', 'find_place_by_id']
+    )
 
   def _build_agent_card(self) -> AgentCard:
+    """Builds the A2UI agent card with streaming and extension capabilities."""
     extensions = []
     if self._schema_managers:
       for version, sm in self._schema_managers.items():
-        ext = get_a2ui_agent_extension(
+        ext = a2ui_extension.get_a2ui_agent_extension(
             version,
             sm.accepts_inline_catalogs,
             sm.supported_catalog_ids,
@@ -204,8 +245,11 @@ class MAUIAgent:
     )
 
     return AgentCard(
-        name="AI Kit Agent",
-        description="This agent can provide Google Maps UI-enriched responses to relevant prompts",
+        name="Agentic UI ToolKit",
+        description=(
+            "This agent can provide Google Maps UI-enriched responses to"
+            " relevant prompts"
+        ),
         url=self.base_url,
         version="1.0.0",
         default_input_modes=MAUIAgent.SUPPORTED_CONTENT_TYPES,
@@ -219,7 +263,7 @@ class MAUIAgent:
         app_name=self._agent_name,
         agent=agent,
         artifact_service=InMemoryArtifactService(),
-        session_service=InMemorySessionService(),
+        session_service=self._shared_session_service,
         memory_service=InMemoryMemoryService(),
     )
 
@@ -227,47 +271,47 @@ class MAUIAgent:
     return "Working on it..."
 
   def _build_llm_agent(
-      self, schema_manager: Optional[A2uiSchemaManager] = None
+      self, schema_manager: A2uiSchemaManager | None = None
   ) -> LlmAgent:
-    """Builds the LLM agent for the AI Kit agent."""
-    LITELLM_MODEL = os.getenv("LITELLM_MODEL", "gemini/gemini-2.5-flash")
-
-
+    """Builds the LLM agent for the Agentic UI ToolKit."""
     skill_names = [
         "google-maps-enriched-local-query-response",
     ]
     skills = []
     for name in skill_names:
-        skills.append(load_skill_from_dir(_SKILL_BASE_PATH / name))
+      skills.append(adk_skills.load_skill_from_dir(_SKILL_BASE_PATH / name))
 
     skill_manager_tool = skill_toolset.SkillToolset(skills=skills)
     grounding_lite_mcp = self.make_grounding_lite_mcp()
 
-    instruction = (
-        schema_manager.generate_system_prompt(
-            role_description=AGENT_INSTRUCTION,
-            include_schema=True,
-            include_examples=False,
-            validate_examples=False,
-        )
-        if schema_manager
-        else AGENT_INSTRUCTION
-    )
+    if schema_manager:
+      instruction = schema_manager.generate_system_prompt(
+          role_description=AGENT_INSTRUCTION,
+          include_schema=True,
+          include_examples=False,
+          validate_examples=False,
+      )
+    else:
+      instruction = AGENT_INSTRUCTION
 
     return LlmAgent(
-        model=LiteLlm(model="gemini/gemini-3-flash-preview"),
+        model=LiteLlm(model=self._model_name),
         name="maui_agent",
-        description="An agent that can provide Google Maps UI-enriched responses to relevant prompts",
+        description=(
+            "An agent that can provide Google Maps UI-enriched responses to"
+            " relevant prompts"
+        ),
         instruction=instruction,
         tools=[grounding_lite_mcp, skill_manager_tool],
     )
 
   async def stream(
-      self, query, session_id, ui_version: Optional[str] = None
+      self, query, session_id, ui_version: str | None = None
   ) -> AsyncIterable[dict[str, Any]]:
+    """Streams responses for a user query."""
     session_state = {"base_url": self.base_url, "expression": "{expression}"}
 
-    # Determine which runner to use based on whether the a2ui extension is active.
+    # Determine which runner to use based on active UI extension version.
     if ui_version:
       runner = self._ui_runners[ui_version]
       schema_manager = self._schema_managers[ui_version]
@@ -300,7 +344,9 @@ class MAUIAgent:
     current_query_text = query
 
     # Ensure schema was loaded
-    if ui_version and (not selected_catalog or not selected_catalog.catalog_schema):
+    if ui_version and (
+        not selected_catalog or not selected_catalog.catalog_schema
+    ):
       logger.error(
           "--- MAUIAgent.stream: A2UI_SCHEMA is not loaded. "
           "Cannot perform UI validation. ---"
@@ -311,8 +357,9 @@ class MAUIAgent:
               Part(
                   root=TextPart(
                       text=(
-                          "I'm sorry, I'm facing an internal configuration error with"
-                          " my UI components. Please contact support."
+                          "I'm sorry, I'm facing an internal configuration"
+                          " error with my UI components. Please contact"
+                          " support."
                       )
                   )
               )
@@ -323,8 +370,10 @@ class MAUIAgent:
     while attempt <= max_retries:
       attempt += 1
       logger.info(
-          f"--- MAUIAgent.stream: Attempt {attempt}/{max_retries + 1} "
-          f"for session {session_id} ---"
+          "--- MAUIAgent.stream: Attempt %d/%d for session %s ---",
+          attempt,
+          max_retries + 1,
+          session_id,
       )
 
       current_message = types.Content(
@@ -350,29 +399,26 @@ class MAUIAgent:
 
       if selected_catalog:
         logger.info(
-            f"--- MAUIAgent.stream: Using A2UI stream parser for catalog {selected_catalog.catalog_id} ---"
+            "--- MAUIAgent.stream: Using A2UI stream parser for catalog %s ---",
+            selected_catalog.catalog_id,
         )
-        from a2ui.parser.streaming import A2uiStreamParser
 
         if session_id in self._parsers:
           self._parsers.move_to_end(session_id)
         else:
-          self._parsers[session_id] = A2uiStreamParser()
+          self._parsers[session_id] = A2uiStreamParser(selected_catalog)
           if len(self._parsers) > self._max_parsers:
             self._parsers.popitem(last=False)
 
-
         logger.info(
-            f"--- MAUIAgent.stream: Streamed part: {token_stream()} ---"
+            "--- MAUIAgent.stream: Streamed part: %s ---", token_stream()
         )
 
         async for part in stream_response_to_parts(
             self._parsers[session_id],
             token_stream(),
         ):
-          logger.info(
-            f"-- MAUIAgent.stream: Streamed part: {part} ---"
-          )
+          logger.info("-- MAUIAgent.stream: Streamed part: %s ---", part)
           yield {
               "is_task_complete": False,
               "parts": [part],
@@ -387,7 +433,8 @@ class MAUIAgent:
       final_response_content = "".join(full_content_list)
 
       logger.info(
-        f"-- MAUIAgent.stream: Final response content: {final_response_content} ---"
+          "-- MAUIAgent.stream: Final response content: %s ---",
+          final_response_content,
       )
 
       is_valid = False
@@ -395,13 +442,15 @@ class MAUIAgent:
 
       if ui_version:
         logger.info(
-            "--- MAUIAgent.stream: Validating UI response (Attempt"
-            f" {attempt})... ---"
+            "--- MAUIAgent.stream: Validating UI response (Attempt %d)... ---",
+            attempt,
         )
         try:
-          logger.info(f"--- MAUIAgent.stream: Final response content: {final_response_content} ---")
+          logger.info(
+              "--- MAUIAgent.stream: Final response content: %s ---",
+              final_response_content,
+          )
           response_parts = parse_response(final_response_content)
-
 
           for part in response_parts:
             if not part.a2ui_json:
@@ -419,8 +468,9 @@ class MAUIAgent:
             # --- End Validation Steps ---
 
             logger.info(
-                "--- MAUIAgent.stream: UI JSON successfully parsed AND validated"
-                f" against schema. Validation OK (Attempt {attempt}). ---"
+                "--- MAUIAgent.stream: UI JSON successfully parsed AND"
+                " validated against schema. Validation OK (Attempt %d). ---",
+                attempt,
             )
             is_valid = True
 
@@ -430,14 +480,19 @@ class MAUIAgent:
             jsonschema.exceptions.ValidationError,
         ) as e:
           logger.warning(
-            f"--- final content full_content_list {full_content_list}  ---")
+              "--- final content full_content_list %s  ---",
+              full_content_list,
+          )
 
           logger.warning(
-              f"--- MAUIAgent.stream: A2UI validation failed: {e} (Attempt"
-              f" {attempt}) ---"
+              "--- MAUIAgent.stream: A2UI validation failed: %s (Attempt"
+              " %d) ---",
+              e,
+              attempt,
           )
           logger.warning(
-              f"--- Failed response content: {final_response_content[:500]}... ---"
+              "--- Failed response content: %s... ---",
+              final_response_content[:500],
           )
           error_message = f"Validation failed: {e}."
 
@@ -447,29 +502,31 @@ class MAUIAgent:
       if is_valid:
         logger.info(
             "--- MAUIAgent.stream: Response is valid. Sending final response"
-            f" (Attempt {attempt}). ---"
+            " (Attempt %d). ---",
+            attempt,
         )
         final_parts = parse_response_to_parts(
             final_response_content, fallback_text="OK."
         )
 
-        logger.info(f"--- MAUIAgent.stream: Final response parts: {final_parts} ---")
+        logger.info(
+            "--- MAUIAgent.stream: Final response parts: %s ---", final_parts
+        )
 
         seen_fingerprints = set()
         filtered_parts = []
         for p in final_parts:
-            if isinstance(p.root, DataPart):
-                fingerprint = ("data", json.dumps(p.root.data, sort_keys=True))
-            elif isinstance(p.root, TextPart):
-                fingerprint = ("text", p.root.text)
-            else:
-                fingerprint = ("other", str(p.root))
+          if isinstance(p.root, DataPart):
+            fingerprint = ("data", json.dumps(p.root.data, sort_keys=True))
+          elif isinstance(p.root, TextPart):
+            fingerprint = ("text", p.root.text)
+          else:
+            fingerprint = ("other", str(p.root))
 
-            if fingerprint not in seen_fingerprints:
-                seen_fingerprints.add(fingerprint)
-                filtered_parts.append(p)
+          if fingerprint not in seen_fingerprints:
+            seen_fingerprints.add(fingerprint)
+            filtered_parts.append(p)
         final_parts = filtered_parts
-
 
         yield {
             "is_task_complete": True,
@@ -481,15 +538,18 @@ class MAUIAgent:
 
       if attempt <= max_retries:
         logger.warning(
-            f"--- MAUIAgent.stream: Retrying... ({attempt}/{max_retries + 1}) ---"
+            "--- MAUIAgent.stream: Retrying... (%d/%d) ---",
+            attempt,
+            max_retries + 1,
         )
         # Prepare the query for the retry
         current_query_text = (
-            f"Your previous response was invalid. {error_message} You MUST generate a"
-            " valid response that strictly follows the A2UI JSON SCHEMA. The response"
-            " MUST be a JSON list of A2UI messages. Ensure each JSON part is wrapped in"
-            f" '{A2UI_OPEN_TAG}' and '{A2UI_CLOSE_TAG}' tags. Please retry the"
-            f" original request: '{query}'"
+            f"Your previous response was invalid. {error_message} You MUST"
+            " generate a valid response that strictly follows the A2UI JSON"
+            " SCHEMA. The response MUST be a JSON list of A2UI messages."
+            f" Ensure each JSON part is wrapped in '{A2UI_OPEN_TAG}' and"
+            f" '{A2UI_CLOSE_TAG}' tags. Please retry the original request:"
+            f" '{query}'"
         )
         # Loop continues...
 
@@ -504,8 +564,9 @@ class MAUIAgent:
             Part(
                 root=TextPart(
                     text=(
-                        "I'm sorry, I'm having trouble generating the interface for"
-                        " that request right now. Please try again in a moment."
+                        "I'm sorry, I'm having trouble generating the interface"
+                        " for that request right now. Please try again in a"
+                        " moment."
                     )
                 )
             )

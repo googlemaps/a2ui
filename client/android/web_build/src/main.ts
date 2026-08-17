@@ -1,4 +1,3 @@
-// swift-tools-version: 5.9
 //
 // Copyright 2026 Google LLC
 //
@@ -13,33 +12,26 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//
 
-import PackageDescription
 
-let package = Package(
-  name: "GoogleMapsA2UI",
-  platforms: [
-    .iOS(.v16)
-  ],
-  products: [
-    .library(
-      name: "GoogleMapsA2UI",
-      targets: ["GoogleMapsA2UI"]
-    )
-  ],
-  dependencies: [],
-  targets: [
-    .target(
-      name: "GoogleMapsA2UI",
-      dependencies: [],
-      resources: [
-        .copy("Resources/index.html")
-      ]
-    ),
-    .testTarget(
-      name: "GoogleMapsA2UITests",
-      dependencies: ["GoogleMapsA2UI"]
-    ),
-  ]
-)
+import {customElement} from 'lit/decorators.js';
+import {A2UICoreShell} from '../../../mobile_core/web_build/src/core-shell';
+
+(window as any)['A2UI_ATTRIBUTION_ID'] = 'gmp_web_maui_v0.1.7_exp,gmp_android_maui_v0.1.7_exp';
+
+@customElement('a2ui-shell')
+export class AndroidA2UIShell extends A2UICoreShell {
+
+  protected override notifyWebpageResized(height: number): void {
+      window.Android?.onWebpageResized?.(height);
+  }
+
+  protected override notifyJsReady(): void {
+      window.Android?.onJsReady?.();
+  }
+
+  override connectedCallback() {
+      super.connectedCallback();
+  }
+}
+

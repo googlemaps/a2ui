@@ -115,6 +115,10 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
         Map3DElement;
   }
 
+  get routeElements(): NodeListOf<HTMLElement> {
+    return this.renderRoot.querySelectorAll('gmp-route-3d');
+  }
+
   protected override createController() {
     return new A2uiController(this, GoogleMapApi);
   }
@@ -129,11 +133,10 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     css`
       :host {
         display: block;
-        height: 400px;
         width: 100%;
       }
       gmp-map-3d {
-        height: 400px;
+        height: 100%;
         display: block;
         width: 100%;
       }
@@ -311,18 +314,18 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
       zoom = 16;
     }
     const heading = props.heading ?? 0;
-    const mode = props.mode ?? 'roadmap';
+    const mode = (props.mode ?? 'roadmap').toUpperCase() as google.maps.maps3d.MapModeString;
 
     let tilt = props.tilt ?? 0;
-    if (mode !== 'satellite') {
+    if (mode !== 'SATELLITE') {
       tilt = 0;
     }
 
     const routes = props.routes || [];
 
     const style = {
-      "height": "400px",
       "width": "100%",
+      "aspect-ratio": "8 / 5",
       "margin-bottom": "16px",
       "border-radius": "16px",
       "overflow": "hidden",
@@ -335,16 +338,17 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
           center="${lat},${lng},0"
           tilt="${tilt}"
           mode="${mode}"
-          max-tilt=${mode === 'roadmap' ? '0' : nothing}
+          max-tilt=${mode === 'ROADMAP' ? '0' : nothing}
           heading="${heading}"
           map-id="2d6e1a27a57efe3c9479f6fc"
-          internal-usage-attribution-ids="${(window as any).A2UI_ATTRIBUTION_ID || 'gmp_web_maui_v0.1.7_exp'}"
+          internal-usage-attribution-ids="${(window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.7_exp'}"
         >${routes.map((route: any) => html`
           <gmp-route-3d
             origin="${route.origin.lat},${route.origin.lng}"
             destination="${route.destination.lat},${route.destination.lng}"
+            travel-mode="${props.travelMode || nothing}"
             autofits-camera
-            internal-usage-attribution-ids="${(window as any).A2UI_ATTRIBUTION_ID || 'gmp_web_maui_v0.1.7_exp'}"
+            internal-usage-attribution-ids="${(window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.7_exp'}"
           ></gmp-route-3d>`)}
         </gmp-map-3d>
       </section>

@@ -15,4 +15,4 @@
  */
 
 export { A2uiGoogleMap, GoogleMap } from './google_map.js';
-export { A2uiPlaceCard, PlaceCard } from './place_card.js';
+export { A2uiPlaceDetailsCompact, PlaceDetailsCompact } from './place_details_compact.js';

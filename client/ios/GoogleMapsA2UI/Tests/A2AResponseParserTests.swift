@@ -1,5 +1,5 @@
 //
-// Copyright 2026 Google Inc.
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,13 +15,14 @@
 //
 
 import XCTest
+
 @testable import GoogleMapsA2UI
 
 final class A2AResponseParserTests: XCTestCase {
 
   /// Tests that an error is thrown when the input payload is not a valid JSON object.
   func testParse_InvalidJSONFormat() {
-    let invalidPayload: [String: Any] = ["key": Date()] // Date is not valid JSON
+    let invalidPayload: [String: Any] = ["key": Date()]  // Date is not valid JSON
     XCTAssertThrowsError(try A2AResponseParser.parse(invalidPayload)) { error in
       XCTAssertEqual(error as? A2AParserError, .invalidJSONFormat)
     }
@@ -46,7 +47,7 @@ final class A2AResponseParserTests: XCTestCase {
     let events = try A2AResponseParser.parse(payload)
     XCTAssertEqual(events.count, 1)
 
-    guard case let .text(text) = events[0] else {
+    guard case .text(let text) = events[0] else {
       XCTFail("Expected text event")
       return
     }
@@ -59,7 +60,7 @@ final class A2AResponseParserTests: XCTestCase {
       "content": [
         "parts": [
           ["kind": "text", "text": "Show me some good sushi in Seattle"],
-          ["kind": "text", "text": "What are their ratings?"]
+          ["kind": "text", "text": "What are their ratings?"],
         ]
       ]
     ]
@@ -67,13 +68,13 @@ final class A2AResponseParserTests: XCTestCase {
     let events = try A2AResponseParser.parse(payload)
     XCTAssertEqual(events.count, 2)
 
-    if case let .text(text1) = events[0] {
+    if case .text(let text1) = events[0] {
       XCTAssertEqual(text1, "Show me some good sushi in Seattle")
     } else {
       XCTFail("Expected first event to be text")
     }
 
-    if case let .text(text2) = events[1] {
+    if case .text(let text2) = events[1] {
       XCTAssertEqual(text2, "What are their ratings?")
     } else {
       XCTFail("Expected second event to be text")
@@ -82,7 +83,8 @@ final class A2AResponseParserTests: XCTestCase {
 
   /// Tests that an A2UI JSON payload embedded inside a text part using `<a2ui-json>` tags is extracted.
   func testParse_EmbeddedA2UIJSON() throws {
-    let textWithJSON = "Here is the Seattle map <a2ui-json>{\"createSurface\": {\"surfaceId\": \"sushi-seattle\"}}</a2ui-json> Hope you like it!"
+    let textWithJSON =
+      "Here is the Seattle map <a2ui-json>{\"createSurface\": {\"surfaceId\": \"sushi-seattle\"}}</a2ui-json> Hope you like it!"
     let payload: [String: Any] = [
       "parts": [
         ["kind": "text", "text": textWithJSON]
@@ -92,20 +94,20 @@ final class A2AResponseParserTests: XCTestCase {
     let events = try A2AResponseParser.parse(payload)
     XCTAssertEqual(events.count, 3)
 
-    guard case let .text(prefix) = events[0] else {
+    guard case .text(let prefix) = events[0] else {
       return XCTFail("Expected text event")
     }
     XCTAssertEqual(prefix, "Here is the Seattle map")
 
-    guard case let .data(data, metadata) = events[1] else {
+    guard case .data(let data, let metadata) = events[1] else {
       return XCTFail("Expected data event")
     }
     XCTAssertEqual(metadata?.mimeType, "application/json+a2ui")
     let array = data as? [Any]
     let dict = array?.first as? [String: Any]
     XCTAssertNotNil(dict?["createSurface"])
-    
-    guard case let .text(suffix) = events[2] else {
+
+    guard case .text(let suffix) = events[2] else {
       return XCTFail("Expected text event")
     }
     XCTAssertEqual(suffix, "Hope you like it!")
@@ -121,10 +123,10 @@ final class A2AResponseParserTests: XCTestCase {
             "version": "v0.9",
             "updateComponents": [
               "surfaceId": "sushi-seattle",
-              "components": []
-            ]
+              "components": [],
+            ],
           ],
-          "metadata": ["mimeType": "application/json+a2ui"]
+          "metadata": ["mimeType": "application/json+a2ui"],
         ]
       ]
     ]
@@ -132,11 +134,11 @@ final class A2AResponseParserTests: XCTestCase {
     let events = try A2AResponseParser.parse(payload)
     XCTAssertEqual(events.count, 1)
 
-    guard case let .data(data, metadata) = events[0] else {
+    guard case .data(let data, let metadata) = events[0] else {
       return XCTFail("Expected data event")
     }
     XCTAssertEqual(metadata?.mimeType, "application/json+a2ui")
-    
+
     let a2uiArray = data as? [Any]
     XCTAssertNotNil(a2uiArray, "A2UI payload should be batched into an array")
     XCTAssertEqual(a2uiArray?.count, 1)
@@ -151,9 +153,9 @@ final class A2AResponseParserTests: XCTestCase {
           "data": [
             "createSurface": [
               "surfaceId": "sushi-seattle",
-              "catalogId": "a2ui://maps-agentic-ui-catalog.json"
+              "catalogId": "a2ui://maps-agentic-ui-catalog.json",
             ]
-          ]
+          ],
         ]
       ]
     ]
@@ -161,7 +163,7 @@ final class A2AResponseParserTests: XCTestCase {
     let events = try A2AResponseParser.parse(payload)
     XCTAssertEqual(events.count, 1)
 
-    guard case let .data(data, metadata) = events[0] else {
+    guard case .data(let data, let metadata) = events[0] else {
       return XCTFail("Expected data event")
     }
     XCTAssertEqual(metadata?.mimeType, "application/json+a2ui")
@@ -185,7 +187,7 @@ final class A2AResponseParserTests: XCTestCase {
     let events = try A2AResponseParser.parse(payload)
     XCTAssertEqual(events.count, 1)
 
-    guard case let .text(text) = events[0] else {
+    guard case .text(let text) = events[0] else {
       XCTFail("Expected text event")
       return
     }
@@ -201,28 +203,28 @@ final class A2AResponseParserTests: XCTestCase {
           "data": [
             "createSurface": [
               "surfaceId": "sushi-seattle",
-              "catalogId": "a2ui://maps-agentic-ui-catalog.json"
+              "catalogId": "a2ui://maps-agentic-ui-catalog.json",
             ]
           ],
-          "metadata": ["mimeType": "application/json+a2ui"]
+          "metadata": ["mimeType": "application/json+a2ui"],
         ],
         [
           "kind": "data",
           "data": [
             "updateComponents": [
               "surfaceId": "sushi-seattle",
-              "components": []
+              "components": [],
             ]
           ],
-          "metadata": ["mimeType": "application/json+a2ui"]
-        ]
+          "metadata": ["mimeType": "application/json+a2ui"],
+        ],
       ]
     ]
 
     let events = try A2AResponseParser.parse(payload)
     XCTAssertEqual(events.count, 1)
 
-    guard case let .data(data, metadata) = events[0] else {
+    guard case .data(let data, let metadata) = events[0] else {
       XCTFail("Expected data event")
       return
     }
@@ -233,9 +235,10 @@ final class A2AResponseParserTests: XCTestCase {
       return
     }
     XCTAssertEqual(a2uiArray.count, 2)
-    
+
     guard let dict1 = a2uiArray[0] as? [String: Any],
-          let dict2 = a2uiArray[1] as? [String: Any] else {
+      let dict2 = a2uiArray[1] as? [String: Any]
+    else {
       XCTFail("Expected array elements to be dictionaries")
       return
     }
@@ -250,21 +253,21 @@ final class A2AResponseParserTests: XCTestCase {
         [
           "kind": "data",
           "data": ["createSurface": ["surfaceId": "sushi-seattle"]],
-          "metadata": ["mimeType": "application/json+a2ui"]
+          "metadata": ["mimeType": "application/json+a2ui"],
         ],
         ["kind": "text", "text": "Middle Text explaining the surface"],
         [
           "kind": "data",
           "data": ["updateComponents": ["surfaceId": "sushi-seattle"]],
-          "metadata": ["mimeType": "application/json+a2ui"]
-        ]
+          "metadata": ["mimeType": "application/json+a2ui"],
+        ],
       ]
     ]
 
     let events = try A2AResponseParser.parse(payload)
     XCTAssertEqual(events.count, 3)
 
-    guard case let .data(data1, metadata1) = events[0] else {
+    guard case .data(let data1, let metadata1) = events[0] else {
       XCTFail("Expected first event to be data")
       return
     }
@@ -272,13 +275,13 @@ final class A2AResponseParserTests: XCTestCase {
     let batch1 = data1 as? [Any]
     XCTAssertEqual(batch1?.count, 1)
 
-    guard case let .text(text) = events[1] else {
+    guard case .text(let text) = events[1] else {
       XCTFail("Expected second event to be text")
       return
     }
     XCTAssertEqual(text, "Middle Text explaining the surface")
 
-    guard case let .data(data2, metadata2) = events[2] else {
+    guard case .data(let data2, let metadata2) = events[2] else {
       XCTFail("Expected third event to be data")
       return
     }
@@ -289,7 +292,8 @@ final class A2AResponseParserTests: XCTestCase {
 
   /// Tests that multiple `<a2ui-json>` tags within a single text part are all extracted sequentially.
   func testParse_MultipleEmbeddedA2UITags() throws {
-    let textWithMultipleTags = "First map: <a2ui-json>{\"createSurface\": {\"surfaceId\": \"sushi\"}}</a2ui-json> Then: <a2ui-json>{\"updateComponents\": {\"surfaceId\": \"sushi\"}}</a2ui-json> Done."
+    let textWithMultipleTags =
+      "First map: <a2ui-json>{\"createSurface\": {\"surfaceId\": \"sushi\"}}</a2ui-json> Then: <a2ui-json>{\"updateComponents\": {\"surfaceId\": \"sushi\"}}</a2ui-json> Done."
     let payload: [String: Any] = [
       "parts": [
         ["kind": "text", "text": textWithMultipleTags]
@@ -299,11 +303,12 @@ final class A2AResponseParserTests: XCTestCase {
     let events = try A2AResponseParser.parse(payload)
     XCTAssertEqual(events.count, 5)
 
-    guard case let .text(t1) = events[0],
-          case let .data(d1, m1) = events[1],
-          case let .text(t2) = events[2],
-          case let .data(d2, m2) = events[3],
-          case let .text(t3) = events[4] else {
+    guard case .text(let t1) = events[0],
+      case .data(let d1, let m1) = events[1],
+      case .text(let t2) = events[2],
+      case .data(let d2, let m2) = events[3],
+      case .text(let t3) = events[4]
+    else {
       XCTFail("Expected sequence: [text, data, text, data, text]")
       return
     }
@@ -319,4 +324,3 @@ final class A2AResponseParserTests: XCTestCase {
     XCTAssertEqual(t3, "Done.")
   }
 }
-
