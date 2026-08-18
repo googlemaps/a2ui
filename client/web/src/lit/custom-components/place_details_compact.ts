@@ -25,12 +25,16 @@ import {z} from 'zod'
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(structuralStyles);
 
-
-export const PlaceCardApi = {
-  name: 'PlaceCard',
+export const PlaceDetailsCompactApi = {
+  name: 'PlaceDetailsCompact',
   schema: z
     .object({
       placeId: DynamicStringSchema.describe('The ID of the place to display.'),
+      orientation: z
+        .enum(['horizontal', 'vertical'])
+        .optional()
+        .default('horizontal')
+        .describe('The orientation of the place card.'),
     })
     .strict(),
 } satisfies ComponentApi;
@@ -39,20 +43,22 @@ declare global {
   interface HTMLElementTagNameMap {
     "gmpx-place-details-compact": HTMLElement & {
       place: string | object | null;
+      orientation: "horizontal" | "vertical";
     };
   }
 }
 
-/** A2UI Custom Component for PlaceCard */
-@customElement('a2ui-placecard')
-export class PlaceCard extends A2uiLitElement<typeof PlaceCardApi> {
+/** A2UI Custom Component for PlaceDetailsCompact */
+@customElement('a2ui-placedetailscompact')
+export class PlaceDetailsCompact extends
+    A2uiLitElement<typeof PlaceDetailsCompactApi> {
   static override shadowRootOptions: ShadowRootInit = {
     ...LitElement.shadowRootOptions,
     mode: 'closed',
   };
 
   protected override createController() {
-    return new A2uiController(this, PlaceCardApi);
+    return new A2uiController(this, PlaceDetailsCompactApi);
   }
 
   static override styles = [
@@ -75,8 +81,16 @@ export class PlaceCard extends A2uiLitElement<typeof PlaceCardApi> {
 
     const placeId = props.placeId;
 
+    // Default to 'vertical' if this is the only a2ui-placedetailscompact component among its siblings,
+    // otherwise default to 'horizontal'. AI can still override this.
+    const siblingCards = Array.from(this.parentElement?.children || [])
+      .filter(c => c.tagName.toLowerCase() === 'a2ui-placedetailscompact');
+    const autoOrientation = siblingCards.length === 1 ? 'vertical' : 'horizontal';
+
+    const orientation = (props.orientation ?? autoOrientation).toUpperCase() as google.maps.places.PlaceDetailsOrientationString;
+
     const style = {
-      "width": "100%",
+      'width': '100%',
     };
 
     if (!placeId) {
@@ -85,9 +99,10 @@ export class PlaceCard extends A2uiLitElement<typeof PlaceCardApi> {
 
     return html`
       <section style=${styleMap(style)}>
-        <gmp-place-details-compact orientation="horizontal"
+        <gmp-place-details-compact orientation="${orientation}"
             place="${placeId}"
-            internal-usage-attribution-ids="${(window as any).A2UI_ATTRIBUTION_ID || 'gmp_web_maui_v0.1.7_exp'}">
+            internal-usage-attribution-ids="${
+        (window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.7_exp'}">
           <gmp-place-details-place-request place="${placeId}">
           </gmp-place-details-place-request>
             <gmp-place-content-config>
@@ -106,8 +121,8 @@ export class PlaceCard extends A2uiLitElement<typeof PlaceCardApi> {
   }
 }
 
-/** A2UI Definition for PlaceCard component */
-export const A2uiPlaceCard = {
-  ...PlaceCardApi,
-  tagName: "a2ui-placecard",
+/** A2UI Definition for PlaceDetailsCompact component */
+export const A2uiPlaceDetailsCompact = {
+  ...PlaceDetailsCompactApi,
+  tagName: 'a2ui-placedetailscompact',
 };

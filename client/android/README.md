@@ -8,12 +8,12 @@ The **GoogleMapsA2UI** library is an Android SDK designed to encapsulate the par
 It makes use of the following technologies:
 *   **Google Maps Platform** for rendering maps and places.
 *   **A2UI** for the Agent-driven dynamic UI protocol.
-*   **React** for the underlying web-based rendering engine.
+*   **Lit** for the underlying web-based rendering engine.
 
 ## Prerequisites
 *   **Protocol Version:** This library is built based on the **v0.9 A2UI protocol** and is **not backward compatible** with the v0.8 protocol. Ensure your backend server uses the v0.9 protocol format.
 *   **Android Studio:** Koala (2024.1.1) or later.
-*   **Android SDK:** 
+*   **Android SDK:**
     *   **Library:** API Level 24 or later.
     *   **Sample App:** API Level 26 or later.
 *   **Java:** JDK 17.
@@ -104,13 +104,13 @@ The SDK encapsulates all complex parsing and rendering logic into four core comp
 4.  **JS Communication Bridge (`WebAppInterface`)**: Manages bidirectional communication. It sends data from Android to JS and receives callbacks for events like webpage resizing and user actions.
 
 
-## Updating the React Frontend (React Renderer Updates)
+## Customizing the Web Components
 
-The `GoogleMapsA2UI` library relies on a pre-built React web frontend bundle (`index.html`) which is shipped inside its `assets` folder.
+The `GoogleMapsA2UI` library relies on a pre-built HTML bundle (`index.html`) which is shipped inside its `assets` folder. This bundle compiles the core A2UI web components together with the Android platform-specific shell logic at `a2ui/client/android/web_build/`.
 
-If you have customized your `internal-usage-attribution-ids` or modified the underlying web components, you must recompile the frontend and bundle it back into this Android Library.
+If you have customized your `internal-usage-attribution-ids` or modified the underlying web components, you must recompile the HTML payload and bundle it back into this Android Library.
 
-Steps to update the React renderer with your customizations:
+Steps to update the web components with your customizations:
 
 1. **Build the local A2UI web library:**
    ```bash
@@ -118,18 +118,14 @@ Steps to update the React renderer with your customizations:
    npm run build-and-link
    ```
 
-2. **Rebuild the React app and bundle it into a single HTML file:**
+2. **Rebuild the web components and bundle it into a single HTML file:**
    ```bash
-   cd ~/ai-kit/a2ui-samples/client/web/react
+   cd ~/ai-kit/a2ui/client/android/web_build
    npm install
    npm link @googlemaps/a2ui
-   npm run build:mobile
+   npm run build
    ```
+   *(Note: The `build` script compiles the payload and automatically copies it into the Android Library's assets folder)*
 
-3. **Copy the compiled `index.html` into the Android Library's assets folder:**
-   ```bash
-   cp ~/ai-kit/a2ui-samples/client/web/react/dist/index.html ~/ai-kit/a2ui/client/android/GoogleMapsA2UI/src/main/assets/
-   ```
-
-4. **Re-publish the Library:**
+3. **Re-publish the Library:**
    Finally, re-publish the SDK to Maven Local (Step 2 above) and reinstall your Android application to see the changes.

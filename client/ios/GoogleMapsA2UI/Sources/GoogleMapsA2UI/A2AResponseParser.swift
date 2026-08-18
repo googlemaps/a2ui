@@ -1,5 +1,5 @@
 //
-// Copyright 2026 Google Inc.
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,10 +33,10 @@ public enum A2AResponseParser {
 
   /// Parses a raw server response dictionary into a flat list of `ParsedA2AEvent`s.
   ///
-  /// The parser checks multiple possible JSON paths (`parts`, `content.parts`, `status.message.parts`) 
+  /// The parser checks multiple possible JSON paths (`parts`, `content.parts`, `status.message.parts`)
   /// to support varying response structures from different server backends (e.g. standalone JSON-RPC vs. ADK Web Server).
   ///
-  /// Note: Any extracted A2UI JSON payloads (mime type `application/json+a2ui`) will always be batched 
+  /// Note: Any extracted A2UI JSON payloads (mime type `application/json+a2ui`) will always be batched
   /// and returned as an array (`[Any]`) inside `ParsedA2AEvent.data`, providing a consistent format.
   ///
   /// - Parameter rawJSON: The raw JSON dictionary received from the server.
@@ -51,11 +51,13 @@ public enum A2AResponseParser {
     if let parts = rawJSON["parts"] as? [[String: Any]] {
       partsArray = parts
     } else if let content = rawJSON["content"] as? [String: Any],
-              let parts = content["parts"] as? [[String: Any]] {
+      let parts = content["parts"] as? [[String: Any]]
+    {
       partsArray = parts
     } else if let status = rawJSON["status"] as? [String: Any],
-              let message = status["message"] as? [String: Any],
-              let parts = message["parts"] as? [[String: Any]] {
+      let message = status["message"] as? [String: Any],
+      let parts = message["parts"] as? [[String: Any]]
+    {
       partsArray = parts
     } else {
       partsArray = nil
@@ -68,7 +70,7 @@ public enum A2AResponseParser {
     var sdkParts: [ParsedA2AEvent] = []
     var a2uiPayloads: [Any] = []
 
-    // flushA2UI() batches consecutive A2UI JSON payloads together into a single ParsedA2AEvent. 
+    // flushA2UI() batches consecutive A2UI JSON payloads together into a single ParsedA2AEvent.
     func flushA2UI() {
       if !a2uiPayloads.isEmpty {
         let event = ParsedA2AEvent.data(
@@ -88,7 +90,8 @@ public enum A2AResponseParser {
       } else if let dataPayload = part["data"] as? [String: Any] {
         let metadata = part["metadata"] as? [String: Any]
         let mimeType = part["mimeType"] as? String ?? metadata?["mimeType"] as? String
-        let resolvedMimeType = mimeType
+        let resolvedMimeType =
+          mimeType
           ?? (isA2UIPayload(dataPayload) ? a2uiJsonMimeType : nil)
 
         if resolvedMimeType == a2uiJsonMimeType {
@@ -111,7 +114,7 @@ public enum A2AResponseParser {
 
   private static let a2uiKeys: Set<String> = [
     "createSurface", "updateComponents", "updateDataModel",
-    "beginRendering", "surfaceUpdate", "dataModelUpdate"
+    "beginRendering", "surfaceUpdate", "dataModelUpdate",
   ]
 
   /// Checks if a given dictionary represents an A2UI payload.
