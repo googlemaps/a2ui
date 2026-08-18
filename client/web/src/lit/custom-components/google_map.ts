@@ -25,6 +25,8 @@ import {z} from 'zod';
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(structuralStyles);
 
+let nextMarkerId = 0;
+
 const LatLngSchema = z.object({
   lat: DynamicNumberSchema,
   lng: DynamicNumberSchema,
@@ -41,6 +43,14 @@ const MapPinSchema = z.object({
   label: DynamicStringSchema,
   placeId: DynamicStringSchema.optional(),
 }).strict();
+
+interface MarkerInput {
+  position?: google.maps.LatLngLiteral;
+  placeId?: string|null;
+  label?: string|null;
+  zIndex?: number|null;
+  collisionBehavior?: google.maps.CollisionBehavior;
+}
 
 /** A2UI GoogleMap interface. */
 export const GoogleMapApi = {
@@ -115,6 +125,10 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
         Map3DElement;
   }
 
+  get routeElements(): NodeListOf<HTMLElement> {
+    return this.renderRoot.querySelectorAll('gmp-route-3d');
+  }
+
   protected override createController() {
     return new A2uiController(this, GoogleMapApi);
   }
@@ -129,11 +143,10 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     css`
       :host {
         display: block;
-        height: 400px;
         width: 100%;
       }
       gmp-map-3d {
-        height: 400px;
+        height: 100%;
         display: block;
         width: 100%;
       }
@@ -174,23 +187,26 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     return [];
   }
 
-  private create3DMarkerElement({ position, placeId, label, zIndex, collisionBehavior }: {
-    position?: google.maps.LatLngLiteral,
-    placeId?: string | null,
-    label?: string | null,
-    zIndex?: number | null,
-    collisionBehavior?: google.maps.CollisionBehavior,
-  }) {
-    const marker = document.createElement("gmp-marker-3d") as any;
-    marker.autofitsCamera = true;
+  private createMarkerAndLabel(
+      {position, placeId, label, zIndex, collisionBehavior}: MarkerInput):
+      {markerEl: HTMLElement, labelEl: HTMLElement} {
+    const markerId = `marker-${nextMarkerId++}`;
+    const markerEl = document.createElement('gmp-marker-3d') as any;
+    markerEl.autofitsCamera = true;
+    markerEl.id = markerId;
+    position && (markerEl.position = position);
+    placeId && (markerEl.placeId = placeId);
+    collisionBehavior && (markerEl.collisionBehavior = collisionBehavior);
+    (zIndex != null) && (markerEl.zIndex = zIndex);
 
-    position && (marker.position = position);
-    placeId && (marker.placeId = placeId);
-    label && (marker.label = label);
-    collisionBehavior && (marker.collisionBehavior = collisionBehavior);
-    (zIndex != null) && (marker.zIndex = zIndex);
+    const labelEl = document.createElement('gmp-label-3d') as any;
+    labelEl.id = `${markerId}-label`;
+    labelEl.for = markerId;
+    labelEl.collisionBehavior =
+        google.maps.CollisionBehavior.OPTIONAL_AND_HIDES_LOWER_PRIORITY;
+    labelEl.textContent = label;
 
-    return marker;
+    return {markerEl, labelEl};
   }
 
   override updated(changedProperties: PropertyValues): void {
@@ -237,29 +253,33 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
 
     // Add markers from props.markers
     for (const { lat, lng, label, placeId } of markers) {
-      const marker = this.create3DMarkerElement({
-        position: { lat, lng },
+      const {markerEl, labelEl} = this.createMarkerAndLabel({
+        position: {lat, lng},
         placeId,
         label,
       });
-      this.map3dElement.appendChild(marker);
-      this.markers.push(marker);
+      this.map3dElement.appendChild(markerEl);
+      this.map3dElement.appendChild(labelEl);
+      this.markers.push(markerEl);
     }
 
     // Add destination marker if available
     if (destination) {
-      const marker = this.create3DMarkerElement({
-        position: { lat: destination.lat as number, lng: destination.lng as number },
+      const {markerEl, labelEl} = this.createMarkerAndLabel({
+        position:
+            {lat: destination.lat as number, lng: destination.lng as number},
         label: 'Destination',
       });
-      this.map3dElement.appendChild(marker);
-      this.markers.push(marker);
+      this.map3dElement.appendChild(markerEl);
+      this.map3dElement.appendChild(labelEl);
+      this.markers.push(markerEl);
     }
 
     // Add anchor marker if available and no routes
     if (anchorMarker && !routes.length) {
-      const marker = this.create3DMarkerElement({
-        position: { lat: anchorMarker.lat as number, lng: anchorMarker.lng as number },
+      const {markerEl, labelEl} = this.createMarkerAndLabel({
+        position:
+            {lat: anchorMarker.lat as number, lng: anchorMarker.lng as number},
         placeId: anchorMarker.placeId as string,
         label: anchorMarker.label as string,
         zIndex: 1,
@@ -270,30 +290,43 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
           borderColor: "#2f79e8ff",
           glyphColor: "#ffffff"
         });
-        marker.append(pin as any);
+        markerEl.append(pin as any);
       }
-      this.map3dElement.appendChild(marker);
-      this.markers.push(marker);
+      this.map3dElement.appendChild(markerEl);
+      this.map3dElement.appendChild(labelEl);
+      this.markers.push(markerEl);
     }
 
     // Add pins for each route origin and destination
     for (const route of routes) {
-      const originMarker = this.create3DMarkerElement({
-        position: { lat: route.origin.lat as number, lng: route.origin.lng as number },
-        label: route.origin.label as string || "Origin",
-        collisionBehavior: google.maps.CollisionBehavior.OPTIONAL_AND_HIDES_LOWER_PRIORITY,
+      const {
+        markerEl: originMarker,
+        labelEl: originLabel
+      } = this.createMarkerAndLabel({
+        position:
+            {lat: route.origin.lat as number, lng: route.origin.lng as number},
+        label: route.origin.label as string || 'Origin',
+        collisionBehavior:
+            google.maps.CollisionBehavior.OPTIONAL_AND_HIDES_LOWER_PRIORITY,
         placeId: route.origin.placeId as string,
       });
       this.map3dElement.appendChild(originMarker);
+      this.map3dElement.appendChild(originLabel);
       this.markers.push(originMarker);
 
-      const destMarker = this.create3DMarkerElement({
-        position: { lat: route.destination.lat as number, lng: route.destination.lng as number },
-        label: route.destination.label as string || "Destination",
-        collisionBehavior: google.maps.CollisionBehavior.OPTIONAL_AND_HIDES_LOWER_PRIORITY,
-        placeId: route.destination.placeId as string,
-      });
+      const {markerEl: destMarker, labelEl: destLabel} =
+          this.createMarkerAndLabel({
+            position: {
+              lat: route.destination.lat as number,
+              lng: route.destination.lng as number
+            },
+            label: route.destination.label as string || 'Destination',
+            collisionBehavior:
+                google.maps.CollisionBehavior.OPTIONAL_AND_HIDES_LOWER_PRIORITY,
+            placeId: route.destination.placeId as string,
+          });
       this.map3dElement.appendChild(destMarker);
+      this.map3dElement.appendChild(destLabel);
       this.markers.push(destMarker);
     }
   }
@@ -311,18 +344,18 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
       zoom = 16;
     }
     const heading = props.heading ?? 0;
-    const mode = props.mode ?? 'roadmap';
+    const mode = (props.mode ?? 'roadmap').toUpperCase() as google.maps.maps3d.MapModeString;
 
     let tilt = props.tilt ?? 0;
-    if (mode !== 'satellite') {
+    if (mode !== 'SATELLITE') {
       tilt = 0;
     }
 
     const routes = props.routes || [];
 
     const style = {
-      "height": "400px",
       "width": "100%",
+      "aspect-ratio": "8 / 5",
       "margin-bottom": "16px",
       "border-radius": "16px",
       "overflow": "hidden",
@@ -335,16 +368,17 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
           center="${lat},${lng},0"
           tilt="${tilt}"
           mode="${mode}"
-          max-tilt=${mode === 'roadmap' ? '0' : nothing}
+          max-tilt=${mode === 'ROADMAP' ? '0' : nothing}
           heading="${heading}"
           map-id="2d6e1a27a57efe3c9479f6fc"
-          internal-usage-attribution-ids="${(window as any).A2UI_ATTRIBUTION_ID || 'gmp_web_maui_v0.1.7_exp'}"
+          internal-usage-attribution-ids="${(window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.7_exp'}"
         >${routes.map((route: any) => html`
           <gmp-route-3d
             origin="${route.origin.lat},${route.origin.lng}"
             destination="${route.destination.lat},${route.destination.lng}"
+            travel-mode="${props.travelMode || nothing}"
             autofits-camera
-            internal-usage-attribution-ids="${(window as any).A2UI_ATTRIBUTION_ID || 'gmp_web_maui_v0.1.7_exp'}"
+            internal-usage-attribution-ids="${(window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.7_exp'}"
           ></gmp-route-3d>`)}
         </gmp-map-3d>
       </section>

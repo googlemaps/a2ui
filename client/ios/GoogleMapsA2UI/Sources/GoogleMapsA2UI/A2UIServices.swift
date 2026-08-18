@@ -1,5 +1,5 @@
 //
-// Copyright 2026 Google Inc.
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,7 +33,8 @@ public enum A2UIServices {
   ///
   /// - Parameter apiKey: The Google Maps API key string.
   public static func provideApiKey(_ apiKey: String) {
-    assert(Thread.isMainThread, "A2UIServices.provideApiKey(_:) must be called from the main thread.")
+    assert(
+      Thread.isMainThread, "A2UIServices.provideApiKey(_:) must be called from the main thread.")
     self.apiKey = apiKey
   }
 
@@ -44,7 +45,9 @@ public enum A2UIServices {
   ///
   /// - Returns: A tuple containing the HTML string and the base URL, or `nil` on failure.
   static func getLocalHTMLContent() -> (html: String, baseURL: URL?)? {
-    assert(Thread.isMainThread, "A2UIServices.getLocalHTMLContent() must be called from the main thread.")
+    assert(
+      Thread.isMainThread, "A2UIServices.getLocalHTMLContent() must be called from the main thread."
+    )
     let currentKey = self.apiKey ?? ""
     // Return the cached HTML if we've already resolved it for the current API key
     if let cached = self.cachedContent, self.cachedForApiKey == currentKey {
@@ -74,4 +77,3 @@ public enum A2UIServices {
     return (html: resolvedHtml, baseURL: Bundle.module.resourceURL)
   }
 }
-

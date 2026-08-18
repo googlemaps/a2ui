@@ -1,5 +1,5 @@
 //
-// Copyright 2026 Google Inc.
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -46,7 +46,7 @@ public struct A2UIView: View {
   }
 
   public var body: some View {
-    if case let .data(payloadData, _) = part {
+    if case .data(let payloadData, _) = part {
       A2UIMessageInnerWrapper(
         webViewID: id,
         payload: payloadData,
@@ -59,7 +59,6 @@ public struct A2UIView: View {
   }
 }
 
-
 /// An internal wrapper View that manages the dynamic height state of the WKWebView
 /// and applies standard styling like shadows and rounded corners to the message container.
 struct A2UIMessageInnerWrapper: View {
@@ -68,7 +67,7 @@ struct A2UIMessageInnerWrapper: View {
   let onUserAction: (String) -> Void
   let onRenderComplete: ((String, Double, String) -> Void)?
 
-  @State private var height: CGFloat = 100 // Default height
+  @State private var height: CGFloat = 100  // Default height
 
   var body: some View {
     A2UIMessageRepresentableView(
@@ -93,7 +92,7 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
   @Binding var dynamicHeight: CGFloat
   let onUserAction: (String) -> Void
   let onRenderComplete: ((String, Double, String) -> Void)?
-  
+
   /// Creates the WKWebView instance and configures its bridge to the web component.
   /// - Parameter context: The SwiftUI context.
   /// - Returns: A configured WKWebView.
@@ -104,7 +103,7 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
     // Expose iOS bridge to JS (window.webkit.messageHandlers.iOS)
     // This allows the web component to communicate user interactions (like "get_directions") back to Swift.
     contentController.add(context.coordinator, name: "iOS")
-    
+
     // Allows the JS ResizeObserver to notify Swift when the content height changes
     contentController.add(context.coordinator, name: "heightObserver")
 
@@ -125,6 +124,7 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
       };
       window.addEventListener('error', function(e) {
           window.webkit.messageHandlers.iOS.postMessage({action: 'error', data: 'Global Error: ' + e.message + ' at line ' + e.lineno});
+      });
       """
     let consoleScript = WKUserScript(
       source: consoleScriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: true)
@@ -147,7 +147,7 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
     webView.navigationDelegate = context.coordinator
     webView.uiDelegate = context.coordinator
     webView.scrollView.isScrollEnabled = false  // Prevent double scrolling inside the chat list
-    
+
     // Fix for the gray background sometimes seen at the boundaries of WKWebViews.
     // Setting the view and its scroll view to clear ensures our SwiftUI styling (shadows/corners) looks correct.
     webView.isOpaque = false
@@ -243,7 +243,8 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
       // Use JSONSerialization to safely escape the native Swift object for inclusion in JavaScript.
       let jsonString: String
       if let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
-         let str = String(data: jsonData, encoding: .utf8) {
+        let str = String(data: jsonData, encoding: .utf8)
+      {
         jsonString = str
       } else {
         jsonString = "[]"
@@ -256,7 +257,8 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
       // the JSON string as a JavaScript string literal.
       let encodedString: String
       if let encodedData = try? JSONEncoder().encode(jsonString),
-         let str = String(data: encodedData, encoding: .utf8) {
+        let str = String(data: encodedData, encoding: .utf8)
+      {
         encodedString = str
       } else {
         encodedString = "\"[]\""

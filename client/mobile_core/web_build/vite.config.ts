@@ -1,4 +1,3 @@
-// swift-tools-version: 5.9
 //
 // Copyright 2026 Google LLC
 //
@@ -13,33 +12,22 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//
 
-import PackageDescription
 
-let package = Package(
-  name: "GoogleMapsA2UI",
-  platforms: [
-    .iOS(.v16)
-  ],
-  products: [
-    .library(
-      name: "GoogleMapsA2UI",
-      targets: ["GoogleMapsA2UI"]
-    )
-  ],
-  dependencies: [],
-  targets: [
-    .target(
-      name: "GoogleMapsA2UI",
-      dependencies: [],
-      resources: [
-        .copy("Resources/index.html")
-      ]
-    ),
-    .testTarget(
-      name: "GoogleMapsA2UITests",
-      dependencies: ["GoogleMapsA2UI"]
-    ),
-  ]
-)
+import {defineConfig} from 'vite';
+import {viteSingleFile} from 'vite-plugin-singlefile';
+
+export default defineConfig({
+  plugins: [viteSingleFile()],
+  resolve: {
+    dedupe: ['lit', '@lit/context', '@lit-labs/signals'],
+  },
+  build: {
+    outDir: 'dist',
+    rollupOptions: {
+      input: {
+        app: 'index.html',
+      },
+    },
+  },
+});

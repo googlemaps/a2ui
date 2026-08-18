@@ -47,7 +47,7 @@ You are an expert in resolving location-based queries using the **A2UI framework
     paragraphs of text content, it is preferable to intersperse UI components
     where relevant, rather than placing them all at the end. As an example, if
     you write a separate paragraph about each of three restaurants, include a
-    PlaceCard for each restaurant after its corresponding paragraph instead of
+    PlaceDetailsCompact for each restaurant after its corresponding paragraph instead of
     placing a list of places at the end.
 
 ### 3. Data Integrity & Logic
@@ -100,7 +100,7 @@ Use the following logic to determine which UI component combinations to use:
 | :--- | :--- | :--- |
 | Immediate surroundings, vibe, or outdoor features | **GoogleMap** (Satellite/Tilt) | Lat/Lng, Name |
 | Parking availability | **GoogleMap** (Satellite/Tilt 0) | Lat/Lng, Name |
-| Interior vibe, products, or general services | **PlaceCard** (Do not include GoogleMap) | PlaceID |
+| Interior vibe, products, or general services | **PlaceDetailsCompact** (Do not include GoogleMap) | PlaceID |
 
 ---
 
@@ -110,18 +110,18 @@ Use the following logic to determine which UI component combinations to use:
 | Context                 | Recommended UI         | Data Requirements         |
 | :---------------------- | :--------------------- | :------------------------ |
 | **Anchored Search**:    | **Inline Map + List of | Pivot on `anchorMarker`.  |
-: Distance/time           : PlaceCards**           : POIs as `markers`. DO NOT :
+: Distance/time           : PlaceDetailsCompacts**           : POIs as `markers`. DO NOT :
 : constraint to a center  :                        : include a place card for  :
 : point.                  :                        : the anchor marker.        :
 | **Local Area**: Results | **Inline Map + List of | Pivot on `anchorMarker`   |
-: within a neighborhood   : PlaceCards**           : (town center). POIs as    :
+: within a neighborhood   : PlaceDetailsCompacts**           : (town center). POIs as    :
 : or city.                :                        : `markers`. DO NOT include :
 :                         :                        : a place card for the      :
 :                         :                        : anchor marker.            :
-| **Macro Region**:       | **List of PlaceCards** | Place IDs for all items.  |
+| **Macro Region**:       | **List of PlaceDetailsCompacts** | Place IDs for all items.  |
 : Results across a        :                        :                           :
 : state/country.          :                        :                           :
-| **Contextless**: A list | **List of PlaceCards** | Place IDs for all items.  |
+| **Contextless**: A list | **List of PlaceDetailsCompacts** | Place IDs for all items.  |
 : with no geographical    :                        :                           :
 : reference.              :                        :                           :
 
@@ -185,7 +185,7 @@ MUST NOT pass a reference to an array directly.
         },
         {
           "id": "place-card",
-          "component": "PlaceCard",
+          "component": "PlaceDetailsCompact",
           "placeId": { "path": "placeId" }
         }
       ]
@@ -218,9 +218,15 @@ Note that for the `GoogleMap` component, you MUST include the following fields:
 * `center`
 * `zoom`
 
-For the `PlaceCard` component, you MUST include the following fields:
+For the `PlaceDetailsCompact` component, you MUST include the following fields:
 
 * `placeId`
+
+You MAY also include:
+
+* `orientation`:
+    - You MUST use `"vertical"` when there is only ONE `PlaceDetailsCompact` in the response to emphasize the place image.
+    - You MUST use `"horizontal"` when there are MULTIPLE `PlaceDetailsCompact` components (e.g., in a list) to keep the layout compact and save vertical space.
 
 **IMPORTANT:** ALWAYS follow the schema provided by the schema manager (passed
 in as part of the instruction prompt) as the source of truth for what fields are
