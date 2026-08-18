@@ -1,3 +1,4 @@
+/// <reference types="google.maps" />
 /*
  Copyright 2026 Google LLC
 
