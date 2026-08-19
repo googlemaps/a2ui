@@ -12,204 +12,220 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""MAUI Agent with Grounding implementation."""
+
+import logging
 import os
 import pathlib
-import logging
 from typing import Optional
+
 from google import genai
-from google.genai import types
+from google.adk import skills as adk_skills
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools import skill_toolset
-from google.adk.tools import FunctionTool
-from google.adk.skills import load_skill_from_dir
-from a2ui.schema.manager import A2uiSchemaManager
+from google.adk.tools.function_tool import FunctionTool
+from google.genai import types
+
 from a2ui.schema.catalog import CatalogConfig
 from a2ui.schema.common_modifiers import remove_strict_validation
 from a2ui.schema.constants import VERSION_0_9
+from a2ui.schema.manager import A2uiSchemaManager
 
 # Import MAUIAgent to inherit from it
-from agent import MAUIAgent, AGENT_INSTRUCTION, MergedCatalogProvider
+from .agent import AGENT_INSTRUCTION, MAUIAgent, MergedCatalogProvider
 
 logger = logging.getLogger(__name__)
 
-CLEANUP_INSTRUCTION_TEMPLATE = """
-Please update the A2UI json response by replacing any incorrect
-Place IDs with the correct ones using the following grounding map of name to place ID:
-```
-{grounding_map}
-```
-Return only the cleaned JSON array. Here is the A2UI JSON response to clean up:
-```json
-{final_response_content}
-```
-"""
-
 # Load skill content at module level
 skill_content = ""
-skill_path = pathlib.Path(__file__).parent / "skills" / "google-maps-enriched-local-query-response" / "SKILL.md"
+skill_path = (
+    pathlib.Path(__file__).parent
+    / "skills"
+    / "google-maps-enriched-local-query-response"
+    / "SKILL.md"
+)
 if skill_path.exists():
-    with open(skill_path, "r") as f:
-        skill_content = f.read()
+  with open(skill_path, "r") as f:
+    skill_content = f.read()
 else:
-    logger.warning(f"Skill file not found at {skill_path}")
+  logger.warning("Skill file not found at %s", skill_path)
+
 
 async def query_vertex_map(query: str) -> str:
-    """Query Google Maps via Vertex Grounding and return cleaned response.
+  """Query Google Maps via Vertex Grounding and return cleaned response.
 
-    Args:
-        query: The location query or question.
-    """
+  Args:
+      query: The location query or question.
 
-    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
-    if not project_id:
-      raise ValueError("GOOGLE_CLOUD_PROJECT environment variable is not set. You must set a valid Google Cloud project ID to use the Agent with Grounding.")
+  Returns:
+      The grounded and cleaned A2UI response string.
+  """
 
-    location = os.environ.get("GOOGLE_CLOUD_LOCATION")
-    if not location:
-        location = "global"
-        logger.warning("GOOGLE_CLOUD_LOCATION is not set, defaulting to 'global'.")
+  project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
+  if not project_id:
+    raise ValueError(
+        "GOOGLE_CLOUD_PROJECT environment variable is not set. You must set a"
+        " valid Google Cloud project ID to use the Agent with Grounding."
+    )
 
-    model_id = "gemini-3-flash-preview"
-    cleanup_model_id = "gemini-3-flash-preview"
+  location = os.environ.get("GOOGLE_CLOUD_LOCATION")
+  if not location:
+    location = "global"
+    logger.warning("GOOGLE_CLOUD_LOCATION is not set, defaulting to 'global'.")
 
-    client = genai.Client(vertexai=True, project=project_id, location=location)
+  model_id = "gemini-3-flash-preview"
 
-    # Force use of skill for specialized maps tool
-    use_skill = True
+  client = genai.Client(vertexai=True, project=project_id, location=location)
 
-    # Construct instruction
-    base_instruction = "You are a location specialist.\n\n" + AGENT_INSTRUCTION
+  # Construct instruction
+  base_instruction = "You are a location specialist.\n\n" + AGENT_INSTRUCTION
 
-    # Try sibling directory first (local dev)
+  # Try sibling directory first (local dev)
+  extension_path = (
+      pathlib.Path(__file__).parent.parent
+      / "shared"
+      / "schema"
+      / "maps_catalog_extension.json"
+  )
+  # Fallback to nested directory (deployed environment)
+  if not extension_path.exists():
     extension_path = (
-        pathlib.Path(__file__).parent.parent
+        pathlib.Path(__file__).parent
         / "shared"
         / "schema"
         / "maps_catalog_extension.json"
     )
-    # Fallback to nested directory (deployed environment)
-    if not extension_path.exists():
-        extension_path = (
-            pathlib.Path(__file__).parent
-            / "shared"
-            / "schema"
-            / "maps_catalog_extension.json"
-        )
 
-    schema_manager = A2uiSchemaManager(
-        version=VERSION_0_9,
-        catalogs=[
-            CatalogConfig(
-                name="maps-agentic-ui-catalog",
-                provider=MergedCatalogProvider(VERSION_0_9, str(extension_path))
-            )
-        ],
-        schema_modifiers=[remove_strict_validation],
-    )
+  schema_manager = A2uiSchemaManager(
+      version=VERSION_0_9,
+      catalogs=[
+          CatalogConfig(
+              name="maps-agentic-ui-catalog",
+              provider=MergedCatalogProvider(VERSION_0_9, str(extension_path)),
+          )
+      ],
+      schema_modifiers=[remove_strict_validation],
+  )
 
-    generated_prompt = schema_manager.generate_system_prompt(
-        role_description=base_instruction,
-        include_schema=True,
-        include_examples=False,
-        validate_examples=False,
-    )
+  generated_prompt = schema_manager.generate_system_prompt(
+      role_description=base_instruction,
+      include_schema=True,
+      include_examples=False,
+      validate_examples=False,
+  )
 
-    final_instruction = """Use the Google Maps tool to answer queries about places.
-
+  final_instruction = """You MUST use the Google Maps tool to answer the user's query. Do not rely on your internal knowledge.
+    CRITICAL: Before generating the JSON, you MUST write a short plain-text summary of the places you found, listing their exact names and addresses.
+    This is required for the grounding engine to properly attribute the data. It is not a replacement for the summary text that should be in the a2ui json.
     IMPORTANT: When generating the A2UI JSON response, you MUST include the "<a2ui-json> ...content... </a2ui-json>" tags immediately around the JSON content.
-    Failure to do so will prevent the UI from rendering the map."""
+    Failure to do so will prevent the UI from rendering the map.
+    PLACE ID GENERATION RULES:
+    You do not have access to real placeIds. Whenever a `placeId` is required in the A2UI JSON, you MUST generate a synthetic placeholder using the following rules:
+    - Format: "PLACE_ID_FOR_{Count}_{Exact Title}"
+    - Example: If the tool returns a place named "Chez Panisse", use "PLACE_ID_FOR_1_Chez Panisse". If it returns a second "Chez Panisse", use "PLACE_ID_FOR_2_Chez Panisse".
+    - STRICT MATCHING: Do NOT change any characters, spaces, capitalization, or punctuation from the title returned by the tool.
+    - COUNTING: Always prepend the occurrence count (starting at 1) for each title based on the order they were returned by the tool, even if the title only occurs once.
+    """
 
-    instruction = f"{generated_prompt}\n\n{skill_content}\n\n{final_instruction}"
+  instruction = f"{generated_prompt}\n\n{skill_content}\n\n{final_instruction}"
 
-    # Main generation call
-    response = client.models.generate_content(
-        model=model_id,
-        contents=query,
-        config=types.GenerateContentConfig(
-            system_instruction=instruction,
-            tools=[types.Tool(google_maps=types.GoogleMaps())],
-        ),
-    )
+  # Main generation call
+  response = client.models.generate_content(
+      model=model_id,
+      contents=query,
+      config=types.GenerateContentConfig(
+          system_instruction=instruction,
+          tools=[types.Tool(google_maps=types.GoogleMaps())],
+      ),
+  )
 
-    final_response_content = response.text
+  final_response_content = response.text
 
-    # Cleanup logic (second pass)
-    try:
-        grounding_map = {}
-        if hasattr(response, 'candidates') and response.candidates and hasattr(response.candidates[0], 'grounding_metadata'):
-            meta = response.candidates[0].grounding_metadata
-            if hasattr(meta, 'grounding_chunks'):
-                for chunk in meta.grounding_chunks:
-                    if hasattr(chunk, 'maps') and chunk.maps:
-                        title = getattr(chunk.maps, 'title', None)
-                        place_id = getattr(chunk.maps, 'place_id', None)
-                        if title and place_id:
-                            grounding_map[title.lower().strip()] = place_id
+  # Replace synthetic place ids with actual grounded place ids.
+  try:
+    grounding_map = {}
+    if (
+        hasattr(response, "candidates")
+        and response.candidates
+        and hasattr(response.candidates[0], "grounding_metadata")
+    ):
+      meta = response.candidates[0].grounding_metadata
+      IGNORE_TITLE_SUFFIX = " - Google Maps"
+      IGNORE_PLACE_ID_PREFIX = "places/ChI"
+      if hasattr(meta, "grounding_chunks") and meta.grounding_chunks:
+        title_counts = {}
+        for chunk in meta.grounding_chunks:
+          if hasattr(chunk, "maps") and chunk.maps:
+            title = getattr(chunk.maps, "title", None)
+            place_id = getattr(chunk.maps, "place_id", None)
+            if title and place_id:
+              if place_id.startswith(IGNORE_PLACE_ID_PREFIX):
+                place_id = place_id[len(IGNORE_PLACE_ID_PREFIX) - 3:]
+              if title.endswith(IGNORE_TITLE_SUFFIX):
+                title = title[:-len(IGNORE_TITLE_SUFFIX)]
 
-        if grounding_map and "<a2ui-json>" in final_response_content:
-            cleanup_response = client.models.generate_content(
-                model=cleanup_model_id,
-                contents=query,
-                config=types.GenerateContentConfig(
-                    system_instruction=CLEANUP_INSTRUCTION_TEMPLATE.format(
-                        grounding_map=grounding_map,
-                        final_response_content=final_response_content
-                    ),
-                ),
-            )
-            text = cleanup_response.text
-            start_idx = text.find("<a2ui-json>")
-            end_idx = text.rfind("</a2ui-json>")
-            if start_idx == -1 and end_idx == -1:
-                final_response_content = "<a2ui-json>" + text + "</a2ui-json>"
-            else:
-                final_response_content = text
+              # Track how many times this title has appeared
+              title_counts[title] = title_counts.get(title, 0) + 1
+              count = title_counts[title]
+              grounding_map[f"PLACE_ID_FOR_{count}_{title}"] = place_id
+      else:
+        logger.warning("No grounding chunks found")
+    else:
+      logger.warning("No grounding metadata found")
 
-    except Exception as e:
-        logger.error(f"Error during Place ID cleanup: {e}")
+    if grounding_map:
+      for key, value in grounding_map.items():
+        final_response_content = final_response_content.replace(key, value)
+    else:
+      logger.warning("No grounding map found")
 
-    # Final safety check: Extract JSON array if marker is present
-    if "<a2ui-json>" in final_response_content:
-        marker_idx = final_response_content.find("<a2ui-json>")
-        before_marker = final_response_content[:marker_idx]
-        after_marker = final_response_content[marker_idx + len("<a2ui-json>"):]
+  except Exception as e:  # pylint: disable=broad-exception-caught
+    logger.error("Error during Place ID cleanup: %s", e)
 
-        start_idx = after_marker.find("[")
-        end_idx = after_marker.rfind("]")
-        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-            json_only = after_marker[start_idx:end_idx+1]
-            final_response_content = before_marker + "<a2ui-json>" + json_only + "</a2ui-json>"
+  if "PLACE_ID_FOR_" in final_response_content:
+    logger.warning("Place ID placeholder found in response.")
 
-    return final_response_content
+  # Final safety check: Extract JSON array if marker is present
+  if "<a2ui-json>" in final_response_content:
+    marker_idx = final_response_content.find("<a2ui-json>")
+    after_marker = final_response_content[marker_idx + len("<a2ui-json>") :]
+
+    start_idx = after_marker.find("[")
+    end_idx = after_marker.rfind("]")
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+      json_only = after_marker[start_idx : end_idx + 1]
+      final_response_content = "<a2ui-json>" + json_only + "</a2ui-json>"
+
+  return final_response_content
 
 
 class MAUIAgentWithGrounding(MAUIAgent):
-    """An agent that finds restaurants based on user criteria, using Vertex Grounding."""
+  """An agent that finds restaurants based on user criteria, using Vertex Grounding."""
 
-    def __init__(self, base_url: str):
-        super().__init__(base_url, agent_name="MAUI Agent with Grounding")
+  def __init__(self, base_url: str):
+    super().__init__(base_url, agent_name="MAUI Agent with Grounding")
 
-    def _build_llm_agent(
-        self, schema_manager: Optional[A2uiSchemaManager] = None
-    ) -> LlmAgent:
-        """Builds the LLM agent for the MAUI agent with grounding."""
+  def _build_llm_agent(
+      self, schema_manager: A2uiSchemaManager | None = None
+  ) -> LlmAgent:
+    """Builds the LLM agent for the MAUI agent with grounding."""
 
-        _SKILL_BASE_PATH = pathlib.Path(__file__).parent / "skills"
+    skill_base_path = pathlib.Path(__file__).parent / "skills"
 
-        skill_names = [
-            "google-maps-enriched-local-query-response",
-        ]
-        skills = []
-        for name in skill_names:
-            skills.append(load_skill_from_dir(_SKILL_BASE_PATH / name))
+    skill_names = [
+        "google-maps-enriched-local-query-response",
+    ]
+    skills = []
+    for name in skill_names:
+      skills.append(adk_skills.load_skill_from_dir(skill_base_path / name))
 
-        skill_manager_tool = skill_toolset.SkillToolset(skills=skills)
+    skill_manager_tool = skill_toolset.SkillToolset(skills=skills)
 
-        # Use FunctionTool for Vertex grounding
-        grounding_tool = FunctionTool(func=query_vertex_map)
+    # Use FunctionTool for Vertex grounding
+    grounding_tool = FunctionTool(func=query_vertex_map)
 
-        AGENT_INSTRUCTION = """You are a location routing agent.
+    agent_instruction = """You are a location routing agent.
         Whenever the user asks a question about a location, directions, places, or maps,
         you MUST call the query_vertex_map tool.
         Do NOT attempt to answer location questions yourself.
@@ -218,21 +234,23 @@ class MAUIAgentWithGrounding(MAUIAgent):
 
         CRITICAL: Return the output of the query_vertex_map tool EXACTLY as it is received, without any summarization, explanation, or modification. Your final response should be just the output of the tool."""
 
-        instruction = (
-            schema_manager.generate_system_prompt(
-                role_description=AGENT_INSTRUCTION,
-                include_schema=True,
-                include_examples=False,
-                validate_examples=False,
-            )
-            if schema_manager
-            else AGENT_INSTRUCTION
-        )
+    if schema_manager:
+      instruction = schema_manager.generate_system_prompt(
+          role_description=agent_instruction,
+          include_schema=True,
+          include_examples=False,
+          validate_examples=False,
+      )
+    else:
+      instruction = agent_instruction
 
-        return LlmAgent(
-            model=LiteLlm(model="gemini/gemini-3-flash-preview"),
-            name="maui_agent_grounding",
-            description="An agent that can provide Google Maps UI-enriched responses using Vertex Grounding",
-            instruction=instruction,
-            tools=[grounding_tool, skill_manager_tool],
-        )
+    return LlmAgent(
+        model=LiteLlm(model="gemini/gemini-3-flash-preview"),
+        name="maui_agent_grounding",
+        description=(
+            "An agent that can provide Google Maps UI-enriched responses using"
+            " Vertex Grounding"
+        ),
+        instruction=instruction,
+        tools=[grounding_tool, skill_manager_tool],
+    )

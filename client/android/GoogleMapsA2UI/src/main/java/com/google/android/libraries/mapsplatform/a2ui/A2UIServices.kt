@@ -15,10 +15,10 @@
 package com.google.android.libraries.mapsplatform.a2ui
 
 object A2UIServices {
-    var apiKey: String = ""
-        private set
+  var apiKey: String = ""
+    private set
 
-    fun provideAPIKey(key: String) {
-        apiKey = key
-    }
+  fun provideAPIKey(key: String) {
+    apiKey = key
+  }
 }

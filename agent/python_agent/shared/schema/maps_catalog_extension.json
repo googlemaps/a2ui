@@ -87,7 +87,7 @@
       ],
       "unevaluatedProperties": false
     },
-    "PlaceCard": {
+    "PlaceDetailsCompact": {
       "type": "object",
       "allOf": [
         {
@@ -100,11 +100,19 @@
           "type": "object",
           "properties": {
             "component": {
-              "const": "PlaceCard"
+              "const": "PlaceDetailsCompact"
             },
             "placeId": {
               "$ref": "common_types.json#/$defs/DynamicString",
               "description": "The unique identifier for the place."
+            },
+            "orientation": {
+              "type": "string",
+              "enum": [
+                "horizontal",
+                "vertical"
+              ],
+              "description": "The orientation of this place card. Defaults to horizontal."
             }
           },
           "required": [

@@ -1,0 +1,30 @@
+[
+  {
+    "version": "v0.9",
+    "createSurface": {
+      "surfaceId": "{{surface_id}}",
+      "catalogId": "a2ui://maps-agentic-ui-catalog.json"
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateComponents": {
+      "surfaceId": "{{surface_id}}",
+      "components": [
+        {
+          "id": "root",
+          "component": "Column",
+          "children": [
+            "text-content"
+          ]
+        },
+        {
+          "id": "text-content",
+          "component": "Text",
+          "variant": "body",
+          "text": "{{text}}"
+        }
+      ]
+    }
+  }
+]
