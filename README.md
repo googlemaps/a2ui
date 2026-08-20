@@ -9,6 +9,8 @@
 [![iOS Library](https://img.shields.io/badge/iOS_Library-SwiftUI-007AFF)](https://github.com/googlemaps/a2ui/tree/main/client/ios)
 
 > **Note:** This toolkit is in **Experimental** status.
+> 
+> 🔔 Stay Updated: Click the **Watch** button at the top right of this repository and select Custom → Releases to get notified whenever a new version is published.
 
 This repository contains the A2UI implementation for the Maps Agentic UI Toolkit. It includes components and handlers implementing the Agent-to-User Interface (A2UI) standard, allowing agents to present rich, interactive interfaces across different platforms.
 
