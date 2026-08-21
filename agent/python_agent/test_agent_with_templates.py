@@ -36,14 +36,14 @@ _LITELLM_PATH = (
 class MockPart:
   """Mock Part helper for test streaming."""
 
-  def __init__(self, text):
+  def __init__(self, text=""):
     self.text = text
 
 
 class MockContent:
   """Mock Content helper for test streaming."""
 
-  def __init__(self, parts):
+  def __init__(self, parts=None):
     self.parts = parts
 
 
@@ -68,8 +68,12 @@ class MockAsyncIterator:
       raise StopAsyncIteration
     return self.items.pop(0)
 
+  async def aclose(self):
+    pass
+
 
 class MockFunctionCall:
+  """Mock FunctionCall helper for test streaming."""
 
   def __init__(self, name, args):
     self.name = name
@@ -77,6 +81,7 @@ class MockFunctionCall:
 
 
 class MockEvent:
+  """Mock Event helper for ADK runner streaming."""
 
   def __init__(self, function_calls=None, content=None, partial=False):
     self.function_calls = function_calls or []
@@ -93,16 +98,24 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
   def setUp(self):
     super().setUp()
     self.mock_router = mock.MagicMock(spec=LiteLlm)
+    self.mock_router.model = "gemini/router-model"
     self.mock_extractor = mock.MagicMock(spec=LiteLlm)
+    self.mock_extractor.model = "gemini/template-model"
 
   def _setup_mock_llm(self, mock_lite_llm_class):
     def lite_llm_side_effect(*args, **kwargs):
       model = kwargs.get("model") or (args[0] if args else None)
       if model == "gemini/router-model":
         return self.mock_router
-      elif model == "gemini/template-model":
+      elif model in (
+          "gemini/template-model",
+          "gemini/gemini-3-flash-preview",
+          "gemini/generic-model",
+      ):
         return self.mock_extractor
-      return mock.MagicMock(spec=LiteLlm)
+      m = mock.MagicMock(spec=LiteLlm)
+      m.model = model or "mock-model"
+      return m
 
     mock_lite_llm_class.side_effect = lite_llm_side_effect
 
@@ -162,10 +175,14 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         self._mock_llm_stream('{"intent": "TEXT_ONLY", "query": "hello"}')
     )
 
-    # Mock extractor response stream yielding text answer
-    self.mock_extractor.generate_content_async.return_value = (
-        self._mock_llm_stream("This is a fast text-only response.")
-    )
+    mock_runner = mock.MagicMock()
+    mock_runner.run_async.return_value = MockAsyncIterator([
+        MockEvent(
+            content=MockContent(
+                [MockPart("This is a fast text-only response.")]
+            )
+        )
+    ])
 
     config = AgentConfig(
         fallback_mode=FallbackMode.TEXT,
@@ -174,12 +191,8 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
 
-    # Run stream
-    results = []
-    async for item in agent.stream(
-        query="hello", session_id="session_123", ui_version="v0.9"
-    ):
-      results.append(item)
+    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
+      results = await self._collect_stream(agent, "hello")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -205,9 +218,12 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self.mock_router.generate_content_async.side_effect = Exception(
         "Router error"
     )
-    self.mock_extractor.generate_content_async.return_value = (
-        self._mock_llm_stream("Response after router failure.")
-    )
+    mock_runner = mock.MagicMock()
+    mock_runner.run_async.return_value = MockAsyncIterator([
+        MockEvent(
+            content=MockContent([MockPart("Response after router failure.")])
+        )
+    ])
 
     config = AgentConfig(
         fallback_mode=FallbackMode.TEXT,
@@ -216,11 +232,8 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
 
-    results = []
-    async for item in agent.stream(
-        query="hello", session_id="session_123", ui_version="v0.9"
-    ):
-      results.append(item)
+    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
+      results = await self._collect_stream(agent, "hello")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -242,9 +255,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         self._mock_llm_stream('{"intent": "TEXT_ONLY", "query": "hello"}')
     )
 
-    # Mock extractor response with None parts
-    self.mock_extractor.generate_content_async.return_value = MockAsyncIterator(
-        [MockResponse(MockContent(None))]
+    mock_runner = mock.MagicMock()
+    mock_runner.run_async.return_value = MockAsyncIterator(
+        [MockEvent(content=MockContent(None))]
     )
 
     config = AgentConfig(
@@ -254,17 +267,18 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
 
-    results = []
-    async for item in agent.stream(
-        query="hello", session_id="session_123", ui_version="v0.9"
-    ):
-      results.append(item)
+    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
+      results = await self._collect_stream(agent, "hello")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
     parts = results[0]["parts"]
     text_comp = self._get_component_by_id(parts, "text-content")
-    self.assertEqual(text_comp["text"], "")
+    self.assertEqual(
+        text_comp["text"],
+        "I'm sorry, I encountered an issue retrieving location details right"
+        " now.",
+    )
 
   @mock.patch(_LITELLM_PATH)
   async def test_agent_unsupported_intent_fallback(self, mock_lite_llm_class):
@@ -307,6 +321,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(
         agent.config.template_model, "gemini/gemini-3.1-flash-lite"
     )
+    self.assertEqual(agent.config.fallback_mode, FallbackMode.TEXT)
 
   @mock.patch(_LITELLM_PATH)
   async def test_agent_directions_flow(self, mock_lite_llm_class):
@@ -623,7 +638,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         self._mock_llm_stream("Fallback plain text directions.")
     )
 
-    mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
         name="set_model_response",
         args={
@@ -648,7 +662,17 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         },
     )
     mock_event = MockEvent(function_calls=[mock_fc])
-    mock_runner.run_async.return_value = MockAsyncIterator([mock_event])
+    mock_extractor_runner = mock.MagicMock()
+    mock_extractor_runner.run_async.return_value = MockAsyncIterator(
+        [mock_event]
+    )
+
+    mock_fallback_runner = mock.MagicMock()
+    mock_fallback_runner.run_async.return_value = MockAsyncIterator([
+        MockEvent(
+            content=MockContent([MockPart("Fallback plain text directions.")])
+        )
+    ])
 
     config = AgentConfig(
         fallback_mode="TEXT",
@@ -657,7 +681,11 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
 
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
+    with mock.patch.object(
+        agent,
+        "_build_runner",
+        side_effect=[mock_extractor_runner, mock_fallback_runner],
+    ):
       results = await self._collect_stream(agent, query="directions to work")
 
     self.assertEqual(len(results), 1)
@@ -833,7 +861,14 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     mock_schema_manager.get_catalog.return_value = mock_catalog
     agent._schema_managers = {"v0.9": mock_schema_manager}
 
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
+    mock_fallback_runner = mock.MagicMock()
+    mock_fallback_runner.run_async.return_value = MockAsyncIterator(
+        [MockEvent(content=MockContent([MockPart("Fallback text from LLM.")]))]
+    )
+
+    with mock.patch.object(
+        agent, "_build_runner", side_effect=[mock_runner, mock_fallback_runner]
+    ):
       results = await self._collect_stream(agent, "coffee")
 
     self.assertEqual(len(results), 1)
@@ -849,13 +884,26 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self._setup_mock_llm(mock_lite_llm_class)
     self._mock_llm_responses(
         router_resp='{"intent": "LOCAL_SEARCH", "query": "sushi Seattle"}',
-        extractor_resp="I could not search places right now.",
     )
-    mock_runner = mock.MagicMock()
-    mock_runner.run_async.return_value = MockAsyncIterator([MockEvent()])
+    mock_extractor_runner = mock.MagicMock()
+    mock_extractor_runner.run_async.return_value = MockAsyncIterator(
+        [MockEvent()]
+    )
+    mock_fallback_runner = mock.MagicMock()
+    mock_fallback_runner.run_async.return_value = MockAsyncIterator([
+        MockEvent(
+            content=MockContent(
+                [MockPart("I could not search places right now.")]
+            )
+        )
+    ])
 
     agent = self._setup_agent(fallback_mode="TEXT")
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
+    with mock.patch.object(
+        agent,
+        "_build_runner",
+        side_effect=[mock_extractor_runner, mock_fallback_runner],
+    ):
       results = await self._collect_stream(agent, "sushi Seattle")
 
     self.assertEqual(len(results), 1)
@@ -873,13 +921,26 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self._setup_mock_llm(mock_lite_llm_class)
     self._mock_llm_responses(
         router_resp='{"intent": "LOCAL_SEARCH", "query": "sushi Seattle"}',
-        extractor_resp="Fast response after extraction failure.",
     )
-    mock_runner = mock.MagicMock()
-    mock_runner.run_async.return_value = MockAsyncIterator([MockEvent()])
+    mock_extractor_runner = mock.MagicMock()
+    mock_extractor_runner.run_async.return_value = MockAsyncIterator(
+        [MockEvent()]
+    )
+    mock_fallback_runner = mock.MagicMock()
+    mock_fallback_runner.run_async.return_value = MockAsyncIterator([
+        MockEvent(
+            content=MockContent(
+                [MockPart("Fast response after extraction failure.")]
+            )
+        )
+    ])
 
     agent = self._setup_agent(fallback_mode="DYNAMIC")
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
+    with mock.patch.object(
+        agent,
+        "_build_runner",
+        side_effect=[mock_extractor_runner, mock_fallback_runner],
+    ):
       with mock.patch(
           "python_agent.agent.MAUIAgent.stream",
       ) as mock_super_stream:
@@ -903,10 +964,18 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self._setup_mock_llm(mock_lite_llm_class)
     self._mock_llm_responses(
         router_resp='{"intent": "OTHER_SPATIAL", "query": "weather Yosemite"}',
-        extractor_resp="The weather in Yosemite is sunny, 75 degrees.",
     )
+    mock_runner = mock.MagicMock()
+    mock_runner.run_async.return_value = MockAsyncIterator([
+        MockEvent(
+            content=MockContent(
+                [MockPart("The weather in Yosemite is sunny, 75 degrees.")]
+            )
+        )
+    ])
     agent = self._setup_agent(fallback_mode="TEXT")
-    results = await self._collect_stream(agent, "weather Yosemite")
+    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
+      results = await self._collect_stream(agent, "weather Yosemite")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -1032,7 +1101,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
             "Shared guidelines content", extractor_agent.instruction
         )
         self.assertIn("Base skill instructions", extractor_agent.instruction)
-
 
 if __name__ == "__main__":
   unittest.main()

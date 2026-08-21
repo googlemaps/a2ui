@@ -51,12 +51,14 @@ jobs:
         uses: actions/setup-node@b39b52d1213e96004bfcb1c61a8a6fa8ab84f3e8 # v4.0.1
 
         with:
-          node-version: 20
+          node-version: 22
           registry-url: "https://wombat-dressing-room.appspot.com/"
 
       - name: Run Semantic Release
-        working-directory: client/web
         env:
           GITHUB_TOKEN: ${{ secrets.SYNCED_GITHUB_TOKEN_REPO }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_WOMBAT_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_WOMBAT_TOKEN }}
-        run: npm run release
+          NODE_PATH: ${{ github.workspace }}/client/web/node_modules
+        run: npx --prefix client/web semantic-release
+

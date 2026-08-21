@@ -14,24 +14,20 @@
 // limitations under the License.
 
 
-import {customElement} from 'lit/decorators.js';
-import {A2UICoreShell} from './core-shell';
+import {defineConfig} from 'vite';
+import {viteSingleFile} from 'vite-plugin-singlefile';
 
-(window as any)['A2UI_ATTRIBUTION_ID'] = 'gmp_web_maui_v0.1.7_exp,gmp_android_maui_v0.1.7_exp';
-
-@customElement('a2ui-shell')
-export class AndroidA2UIShell extends A2UICoreShell {
-
-  protected override notifyWebpageResized(height: number): void {
-      window.Android?.onWebpageResized?.(height);
-  }
-
-  protected override notifyJsReady(): void {
-      window.Android?.onJsReady?.();
-  }
-
-  override connectedCallback() {
-      super.connectedCallback();
-  }
-}
-
+export default defineConfig({
+  plugins: [viteSingleFile()],
+  resolve: {
+    dedupe: ['lit', '@lit/context', '@lit-labs/signals'],
+  },
+  build: {
+    outDir: 'dist',
+    rollupOptions: {
+      input: {
+        app: 'index.html',
+      },
+    },
+  },
+});
