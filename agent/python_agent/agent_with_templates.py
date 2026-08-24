@@ -39,15 +39,15 @@ from a2ui.a2a.parts import create_a2ui_part
 from a2ui.schema.manager import (
     A2uiSchemaManager,
 )
-from python_agent.agent import MAUIAgent
-from python_agent.agent_config import AgentConfig
-from python_agent.agent_config import FallbackMode
-from python_agent.extractor import DirectionsExtractorSchema
-from python_agent.extractor import LocalSearchExtractorSchema
-from python_agent.merger import merge_template
-from python_agent.router_config import IntentClass
-from python_agent.router_config import ROUTER_SYSTEM_INSTRUCTION
-from python_agent.router_config import RouterClassification
+from agent import MAUIAgent
+from agent_config import AgentConfig
+from agent_config import FallbackMode
+from extractor import DirectionsExtractorSchema
+from extractor import LocalSearchExtractorSchema
+from merger import merge_template
+from router_config import IntentClass
+from router_config import ROUTER_SYSTEM_INSTRUCTION
+from router_config import RouterClassification
 
 logger = logging.getLogger(__name__)
 _SKILL_BASE_PATH = pathlib.Path(__file__).parent / "skills"

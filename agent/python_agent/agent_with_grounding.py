@@ -33,7 +33,7 @@ from a2ui.schema.constants import VERSION_0_9
 from a2ui.schema.manager import A2uiSchemaManager
 
 # Import MAUIAgent to inherit from it
-from .agent import AGENT_INSTRUCTION, MAUIAgent, MergedCatalogProvider
+from agent import AGENT_INSTRUCTION, MAUIAgent, MergedCatalogProvider
 
 logger = logging.getLogger(__name__)
 
