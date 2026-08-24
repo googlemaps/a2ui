@@ -24,14 +24,13 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["google.maps", "node"],
+    "types": ["google.maps", "node", "jasmine"],
 
     /* Linting */
     "strict": true,
     "noUnusedLocals": false,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "types": ["jasmine"]
+    "noFallthroughCasesInSwitch": true
   },
   "include": ["**/*.ts", "**/*.json"],
   "exclude": ["dist", "node_modules"]

@@ -47,7 +47,7 @@ class AgentConfig:
   generic_model: str = "gemini/gemini-3-flash-preview"
   router_thinking_budget: int = 0
   extractor_thinking_budget: int = 0
-  fallback_mode: FallbackMode = FallbackMode.DYNAMIC
+  fallback_mode: FallbackMode = FallbackMode.TEXT
 
   def __post_init__(self):
     if not isinstance(self.fallback_mode, FallbackMode):
