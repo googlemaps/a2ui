@@ -25,7 +25,7 @@ import os
 from typing import Any, Literal, TypedDict
 import uuid
 
-from python_agent.extractor import normalize_travel_mode
+from extractor import normalize_travel_mode
 
 
 class TextOutputDict(TypedDict):

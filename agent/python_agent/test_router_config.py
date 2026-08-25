@@ -15,9 +15,9 @@
 """Tests for Router Configuration."""
 
 import unittest
-from python_agent.router_config import IntentClass
-from python_agent.router_config import ROUTER_SYSTEM_INSTRUCTION
-from python_agent.router_config import RouterClassification
+from router_config import IntentClass
+from router_config import ROUTER_SYSTEM_INSTRUCTION
+from router_config import RouterClassification
 
 
 class TestRouterConfig(unittest.TestCase):

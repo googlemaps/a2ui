@@ -102,7 +102,7 @@ export class PlaceDetailsCompact extends
         <gmp-place-details-compact orientation="${orientation}"
             place="${placeId}"
             internal-usage-attribution-ids="${
-        (window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.7_exp'}">
+        (window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.8_atoui'}">
           <gmp-place-details-place-request place="${placeId}">
           </gmp-place-details-place-request>
             <gmp-place-content-config>

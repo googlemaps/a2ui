@@ -16,7 +16,7 @@
 
 import unittest
 import pydantic
-from python_agent.extractor import (
+from extractor import (
     DirectionsExtractorSchema,
     LocalSearchExtractorSchema,
     Pin,
