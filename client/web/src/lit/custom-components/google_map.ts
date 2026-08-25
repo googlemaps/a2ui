@@ -372,14 +372,19 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
           max-tilt=${mode === 'ROADMAP' ? '0' : nothing}
           heading="${heading}"
           map-id="2d6e1a27a57efe3c9479f6fc"
-          internal-usage-attribution-ids="${(window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.7_exp'}"
-        >${routes.map((route: any) => html`
+          internal-usage-attribution-ids="${
+        (window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.8_atoui'}"
+        >${
+        routes.map(
+            (route: any) => html`
           <gmp-route-3d
             origin="${route.origin.lat},${route.origin.lng}"
             destination="${route.destination.lat},${route.destination.lng}"
             travel-mode="${props.travelMode || nothing}"
             autofits-camera
-            internal-usage-attribution-ids="${(window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.7_exp'}"
+            internal-usage-attribution-ids="${
+                (window as any)['A2UI_ATTRIBUTION_ID'] ||
+                'gmp_web_maui_v0.1.8_atoui'}"
           ></gmp-route-3d>`)}
         </gmp-map-3d>
       </section>

@@ -75,7 +75,7 @@ describe('GoogleMap Component', () => {
 
     // 4. Assert that the attribute has the correct fallback ID
     const attrId = gmpMap3d!.getAttribute('internal-usage-attribution-ids');
-    expect(attrId).toBe('gmp_web_maui_v0.1.7_exp');
+    expect(attrId).toBe('gmp_web_maui_v0.1.8_atoui');
 
     // Cleanup
     document.body.removeChild(element);

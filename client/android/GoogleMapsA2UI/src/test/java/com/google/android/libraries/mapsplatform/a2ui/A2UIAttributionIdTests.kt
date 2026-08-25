@@ -33,16 +33,16 @@ class A2UIAttributionIdTests {
     val htmlContent = InputStreamReader(inputStream).readText()
 
     assertTrue(
-      "Expected the generated attribution ID to contain the Web identifier 'gmp_web_maui_v0.1.7_exp'",
-      htmlContent.contains("gmp_web_maui_v0.1.7_exp"),
+      "Expected the generated attribution ID to contain the Web identifier 'gmp_web_maui_v0.1.8_atoui'",
+      htmlContent.contains("gmp_web_maui_v0.1.8_atoui"),
     )
     assertTrue(
-      "Expected the generated attribution ID to contain the Android identifier 'gmp_android_maui_v0.1.7_exp'",
-      htmlContent.contains("gmp_android_maui_v0.1.7_exp"),
+      "Expected the generated attribution ID to contain the Android identifier 'gmp_android_maui_v0.1.8_atoui'",
+      htmlContent.contains("gmp_android_maui_v0.1.8_atoui"),
     )
     assertTrue(
-      "Expected the generated attribution ID to contain the combined Web and Android identifier string 'gmp_web_maui_v0.1.7_exp,gmp_android_maui_v0.1.7_exp'",
-      htmlContent.contains("gmp_web_maui_v0.1.7_exp,gmp_android_maui_v0.1.7_exp"),
+      "Expected the generated attribution ID to contain the combined Web and Android identifier string 'gmp_web_maui_v0.1.8_atoui,gmp_android_maui_v0.1.8_atoui'",
+      htmlContent.contains("gmp_web_maui_v0.1.8_atoui,gmp_android_maui_v0.1.8_atoui"),
     )
   }
 }

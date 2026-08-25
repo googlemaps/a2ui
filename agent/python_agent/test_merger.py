@@ -18,9 +18,9 @@ import pathlib
 import re
 import unittest
 
-from google3.third_party.a2ui.agent_sdks.python.a2ui_agent.src import a2ui
-from python_agent import agent
-from python_agent import merger
+import a2ui
+import agent
+import merger
 
 merge_template = merger.merge_template
 

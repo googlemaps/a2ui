@@ -31,9 +31,8 @@ from a2ui.schema.catalog import CatalogConfig
 from a2ui.schema.common_modifiers import remove_strict_validation
 from a2ui.schema.constants import VERSION_0_9
 from a2ui.schema.manager import A2uiSchemaManager
-
 # Import MAUIAgent to inherit from it
-from .agent import AGENT_INSTRUCTION, MAUIAgent, MergedCatalogProvider
+from agent import AGENT_INSTRUCTION, MAUIAgent, MergedCatalogProvider
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +51,15 @@ else:
   logger.warning("Skill file not found at %s", skill_path)
 
 
-async def query_vertex_map(query: str) -> str:
+async def query_vertex_map(
+    query: str,
+    model_id: str = "gemini-3-flash-preview",
+) -> str:
   """Query Google Maps via Vertex Grounding and return cleaned response.
 
   Args:
       query: The location query or question.
+      model_id: The model ID to use for Vertex Grounding.
 
   Returns:
       The grounded and cleaned A2UI response string.
@@ -73,8 +76,6 @@ async def query_vertex_map(query: str) -> str:
   if not location:
     location = "global"
     logger.warning("GOOGLE_CLOUD_LOCATION is not set, defaulting to 'global'.")
-
-  model_id = "gemini-3-flash-preview"
 
   client = genai.Client(vertexai=True, project=project_id, location=location)
 
@@ -203,8 +204,30 @@ async def query_vertex_map(query: str) -> str:
 class MAUIAgentWithGrounding(MAUIAgent):
   """An agent that finds restaurants based on user criteria, using Vertex Grounding."""
 
-  def __init__(self, base_url: str):
-    super().__init__(base_url, agent_name="MAUI Agent with Grounding")
+  def __init__(
+      self,
+      base_url: str,
+      model_name: str = "gemini/gemini-3-flash-preview",
+  ):
+    super().__init__(
+        base_url,
+        agent_name="MAUI Agent with Grounding",
+        model_name=model_name,
+    )
+
+  async def query_vertex_map(self, query: str) -> str:
+    """Query Google Maps via Vertex Grounding and return cleaned response.
+
+    Args:
+        query: The location query or question.
+
+    Returns:
+        The grounded and cleaned A2UI response string.
+    """
+    model_id = (
+        self._model_name.removeprefix("gemini/").removeprefix("models/")
+    )
+    return await query_vertex_map(query, model_id=model_id)
 
   def _build_llm_agent(
       self, schema_manager: A2uiSchemaManager | None = None
@@ -223,7 +246,7 @@ class MAUIAgentWithGrounding(MAUIAgent):
     skill_manager_tool = skill_toolset.SkillToolset(skills=skills)
 
     # Use FunctionTool for Vertex grounding
-    grounding_tool = FunctionTool(func=query_vertex_map)
+    grounding_tool = FunctionTool(func=self.query_vertex_map)
 
     agent_instruction = """You are a location routing agent.
         Whenever the user asks a question about a location, directions, places, or maps,
@@ -245,7 +268,7 @@ class MAUIAgentWithGrounding(MAUIAgent):
       instruction = agent_instruction
 
     return LlmAgent(
-        model=LiteLlm(model="gemini/gemini-3-flash-preview"),
+        model=LiteLlm(model=self._model_name),
         name="maui_agent_grounding",
         description=(
             "An agent that can provide Google Maps UI-enriched responses using"

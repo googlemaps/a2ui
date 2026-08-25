@@ -14,6 +14,8 @@
 
 """MAUI Agent with template-based latency optimization."""
 
+import asyncio
+import json
 import logging
 import pathlib
 from types import SimpleNamespace
@@ -25,6 +27,7 @@ from a2a.types import Part
 from google.adk import skills as adk_skills
 from google.adk.agents import run_config
 from google.adk.agents.llm_agent import LlmAgent
+from google.adk.events.event import Event
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.models.llm_request import LlmRequest
 from google.adk.runners import Runner
@@ -36,15 +39,15 @@ from a2ui.a2a.parts import create_a2ui_part
 from a2ui.schema.manager import (
     A2uiSchemaManager,
 )
-from python_agent.agent import MAUIAgent
-from python_agent.agent_config import AgentConfig
-from python_agent.agent_config import FallbackMode
-from python_agent.extractor import DirectionsExtractorSchema
-from python_agent.extractor import LocalSearchExtractorSchema
-from python_agent.merger import merge_template
-from python_agent.router_config import IntentClass
-from python_agent.router_config import ROUTER_SYSTEM_INSTRUCTION
-from python_agent.router_config import RouterClassification
+from agent import MAUIAgent
+from agent_config import AgentConfig
+from agent_config import FallbackMode
+from extractor import DirectionsExtractorSchema
+from extractor import LocalSearchExtractorSchema
+from merger import merge_template
+from router_config import IntentClass
+from router_config import ROUTER_SYSTEM_INSTRUCTION
+from router_config import RouterClassification
 
 logger = logging.getLogger(__name__)
 _SKILL_BASE_PATH = pathlib.Path(__file__).parent / "skills"
@@ -65,6 +68,17 @@ _EXTRACTOR_SCHEMAS = {
 }
 _SUPPORTED_INTENTS = {IntentClass.LOCAL_SEARCH, IntentClass.DIRECTIONS}
 
+_GROUNDED_TEXT_BASE_INSTRUCTION = """\
+You are an expert location and navigation assistant with access to Google Maps tools.
+
+## Core Rules
+1. **Accuracy & Grounding**: Use Google Maps tools to look up real-time places, business hours, amenities, contact details, routes, and weather. NEVER hallucinate place facts, locations, or operational details.
+2. **Parallel Tool Execution**: When researching multiple entities, neighborhoods, routes, or options, emit ALL independent tool calls in parallel within your initial response turn. Only serialize calls when Step 2 strictly depends on data returned by Step 1.
+3. **Minimize Round-Trips**: Gather necessary place facts efficiently and emit independent queries in parallel. Only perform follow-up tool turns when subsequent calls strictly depend on data returned from earlier steps (e.g., retrieving details for specific place IDs or searching along a computed route polyline). Avoid redundant follow-up queries for details already retrieved.
+4. **Helpful & Actionable Answers**: Fully address all constraints in the user's prompt (e.g., parking, pricing, specific dietary options, bag policies). If tools return generic listings that lack specific policy details, supplement with known facts while noting any uncertainty.
+5. **No A2UI Tags**: Return standard plain text/markdown only. Do NOT output A2UI tags or JSON surfaces.
+"""
+
 
 class MAUIAgentWithTemplates(MAUIAgent):
   """MAUI Agent extending base with server-side layout templates and query intent routing."""
@@ -74,6 +88,7 @@ class MAUIAgentWithTemplates(MAUIAgent):
     super().__init__(base_url=base_url, model_name=self.config.generic_model)
     self.router_client = LiteLlm(model=self.config.router_model)
     self.extractor_client = LiteLlm(model=self.config.template_model)
+    self.fallback_client = LiteLlm(model=self.config.generic_model)
 
   def _build_runner(self, agent: LlmAgent) -> Runner:
     runner = super()._build_runner(agent)
@@ -109,6 +124,19 @@ class MAUIAgentWithTemplates(MAUIAgent):
       }
     return None
 
+  def _load_shared_guidelines(self) -> str:
+    """Loads shared conversational text style guidelines if available."""
+    shared_guidelines_path = (
+        _SHARED_INSTRUCTIONS_PATH / "shared_style_guidelines.md"
+    )
+    if shared_guidelines_path.exists():
+      try:
+        with open(shared_guidelines_path, "r", encoding="utf-8") as f:
+          return f.read()
+      except (OSError, ValueError) as e:
+        logger.warning("Failed to load shared style guidelines: %s", e)
+    return ""
+
   def _build_dynamic_extractor_agent(
       self,
       skill_name: str,
@@ -118,16 +146,9 @@ class MAUIAgentWithTemplates(MAUIAgent):
     skill_dir = _SKILL_BASE_PATH / skill_name
     skill = adk_skills.load_skill_from_dir(skill_dir)
     skill_instructions = skill.instructions
-    shared_guidelines_path = (
-        _SHARED_INSTRUCTIONS_PATH / "shared_style_guidelines.md"
-    )
-    if shared_guidelines_path.exists():
-      try:
-        with open(shared_guidelines_path, "r", encoding="utf-8") as f:
-          shared_guidelines = f.read()
-        skill_instructions = f"{skill_instructions}\n\n{shared_guidelines}"
-      except (OSError, ValueError) as e:
-        logger.warning("Failed to load shared style guidelines: %s", e)
+    shared_guidelines = self._load_shared_guidelines()
+    if shared_guidelines:
+      skill_instructions = f"{skill_instructions}\n\n{shared_guidelines}"
 
     # Extractors use template_model, generic UI uses generic_model
     if skill_name.endswith("-template-response"):
@@ -385,9 +406,11 @@ class MAUIAgentWithTemplates(MAUIAgent):
       else:
         logger.info(
             "Router matched OTHER_SPATIAL and fallback_mode is TEXT. "
-            "Executing fast text response flow."
+            "Executing grounded text fallback flow."
         )
-        final_parts = await self._handle_text_only(cleaned_query, session_id)
+        final_parts = await self._handle_grounded_text_fallback(
+            cleaned_query, session_id
+        )
         yield {
             "is_task_complete": True,
             "parts": final_parts,
@@ -410,7 +433,22 @@ class MAUIAgentWithTemplates(MAUIAgent):
         yield part
       return
 
-    # Fallback for un-implemented spatial intents
+    # Fallback for un-implemented spatial intents or validation failures
+    if self.config.fallback_mode == FallbackMode.TEXT:
+      logger.info(
+          "FallbackMode.TEXT enabled: routing intent %s to grounded text"
+          " handler.",
+          intent,
+      )
+      final_parts = await self._handle_grounded_text_fallback(
+          cleaned_query, session_id
+      )
+      yield {
+          "is_task_complete": True,
+          "parts": final_parts,
+      }
+      return
+
     logger.warning(
         "Intent %s not supported by template extractors. Falling back to base"
         " UI stream.",
@@ -483,48 +521,89 @@ class MAUIAgentWithTemplates(MAUIAgent):
     )
     return [create_a2ui_part(action) for action in merged_actions]
 
+  def _get_grounded_text_instruction(self) -> str:
+    """Builds system instruction for grounded text responses."""
+    return _GROUNDED_TEXT_BASE_INSTRUCTION
+
+  async def _handle_grounded_text(
+      self, cleaned_query: str, session_id: str, client: LiteLlm
+  ) -> list[Part]:
+    """Generates a grounded plain text response using the provided model client with GroundingLite tools."""
+    system_instruction = self._get_grounded_text_instruction()
+    generate_content_config = None
+    if (
+        client == self.extractor_client
+        and self.config.extractor_thinking_budget > 0
+    ):
+      generate_content_config = types.GenerateContentConfig(
+          thinking_config=types.ThinkingConfig(
+              thinking_budget=self.config.extractor_thinking_budget
+          )
+      )
+
+    tools = [self.make_grounding_lite_mcp()]
+    agent = LlmAgent(
+        model=client,
+        name="maui_grounded_text_agent",
+        description="Agent for text responses with Maps grounding",
+        instruction=system_instruction,
+        tools=tools,
+        generate_content_config=generate_content_config,
+    )
+    runner = self._build_runner(agent)
+    current_message = types.Content(
+        role="user", parts=[types.Part.from_text(text=cleaned_query)]
+    )
+    answer_text = ""
+    try:
+      async for event in runner.run_async(
+          user_id=self._user_id,
+          session_id=session_id,
+          run_config=run_config.RunConfig(
+              streaming_mode=run_config.StreamingMode.SSE,
+          ),
+          new_message=current_message,
+          state_delta={
+              "expression": "{expression}",
+              "base_url": self.base_url,
+          },
+      ):
+        if event.content and event.content.parts:
+          if event.partial:
+            for p in event.content.parts:
+              if p.text:
+                answer_text += p.text
+          else:
+            answer_text = ""
+            for p in event.content.parts:
+              if p.text:
+                answer_text += p.text
+    except Exception as e:
+      logger.warning("Grounded text generation failed: %s", e)
+
+    if not answer_text:
+      answer_text = (
+          "I'm sorry, I encountered an issue retrieving location details"
+          " right now."
+      )
+
+    return self._wrap_in_text_only(answer_text, session_id)
+
   async def _handle_text_only(
       self, cleaned_query: str, session_id: str
   ) -> list[Part]:
-    """Generates a plain text response and wraps it in the text_only template.
-
-    Args:
-      cleaned_query: The cleaned user query.
-      session_id: Context session ID.
-
-    Returns:
-      List of A2A Parts.
-    """
-    extractor_config = {
-        "system_instruction": (
-            "You are a helpful location assistant. Answer the user's"
-            " question directly. Keep it relatively concise. Do NOT"
-            " output A2UI tags."
-        ),
-    }
-    if self.config.extractor_thinking_budget > 0:
-      extractor_config["thinking_config"] = types.ThinkingConfig(
-          thinking_budget=self.config.extractor_thinking_budget
-      )
-
-    answer_req = LlmRequest(
-        contents=[
-            types.Content(
-                role="user",
-                parts=[types.Part.from_text(text=cleaned_query)],
-            )
-        ],
-        config=types.GenerateContentConfig(**extractor_config),
+    """Generates a plain text response for TEXT_ONLY intent using template_model with grounding."""
+    return await self._handle_grounded_text(
+        cleaned_query, session_id, client=self.extractor_client
     )
 
-    answer_text = ""
-    async for res in self.extractor_client.generate_content_async(answer_req):
-      if res.content and res.content.parts:
-        for p in res.content.parts:
-          if p.text:
-            answer_text += p.text
-
-    return self._wrap_in_text_only(answer_text, session_id)
+  async def _handle_grounded_text_fallback(
+      self, cleaned_query: str, session_id: str
+  ) -> list[Part]:
+    """Generates a grounded plain text response for fallback/complex spatial queries using generic_model."""
+    return await self._handle_grounded_text(
+        cleaned_query, session_id, client=self.fallback_client
+    )
 
   async def _handle_extracted_intent(
       self,
@@ -571,7 +650,9 @@ class MAUIAgentWithTemplates(MAUIAgent):
           intent,
       )
       if not fallback_text:
-        final_parts = await self._handle_text_only(query, session_id)
+        final_parts = await self._handle_grounded_text_fallback(
+            query, session_id
+        )
       else:
         final_parts = self._wrap_in_text_only(fallback_text, session_id)
       yield {

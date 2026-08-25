@@ -25,16 +25,16 @@ final class A2UIAttributionIdTests: XCTestCase {
     let htmlString = localContent.html
 
     XCTAssertTrue(
-      htmlString.contains("gmp_web_maui_v0.1.7_exp"),
-      "Expected the generated attribution ID to contain the Web identifier 'gmp_web_maui_v0.1.7_exp'"
+      htmlString.contains("gmp_web_maui_v0.1.8_atoui"),
+      "Expected the generated attribution ID to contain the Web identifier 'gmp_web_maui_v0.1.8_atoui'"
     )
     XCTAssertTrue(
-      htmlString.contains("gmp_ios_maui_v0.1.7_exp"),
-      "Expected the generated attribution ID to contain the iOS identifier 'gmp_ios_maui_v0.1.7_exp'"
+      htmlString.contains("gmp_ios_maui_v0.1.8_atoui"),
+      "Expected the generated attribution ID to contain the iOS identifier 'gmp_ios_maui_v0.1.8_atoui'"
     )
     XCTAssertTrue(
-      htmlString.contains("gmp_web_maui_v0.1.7_exp,gmp_ios_maui_v0.1.7_exp"),
-      "Expected the generated attribution ID to contain the combined Web and iOS identifier string 'gmp_web_maui_v0.1.7_exp,gmp_ios_maui_v0.1.7_exp'"
+      htmlString.contains("gmp_web_maui_v0.1.8_atoui,gmp_ios_maui_v0.1.8_atoui"),
+      "Expected the generated attribution ID to contain the combined Web and iOS identifier string 'gmp_web_maui_v0.1.8_atoui,gmp_ios_maui_v0.1.8_atoui'"
     )
   }
 }
