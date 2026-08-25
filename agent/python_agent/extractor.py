@@ -80,10 +80,11 @@ class LocalSearchExtractorSchema(BaseModel):
 
   summary: str = Field(
       description=(
-          "A detailed response summarizing the search results, answering the"
-          " user's query fully. Use markdown formatting (bullet points,"
-          " bolding, tables) and break into paragraphs as needed. Bold place"
-          " names."
+          "A detailed response summarizing the search results that fully and"
+          " clearly answers all aspects of the user's prompt (including"
+          " qualitative criteria, preferences, and comparisons). Use markdown"
+          " formatting (bullet points, bolding, tables) and break into"
+          " paragraphs as needed. Bold place names."
       )
   )
   center_lat: float = Field(description="Latitude of the center of results")
@@ -157,9 +158,10 @@ class DirectionsExtractorSchema(BaseModel):
 
   summary: str = Field(
       description=(
-          "A detailed response summarizing the travel directions, including"
-          " key steps, estimated time, and travel mode. Use markdown"
-          " formatting and break into paragraphs if helpful."
+          "A detailed response summarizing the travel directions and route"
+          " options that fully answers all user questions, route comparisons,"
+          " and travel context requested in the prompt. Use markdown formatting"
+          " and break into paragraphs if helpful."
       )
   )
   center_lat: float = Field(

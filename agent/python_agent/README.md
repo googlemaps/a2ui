@@ -1,12 +1,26 @@
 # MAUI Python Agent Package (`maui-a2ui-python`)
 
-This package provides the core Python agent implementations for the Agentic UI Toolkit (MAUI). It includes the base `MAUIAgent` and the extended `MAUIAgentWithGrounding` that uses Vertex Grounding.
+This package provides the core Python agent implementations for the Agentic UI
+Toolkit (MAUI). It includes the base dynamic `MAUIAgent`, the low-latency
+`MAUIAgentWithTemplates`, and the extended `MAUIAgentWithGrounding` using Vertex
+AI Maps Grounding.
 
 ## File Structure
 
-*   `agent.py`: Contains the `MAUIAgent` class, which handles session management, LLM interaction, and A2UI schema loading.
-*   `agent_with_grounding.py`: Contains `MAUIAgentWithGrounding`, extending the base agent with Vertex Grounding capabilities.
-*   `shared/`: Contains schema extensions (e.g., `maps_catalog_extension.json`).
+*   `agent.py`: Contains `MAUIAgent`, which handles session management, LLM
+    interaction, and unconstrained dynamic A2UI schema validation.
+*   `agent_with_templates.py`: Contains `MAUIAgentWithTemplates`, a fast
+    template-driven agent utilizing intent classification (`LOCAL_SEARCH`,
+    `DIRECTIONS`) and structured parameter extraction for low latency.
+*   `agent_with_grounding.py`: Contains `MAUIAgentWithGrounding`, extending the
+    base agent with Vertex AI Grounding capabilities.
+*   `agent_config.py`: Contains `AgentConfig` and `FallbackMode` configurations
+    (`TEXT` vs `DYNAMIC`).
+*   `extractor.py` & `merger.py`: Parameter extraction schemas and template
+    merging engine.
+*   `shared/`: Contains layout templates (e.g. `local-search-template.json`,
+    `directions-template.json`) and schema extensions
+    (`maps_catalog_extension.json`).
 *   `skills/`: Contains specific skill definitions used by the agents.
 *   `pyproject.toml`: Configuration file for the package, using Hatchling as the build backend.
 
@@ -28,9 +42,20 @@ maui-a2ui-python = { path = "path/to/a2ui/agent/python_agent" }
 
 ### 2. Import and Use
 
-The Agentic UI Toolkit includes two agents, one that uses Grounding Lite and one that uses Grounding with Google Maps. The Python integration steps are the same for each, but if you use Grounding with Google Maps, you must follow the instructions to configure your local environment. See the [Accessing Google Maps grounding data](#accessing-google-maps-grounding-data) section below for more information on configuring these services.
+The Agentic UI Toolkit includes three agent architectures:
 
-Tip: See the [agent_executor.py](https://github.com/googlemaps-samples/a2ui/blob/main/agent/python/agent_executor.py) example in the Agentic UI Toolkit Samples repository for a working example.
+1.  **Template-driven Agent (`MAUIAgentWithTemplates`)**: Recommended for
+    low-latency local search and directions queries.
+2.  **Standard Agent (`MAUIAgent`)**: Uses Grounding Lite MCP with dynamic A2UI
+    schema generation. Recommended when preferring maximum response flexibility
+    over low latency.
+3.  **Grounding Agent (`MAUIAgentWithGrounding`)**: Uses Grounding with Google
+    Maps via Vertex AI. Recommended when developing a Vertex-based solution.
+
+Tip: See the
+[agent_executor.py](https://github.com/googlemaps-samples/a2ui/blob/main/agent/python/agent_executor.py)
+example in the Agentic UI Toolkit Samples repository for a working multi-agent
+executor.
 
 Import the MAUIAgent into your Python code (e.g., `__main__.py` or `agent_executor.py`) and
 configure the ADK Agent Executor to call it.
@@ -167,11 +192,13 @@ To use Grounding Lite MCP, you must first enable the Maps Grounding Lite API and
 To use Grounding with Google Maps, there are additional steps you must take to configure your environment:
 
 1. Ensure you have the latest version of the genai python package.
+
 ```bash
 pip install --upgrade google-genai
 ```
 
 2. Configure additional environment variables to connect to your project.
+
 ```bash
 ## Replace the `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` values
 ## with appropriate values for your project.
@@ -181,6 +208,7 @@ export GOOGLE_GENAI_USE_VERTEXAI=True
 ```
 
 3. Ensure you are authenticated to Google Cloud.
+
 ```bash
 gcloud auth application-default login
 ```
