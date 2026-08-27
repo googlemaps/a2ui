@@ -1,12 +1,12 @@
 {
   "name": "@googlemaps/a2ui-ios-web",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "type": "module",
   "scripts": {
     "build": "vite build && node -e \"const fs=require('fs');const p='dist/index.html';fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace(/type=\\\"module\\\" crossorigin/g,'defer')); fs.copyFileSync(p, '../GoogleMapsA2UI/Sources/GoogleMapsA2UI/Resources/index.html'); console.log('Successfully copied to native resources!');\""
   },
   "dependencies": {
-    "@googlemaps/a2ui": "^0.1.7",
+    "@googlemaps/a2ui": "0.1.8",
     "lit": "^3.3.1"
   },
   "devDependencies": {
