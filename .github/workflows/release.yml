@@ -50,7 +50,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: client/web
-        run: npm ci
+        run: npm install
 
       - name: Setup Node for Publishing
         uses: actions/setup-node@b39b52d1213e96004bfcb1c61a8a6fa8ab84f3e8 # v4.0.1
