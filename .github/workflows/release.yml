@@ -18,6 +18,11 @@
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run in dry-run mode (no tags, no publish)"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -60,5 +65,13 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_WOMBAT_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_WOMBAT_TOKEN }}
           NODE_PATH: ${{ github.workspace }}/client/web/node_modules
-        run: npx --prefix client/web semantic-release
+        run: |
+          EXTRA_ARGS=""
+          if [ "${{ inputs.dry_run }}" != "false" ]; then
+            EXTRA_ARGS="--dry-run"
+          fi
+          if [ "${{ github.ref_name }}" != "main" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --branches ${{ github.ref_name }}"
+          fi
+          npx --prefix client/web semantic-release $EXTRA_ARGS
 
