@@ -15,7 +15,7 @@
  */
 
 import {A2uiController, A2uiLitElement} from '@a2ui/lit/v0_9';
-import {structuralStyles} from '@a2ui/web_core';
+import {structuralStyles} from '@a2ui/web_core/v0_8';
 import {ComponentApi, DynamicStringSchema} from '@a2ui/web_core/v0_9';
 import {css, html, LitElement, nothing} from 'lit';
 import {customElement} from 'lit/decorators.js';

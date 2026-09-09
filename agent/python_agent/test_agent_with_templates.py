@@ -339,7 +339,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     mock_runner = mock.MagicMock()
 
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
             "summary": "Typical commute is 45 mins.",
             "center_lat": 37.5,
@@ -470,7 +470,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
             "summary": "Take bus 10 to work.",
             "center_lat": 37.5,
@@ -524,7 +524,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
             "summary": "Walk for 15 minutes.",
             "center_lat": 37.5,
@@ -580,7 +580,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
             "summary": "Bike for 25 minutes.",
             "center_lat": 37.5,
@@ -639,7 +639,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
 
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
             "summary": "Typical commute is 45 mins.",
             "center_lat": 37.5,
@@ -721,7 +721,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     mock_runner = mock.MagicMock()
 
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_local_search_template",
         args={
             "summary": "Here are some sushi places.",
             "center_lat": 47.6062,
@@ -788,9 +788,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
 
-    # Mock invalid set_model_response arguments (missing required center_lat)
+    # Mock invalid render_local_search_template arguments (missing required center_lat)
     invalid_args = {"summary": "Invalid data", "places": []}
-    mock_fc = MockFunctionCall("set_model_response", invalid_args)
+    mock_fc = MockFunctionCall("render_local_search_template", invalid_args)
     mock_event_fc = MockEvent(function_calls=[mock_fc])
     mock_event_text = MockEvent(
         content=MockContent([MockPart("Fallback text here.")])
@@ -843,8 +843,18 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        "set_model_response",
-        {"summary": "Coffee", "places": [{"name": "Starbucks"}]},
+        "render_local_search_template",
+        {
+            "summary": "Coffee",
+            "center_lat": 47.6,
+            "center_lng": -122.3,
+            "places": [{
+                "placeId": "1",
+                "name": "Starbucks",
+                "lat": 47.6,
+                "lng": -122.3,
+            }],
+        },
     )
     mock_runner.run_async.return_value = MockAsyncIterator(
         [MockEvent(function_calls=[mock_fc])]
@@ -858,7 +868,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         "Mock validation error"
     )
     mock_schema_manager = mock.MagicMock()
-    mock_schema_manager.get_catalog.return_value = mock_catalog
+    mock_schema_manager.get_selected_catalog.return_value = mock_catalog
     agent._schema_managers = {"v0.9": mock_schema_manager}
 
     mock_fallback_runner = mock.MagicMock()
