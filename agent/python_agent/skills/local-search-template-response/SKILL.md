@@ -6,7 +6,8 @@ description: Extractor skill for local place search queries. Extracts location a
 # Core Objective
 
 Extract structured parameters for local searches. You must call maps tools to
-locate matching businesses/places, and populate the response fields.
+locate matching businesses/places, and call `render_local_search_template` to
+render the results.
 
 ## Grounding & Tool-Calling Policy (CRITICAL)
 
@@ -57,7 +58,8 @@ If search queries return empty results (`{}`) or fail:
 
 ## Output Fields
 
-You MUST populate all required fields in the output schema, and optionally the anchor marker if resolved:
+You MUST call `render_local_search_template` with all required fields in the
+schema, and optionally the anchor marker if resolved:
 
 -   **`summary`**: A detailed response summarizing the search results, following the **Conversational Text Style Guidelines** below.
 -   **`center_lat`**: Latitude of the center of results. Use the coordinates of
