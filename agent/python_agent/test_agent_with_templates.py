@@ -23,11 +23,17 @@ from google.adk.models.lite_llm import LiteLlm
 import agent
 import agent_config
 import agent_with_templates
+import extractor
 
 AgentConfig = agent_config.AgentConfig
+DirectionsExtractorSchema = extractor.DirectionsExtractorSchema
 FallbackMode = agent_config.FallbackMode
+GroundingMode = agent_config.GroundingMode
+GwgmConfig = agent_config.GwgmConfig
+LocalSearchExtractorSchema = extractor.LocalSearchExtractorSchema
 MAUIAgent = agent.MAUIAgent
 MAUIAgentWithTemplates = agent_with_templates.MAUIAgentWithTemplates
+PlacePin = extractor.PlacePin
 
 _LITELLM_PATH = agent_with_templates.__name__ + ".LiteLlm"
 
@@ -134,14 +140,36 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
             return component
     self.fail(f"Component with ID '{component_id}' not found in parts.")
 
-  def _setup_agent(self, fallback_mode="TEXT"):
+  def _setup_agent(
+      self,
+      fallback_mode="TEXT",
+      grounding_mode=GroundingMode.MCP,
+      gwgm=None,
+  ):
     """Helper to initialize MAUIAgentWithTemplates with standard config."""
     config = AgentConfig(
         fallback_mode=fallback_mode,
+        grounding_mode=grounding_mode,
         router_model="gemini/router-model",
         template_model="gemini/template-model",
+        gwgm=gwgm or GwgmConfig(),
     )
     return MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+
+  def _mock_vertex_extractor(
+      self,
+      mock_extractor_cls,
+      return_value=None,
+      side_effect=None,
+  ) -> mock.AsyncMock:
+    """Helper to mock VertexGroundingExtractor class and extract method."""
+    mock_extractor = mock.AsyncMock()
+    if side_effect is not None:
+      mock_extractor.extract.side_effect = side_effect
+    else:
+      mock_extractor.extract.return_value = return_value
+    mock_extractor_cls.return_value = mock_extractor
+    return mock_extractor
 
   def _mock_llm_responses(self, router_resp, extractor_resp=None):
     """Helper to set up default mock responses for router and extractor."""
@@ -339,7 +367,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     mock_runner = mock.MagicMock()
 
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
             "summary": "Typical commute is 45 mins.",
             "center_lat": 37.5,
@@ -470,7 +498,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
             "summary": "Take bus 10 to work.",
             "center_lat": 37.5,
@@ -524,7 +552,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
             "summary": "Walk for 15 minutes.",
             "center_lat": 37.5,
@@ -580,7 +608,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
             "summary": "Bike for 25 minutes.",
             "center_lat": 37.5,
@@ -639,7 +667,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
 
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
             "summary": "Typical commute is 45 mins.",
             "center_lat": 37.5,
@@ -721,8 +749,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     mock_runner = mock.MagicMock()
 
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_local_search_template",
         args={
+            "heading": "Top Sushi Places in Seattle",
             "summary": "Here are some sushi places.",
             "center_lat": 47.6062,
             "center_lng": -122.3321,
@@ -763,6 +792,20 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         create_surface["surfaceId"].startswith("local-search-surface-")
     )
 
+    update_components = parts[1].root.data["updateComponents"]
+    heading_comp = next(
+        comp
+        for comp in update_components["components"]
+        if comp["id"] == "heading-text"
+    )
+    self.assertEqual(heading_comp["text"], "### Top Sushi Places in Seattle")
+
+    map_comp = next(
+        comp for comp in update_components["components"] if comp["id"] == "map"
+    )
+    self.assertEqual(map_comp["tilt"], 0)
+    self.assertEqual(map_comp["mode"], "roadmap")
+
     update_data_model = parts[2].root.data["updateDataModel"]
     # Verify places array was successfully populated in data model
     self.assertEqual(update_data_model["path"], "/")
@@ -788,9 +831,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
 
-    # Mock invalid set_model_response arguments (missing required center_lat)
+    # Mock invalid render_local_search_template arguments (missing required center_lat)
     invalid_args = {"summary": "Invalid data", "places": []}
-    mock_fc = MockFunctionCall("set_model_response", invalid_args)
+    mock_fc = MockFunctionCall("render_local_search_template", invalid_args)
     mock_event_fc = MockEvent(function_calls=[mock_fc])
     mock_event_text = MockEvent(
         content=MockContent([MockPart("Fallback text here.")])
@@ -843,8 +886,19 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        "set_model_response",
-        {"summary": "Coffee", "places": [{"name": "Starbucks"}]},
+        "render_local_search_template",
+        {
+            "heading": "Coffee Shops",
+            "summary": "Coffee",
+            "center_lat": 47.6,
+            "center_lng": -122.3,
+            "places": [{
+                "placeId": "1",
+                "name": "Starbucks",
+                "lat": 47.6,
+                "lng": -122.3,
+            }],
+        },
     )
     mock_runner.run_async.return_value = MockAsyncIterator(
         [MockEvent(function_calls=[mock_fc])]
@@ -858,7 +912,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         "Mock validation error"
     )
     mock_schema_manager = mock.MagicMock()
-    mock_schema_manager.get_catalog.return_value = mock_catalog
+    mock_schema_manager.get_selected_catalog.return_value = mock_catalog
     agent._schema_managers = {"v0.9": mock_schema_manager}
 
     mock_fallback_runner = mock.MagicMock()
@@ -1101,6 +1155,183 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
             "Shared guidelines content", extractor_agent.instruction
         )
         self.assertIn("Base skill instructions", extractor_agent.instruction)
+
+  @mock.patch(_LITELLM_PATH)
+  async def test_agent_gwgm_mode_invokes_vertex_extractor(
+      self, mock_lite_llm_class
+  ):
+    """Verifies that GroundingMode.GWGM invokes VertexGroundingExtractor."""
+    self._setup_mock_llm(mock_lite_llm_class)
+    self._mock_llm_responses(
+        router_resp=(
+            '{"intent": "LOCAL_SEARCH", "query": "coffee shops near Central'
+            ' Park"}'
+        ),
+    )
+    mock_local_search_params = LocalSearchExtractorSchema(
+        heading="Coffee Shops near Central Park",
+        summary="Here are great coffee shops.",
+        center_lat=40.78,
+        center_lng=-73.96,
+        zoom=14,
+        places=[
+            PlacePin(
+                name="Blue Bottle",
+                placeId="ChIJ123",
+                lat=40.78,
+                lng=-73.96,
+            )
+        ],
+    )
+    agent = self._setup_agent(grounding_mode=GroundingMode.GWGM)
+
+    with mock.patch(
+        "agent_with_templates.VertexGroundingExtractor"
+    ) as mock_extractor_cls:
+      mock_extractor = self._mock_vertex_extractor(
+          mock_extractor_cls, return_value=mock_local_search_params
+      )
+      stream_chunks = await self._collect_stream(
+          agent, "coffee shops near Central Park"
+      )
+
+    self.assertEqual(len(stream_chunks), 1)
+    self.assertTrue(stream_chunks[0]["is_task_complete"])
+    self.assertGreater(len(stream_chunks[0]["parts"]), 0)
+    mock_extractor.extract.assert_awaited_once_with(
+        "coffee shops near Central Park",
+        LocalSearchExtractorSchema,
+        max_places=5,
+    )
+
+  @mock.patch(_LITELLM_PATH)
+  async def test_agent_gwgm_mode_directions(self, mock_lite_llm_class):
+    """Verifies that DIRECTIONS intent in GWGM mode uses VertexGroundingExtractor."""
+    self._setup_mock_llm(mock_lite_llm_class)
+    self._mock_llm_responses(
+        router_resp=(
+            '{"intent": "DIRECTIONS", "query": "directions to Central Park"}'
+        ),
+    )
+    mock_directions_params = DirectionsExtractorSchema.model_validate({
+        "summary": "Directions to Central Park.",
+        "center_lat": 40.77,
+        "center_lng": -73.97,
+        "zoom": 13,
+        "travel_mode": "walking",
+        "routes": [{
+            "origin": {
+                "lat": 40.758,
+                "lng": -73.985,
+                "label": "Times Square",
+                "placeId": "ChIJ_TIMES_SQUARE",
+            },
+            "destination": {
+                "lat": 40.782,
+                "lng": -73.965,
+                "label": "Central Park",
+                "placeId": "ChIJ_CENTRAL_PARK",
+            },
+        }],
+    })
+    agent = self._setup_agent(grounding_mode=GroundingMode.GWGM)
+
+    with mock.patch(
+        "agent_with_templates.VertexGroundingExtractor"
+    ) as mock_extractor_cls:
+      mock_extractor = self._mock_vertex_extractor(
+          mock_extractor_cls, return_value=mock_directions_params
+      )
+      stream_chunks = await self._collect_stream(
+          agent, "directions to Central Park"
+      )
+
+    self.assertEqual(len(stream_chunks), 1)
+    self.assertTrue(stream_chunks[0]["is_task_complete"])
+    self.assertGreater(len(stream_chunks[0]["parts"]), 0)
+    mock_extractor.extract.assert_awaited_once_with(
+        "directions to Central Park", DirectionsExtractorSchema, max_places=5
+    )
+
+  @mock.patch(_LITELLM_PATH)
+  async def test_agent_gwgm_mode_error_raises_without_fallback(
+      self, mock_lite_llm_class
+  ):
+    """Verifies that VertexGroundingExtractor error raises directly without falling back."""
+    self._setup_mock_llm(mock_lite_llm_class)
+    self._mock_llm_responses(
+        router_resp=(
+            '{"intent": "LOCAL_SEARCH", "query": "coffee shops near Central'
+            ' Park"}'
+        ),
+    )
+    agent = self._setup_agent(grounding_mode=GroundingMode.GWGM)
+
+    with mock.patch(
+        "agent_with_templates.VertexGroundingExtractor"
+    ) as mock_extractor_cls, mock.patch.object(
+        agent, "_run_extractor_and_merge", new_callable=mock.AsyncMock
+    ) as mock_fallback:
+      mock_extractor = self._mock_vertex_extractor(
+          mock_extractor_cls, side_effect=RuntimeError("Vertex API error")
+      )
+      with self.assertRaises(RuntimeError):
+        await self._collect_stream(agent, "coffee shops near Central Park")
+
+    mock_extractor.extract.assert_awaited_once()
+    mock_fallback.assert_not_called()
+
+  async def test_agent_gwgm_mode_grounded_text(self):
+    """Verifies that _handle_grounded_text uses Vertex AI generate_content when in GWGM mode."""
+    agent = self._setup_agent(
+        grounding_mode=GroundingMode.GWGM,
+        gwgm=GwgmConfig(model_id="gemini-3.5-flash-lite"),
+    )
+
+    mock_gen_response = mock.MagicMock()
+    mock_gen_response.text = "Central Park is located in Manhattan."
+
+    with mock.patch(
+        "agent_with_templates.VertexGroundingExtractor"
+    ) as mock_extractor_cls:
+      mock_extractor = mock.MagicMock()
+      mock_extractor.client.aio.models.generate_content = mock.AsyncMock(
+          return_value=mock_gen_response
+      )
+      mock_extractor_cls.return_value = mock_extractor
+
+      grounded_text_parts = await agent._handle_grounded_text(
+          "tell me about central park",
+          session_id="test_session",
+          client=agent.fallback_client,
+      )
+
+    self.assertGreater(len(grounded_text_parts), 0)
+    mock_extractor.client.aio.models.generate_content.assert_awaited_once()
+    call_kwargs = (
+        mock_extractor.client.aio.models.generate_content.call_args.kwargs
+    )
+    self.assertEqual(call_kwargs["model"], "gemini-3.5-flash-lite")
+    self.assertEqual(call_kwargs["contents"], "tell me about central park")
+    self.assertTrue(hasattr(call_kwargs["config"].tools[0], "google_maps"))
+
+  def test_get_vertex_extractor_passes_shared_guidelines(self):
+    """Verifies that VertexGroundingExtractor is initialized with shared guidelines."""
+    agent = self._setup_agent(grounding_mode=GroundingMode.GWGM)
+    with mock.patch.object(
+        agent, "_load_shared_guidelines", return_value="Custom style guidelines"
+    ):
+      with mock.patch(
+          "agent_with_templates.VertexGroundingExtractor"
+      ) as mock_extractor_cls:
+        agent._get_vertex_extractor()
+        mock_extractor_cls.assert_called_once_with(
+            project_id=mock.ANY,
+            location="global",
+            model_id=mock.ANY,
+            shared_guidelines="Custom style guidelines",
+        )
+
 
 if __name__ == "__main__":
   unittest.main()

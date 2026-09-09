@@ -16,7 +16,6 @@
 
 import dataclasses
 import enum
-from typing import Optional
 
 
 class FallbackMode(str, enum.Enum):
@@ -24,6 +23,30 @@ class FallbackMode(str, enum.Enum):
 
   TEXT = "TEXT"
   DYNAMIC = "DYNAMIC"
+
+
+class GroundingMode(str, enum.Enum):
+  """Grounding strategy for structured template parameters."""
+
+  MCP = "MCP"
+  GWGM = "GWGM"
+
+
+@dataclasses.dataclass(frozen=True)
+class GwgmConfig:
+  """Configuration for Grounding with Google Maps via Vertex AI.
+
+  Attributes:
+      project_id: Optional GCP project ID for Vertex AI grounding.
+      location: Optional GCP region for Vertex AI grounding. Defaults to
+        "global".
+      model_id: Optional Model ID for Vertex AI grounding extraction. Defaults
+        to "gemini-3.5-flash-lite".
+  """
+
+  project_id: str | None = None
+  location: str = "global"
+  model_id: str = "gemini-3.5-flash-lite"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -39,6 +62,8 @@ class AgentConfig:
       extractor_thinking_budget: Thinking budget for extraction model.
       fallback_mode: Fallback strategy when specialized template extraction is
         not used or fails (e.g. for unsupported intents or validation failures).
+      grounding_mode: Grounding execution engine (MCP or GWGM).
+      gwgm: Grounding with Google Maps settings when grounding_mode is GWGM.
   """
 
   max_list_size: int = 5
@@ -48,6 +73,8 @@ class AgentConfig:
   router_thinking_budget: int = 0
   extractor_thinking_budget: int = 0
   fallback_mode: FallbackMode = FallbackMode.TEXT
+  grounding_mode: GroundingMode = GroundingMode.MCP
+  gwgm: GwgmConfig = dataclasses.field(default_factory=GwgmConfig)
 
   def __post_init__(self):
     if not isinstance(self.fallback_mode, FallbackMode):

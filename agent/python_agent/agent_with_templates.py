@@ -15,6 +15,7 @@
 """MAUI Agent with template-based latency optimization."""
 
 import asyncio
+import inspect
 import json
 import logging
 import pathlib
@@ -31,7 +32,6 @@ from google.adk.events.event import Event
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.models.llm_request import LlmRequest
 from google.adk.runners import Runner
-from google.adk.tools.set_model_response_tool import SetModelResponseTool
 from google.genai import types
 import pydantic
 
@@ -41,19 +41,30 @@ from a2ui.schema.manager import (
 )
 from agent import MAUIAgent
 from agent_config import AgentConfig
-from agent_config import FallbackMode
+from agent_config import FallbackMode, GroundingMode
 from extractor import DirectionsExtractorSchema
 from extractor import LocalSearchExtractorSchema
 from merger import merge_template
 from router_config import IntentClass
 from router_config import ROUTER_SYSTEM_INSTRUCTION
 from router_config import RouterClassification
+from template_tool import (
+    BaseTemplateTool,
+    RenderDirectionsTemplateTool,
+    RenderLocalSearchTemplateTool,
+    RenderTextOnlyTemplateTool,
+    STATE_RENDERED_A2UI_DATA,
+    STATE_RENDERED_A2UI_PARTS,
+)
+from vertex_grounding_extractor import VertexGroundingExtractor
 
 logger = logging.getLogger(__name__)
 _SKILL_BASE_PATH = pathlib.Path(__file__).parent / "skills"
 _SHARED_INSTRUCTIONS_PATH = (
     pathlib.Path(__file__).parent / "shared" / "instructions"
 )
+
+
 _LOCAL_SEARCH_SKILL_NAME = "local-search-template-response"
 _LOCAL_SEARCH_TEMPLATE_NAME = "local_search"
 _LOCAL_SEARCH_SURFACE_PREFIX = "local-search-surface"
@@ -62,10 +73,6 @@ _DIRECTIONS_SKILL_NAME = "directions-template-response"
 _DIRECTIONS_TEMPLATE_NAME = "directions"
 _DIRECTIONS_SURFACE_PREFIX = "directions-surface"
 
-_EXTRACTOR_SCHEMAS = {
-    _LOCAL_SEARCH_SKILL_NAME: LocalSearchExtractorSchema,
-    _DIRECTIONS_SKILL_NAME: DirectionsExtractorSchema,
-}
 _SUPPORTED_INTENTS = {IntentClass.LOCAL_SEARCH, IntentClass.DIRECTIONS}
 
 _GROUNDED_TEXT_BASE_INSTRUCTION = """\
@@ -89,6 +96,18 @@ class MAUIAgentWithTemplates(MAUIAgent):
     self.router_client = LiteLlm(model=self.config.router_model)
     self.extractor_client = LiteLlm(model=self.config.template_model)
     self.fallback_client = LiteLlm(model=self.config.generic_model)
+    self._vertex_extractor: VertexGroundingExtractor | None = None
+
+  def _get_vertex_extractor(self) -> VertexGroundingExtractor:
+    """Lazily initializes and caches the VertexGroundingExtractor."""
+    if self._vertex_extractor is None:
+      self._vertex_extractor = VertexGroundingExtractor(
+          project_id=self.config.gwgm.project_id,
+          location=self.config.gwgm.location,
+          model_id=self.config.gwgm.model_id,
+          shared_guidelines=self._load_shared_guidelines(),
+      )
+    return self._vertex_extractor
 
   def _build_runner(self, agent: LlmAgent) -> Runner:
     runner = super()._build_runner(agent)
@@ -107,9 +126,12 @@ class MAUIAgentWithTemplates(MAUIAgent):
   ) -> dict[str, Any] | None:
     """Callback for tool errors during extraction."""
     # pylint: disable=unused-argument
-    if tool.name == "set_model_response" and isinstance(
-        error, pydantic.ValidationError
-    ):
+    if tool.name in (
+        "render_local_search_template",
+        "render_directions_template",
+        "render_text_only_template",
+        "set_model_response",
+    ) and isinstance(error, pydantic.ValidationError):
       logger.warning(
           "Extractor tool '%s' failed validation: %s. "
           "Returning error to model for self-correction.",
@@ -161,21 +183,28 @@ class MAUIAgentWithTemplates(MAUIAgent):
     )
 
     tools = [self.make_grounding_lite_mcp()]
-    output_schema = _EXTRACTOR_SCHEMAS.get(skill_name)
+    target_tool = None
+    if skill_name == _LOCAL_SEARCH_SKILL_NAME:
+      target_tool = RenderLocalSearchTemplateTool(
+          schema_manager=schema_manager,
+          max_list_size=self.config.max_list_size,
+          surface_id_prefix=_LOCAL_SEARCH_SURFACE_PREFIX,
+      )
+    elif skill_name == _DIRECTIONS_SKILL_NAME:
+      target_tool = RenderDirectionsTemplateTool(
+          schema_manager=schema_manager,
+          max_list_size=self.config.max_list_size,
+          surface_id_prefix=_DIRECTIONS_SURFACE_PREFIX,
+      )
 
     generate_content_config = None
-    if output_schema:
-      # Manually inject SetModelResponseTool
-      set_response_tool = SetModelResponseTool(output_schema)
-      tools.append(set_response_tool)
+    if target_tool:
+      tools.append(target_tool)
 
-      # Manually append instruction
       workaround_instruction = (
-          "IMPORTANT: You have access to other tools, but you must provide"
-          " your final response using the set_model_response tool with the"
-          " required structured format. After using any other tools needed to"
-          " complete the task, always call set_model_response with your final"
-          " answer in the specified schema format."
+          "IMPORTANT: After using any other tools needed to complete the task,"
+          f" you MUST call {target_tool.name} to render the final response"
+          " interface."
       )
       if skill_name == _LOCAL_SEARCH_SKILL_NAME:
         workaround_instruction += (
@@ -183,7 +212,7 @@ class MAUIAgentWithTemplates(MAUIAgent):
             f" {self.config.max_list_size} of the most relevant places. Do not"
             " mention, recommend, or extract more than"
             f" {self.config.max_list_size} places in your text response or your"
-            " set_model_response tool call."
+            f" {target_tool.name} tool call."
         )
       skill_instructions = f"{skill_instructions}\n\n{workaround_instruction}"
 
@@ -217,6 +246,7 @@ class MAUIAgentWithTemplates(MAUIAgent):
         output_schema=None,  # Keep output_schema as None in LlmAgent
         generate_content_config=generate_content_config,
         on_tool_error_callback=self._on_tool_error,
+        after_tool_callback=self._after_tool_callback,
     )
 
   async def _run_extractor(
@@ -225,9 +255,10 @@ class MAUIAgentWithTemplates(MAUIAgent):
       agent: LlmAgent,
       current_message: types.Content,
       session_id: str,
-  ) -> tuple[dict[str, Any] | None, list[str]]:
-    """Runs the extractor agent and collects its output (structured or text)."""
-    parsed_json_data = None
+  ) -> tuple[list[Part] | None, list[str], dict[str, Any] | None]:
+    """Runs the extractor agent and collects its output (rendered parts or text)."""
+    rendered_parts: list[Part] | None = None
+    rendered_data: dict[str, Any] | None = None
     full_content_list = []
 
     async for event in runner.run_async(
@@ -238,10 +269,6 @@ class MAUIAgentWithTemplates(MAUIAgent):
         ),
         new_message=current_message,
         # Initialize session state.
-        # "expression" is required to prevent KeyError during ADK's prompt
-        # state injection, as the A2UI catalog schema contains "${expression}"
-        # placeholders. "base_url" is passed for consistency with the main
-        # agent session state.
         state_delta={
             "expression": "{expression}",
             "base_url": self.base_url,
@@ -249,51 +276,49 @@ class MAUIAgentWithTemplates(MAUIAgent):
     ):
       if hasattr(event, "get_function_calls"):
         for fc in event.get_function_calls():
-          if fc.name == "set_model_response":
+          if fc.name in (
+              "render_local_search_template",
+              "render_directions_template",
+              "render_text_only_template",
+              "set_model_response",
+          ):
             logger.info(
-                "Intercepted set_model_response tool call with args: %s",
+                "--- AGENT_WITH_TEMPLATES: Observed %s tool call with args:"
+                " %s ---",
+                fc.name,
                 fc.args,
             )
 
-            # Find SetModelResponseTool in agent tools
             target_tool = None
             for t in agent.tools:
-              if getattr(t, "name", None) == "set_model_response":
+              if getattr(t, "name", None) == fc.name:
                 target_tool = t
                 break
 
             if target_tool and hasattr(target_tool, "run_async"):
+              tool_ctx = SimpleNamespace(state={})
               try:
-                noop_tool_context = SimpleNamespace(
-                    actions=SimpleNamespace(set_model_response=None)
+                tool_result = await target_tool.run_async(
+                    args=fc.args, tool_context=tool_ctx
                 )
-                validated_data = await target_tool.run_async(
-                    args=fc.args, tool_context=noop_tool_context
-                )
-                # SetModelResponseTool.run_async catches ValidationError internally
-                # and returns a dict with "error" key instead of raising the exception.
                 if (
-                    isinstance(validated_data, dict)
-                    and "error" in validated_data
+                    isinstance(tool_result, dict)
+                    and "error" not in tool_result
+                    and STATE_RENDERED_A2UI_PARTS in tool_ctx.state
                 ):
-                  logger.warning(
-                      "Local Pydantic validation failed: %s. Continuing.",
-                      validated_data["error"],
-                  )
-                else:
-                  parsed_json_data = validated_data
+                  rendered_parts = tool_ctx.state[STATE_RENDERED_A2UI_PARTS]
+                  rendered_data = tool_ctx.state.get(STATE_RENDERED_A2UI_DATA)
                   logger.info(
-                      "Local Pydantic validation passed! Short-circuiting."
+                      "--- AGENT_WITH_TEMPLATES: Template tool %s succeeded!"
+                      " Captured %d rendered parts. ---",
+                      fc.name,
+                      len(rendered_parts),
                   )
                   break
-              except pydantic.ValidationError as e:
+              except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.warning(
-                    "Local Pydantic validation failed: %s. Continuing.",
-                    e,
+                    "--- AGENT_WITH_TEMPLATES: Tool execution error: %s ---", e
                 )
-            else:
-              parsed_json_data = fc.args
-              break
 
       if event.content and event.content.parts:
         if event.partial:
@@ -306,7 +331,24 @@ class MAUIAgentWithTemplates(MAUIAgent):
             if p.text:
               full_content_list.append(p.text)
 
-    return parsed_json_data, full_content_list
+    if rendered_parts is None and getattr(runner, "session_service", None):
+      get_session_fn = getattr(runner.session_service, "get_session", None)
+      if callable(get_session_fn):
+        try:
+          res = get_session_fn(
+              app_name=getattr(runner, "app_name", ""),
+              user_id=self._user_id,
+              session_id=session_id,
+          )
+          if inspect.isawaitable(res):
+            session = await res
+            if session and getattr(session, "state", None):
+              rendered_parts = session.state.get(STATE_RENDERED_A2UI_PARTS)
+              rendered_data = session.state.get(STATE_RENDERED_A2UI_DATA)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+          logger.debug("Could not retrieve session from session_service: %s", e)
+
+    return rendered_parts, full_content_list, rendered_data
 
   async def _run_extractor_and_merge(
       self,
@@ -317,15 +359,10 @@ class MAUIAgentWithTemplates(MAUIAgent):
       session_id: str,
       ui_version: str | None = None,
   ) -> tuple[list[Part] | None, str | None, dict[str, Any] | None]:
-    """Runs the dynamic extractor agent and merges output into the template."""
-    # 1. Resolve catalog schema manager and validator
+    """Runs the dynamic extractor agent and returns rendered template parts."""
+    del template_name, surface_id_prefix
+    # 1. Resolve catalog schema manager
     schema_manager = self._schema_managers.get(ui_version)
-    selected_catalog = None
-    if schema_manager:
-      # Retrieve the resolved catalog config for validation.
-      # Replacing the deprecated get_catalog("maps-agentic-ui-catalog")
-      # API call.
-      selected_catalog = schema_manager.get_selected_catalog()
 
     # 2. Build the extractor agent and runner
     agent = self._build_dynamic_extractor_agent(
@@ -340,35 +377,12 @@ class MAUIAgentWithTemplates(MAUIAgent):
     )
 
     # 4. Run extractor runner, collecting output
-    parsed_json_data, full_content_list = await self._run_extractor(
-        runner, agent, current_message, session_id
+    rendered_parts, full_content_list, rendered_data = (
+        await self._run_extractor(runner, agent, current_message, session_id)
     )
 
-    # 5. Handle output layout merging
-    if parsed_json_data is not None:
-      logger.info(
-          "Template parameters extracted successfully. Merging template."
-      )
-      if "surface_id" not in parsed_json_data:
-        short_id = uuid.uuid4().hex[:8]
-        parsed_json_data["surface_id"] = f"{surface_id_prefix}-{short_id}"
-
-      merged_actions = merge_template(
-          template_name,
-          parsed_json_data,
-          max_list_size=self.config.max_list_size,
-      )
-
-      if selected_catalog:
-        logger.info("Validating merged template against A2UI catalog schema.")
-        try:
-          selected_catalog.validator.validate(merged_actions)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-          logger.warning("Catalog validation failed: %s. Falling back.", e)
-          return None, None, None
-
-      final_parts = [create_a2ui_part(action) for action in merged_actions]
-      return final_parts, None, parsed_json_data
+    if rendered_parts is not None:
+      return rendered_parts, None, rendered_data
     else:
       raw_text = "".join(full_content_list)
       return None, raw_text, None
@@ -530,6 +544,24 @@ class MAUIAgentWithTemplates(MAUIAgent):
   ) -> list[Part]:
     """Generates a grounded plain text response using the provided model client with GroundingLite tools."""
     system_instruction = self._get_grounded_text_instruction()
+    if self.config.grounding_mode == GroundingMode.GWGM:
+      vertex_extractor = self._get_vertex_extractor()
+      response = await vertex_extractor.client.aio.models.generate_content(
+          model=self.config.gwgm.model_id,
+          contents=cleaned_query,
+          config=types.GenerateContentConfig(
+              system_instruction=system_instruction,
+              tools=[types.Tool(google_maps=types.GoogleMaps())],
+          ),
+      )
+      answer_text = response.text or ""
+      if not answer_text:
+        answer_text = (
+            "I'm sorry, I encountered an issue retrieving location details"
+            " right now."
+        )
+      return self._wrap_in_text_only(answer_text, session_id)
+
     generate_content_config = None
     if (
         client == self.extractor_client
@@ -605,14 +637,59 @@ class MAUIAgentWithTemplates(MAUIAgent):
         cleaned_query, session_id, client=self.fallback_client
     )
 
-  async def _handle_extracted_intent(
+  async def _handle_gwgm_template(
+      self,
+      intent: IntentClass,
+      query: str,
+  ) -> AsyncIterable[dict[str, Any]]:
+    """Handles supported template intents using Vertex Grounding with Google Maps."""
+    if intent == IntentClass.LOCAL_SEARCH:
+      schema_cls = LocalSearchExtractorSchema
+      template_name = _LOCAL_SEARCH_TEMPLATE_NAME
+      surface_prefix = _LOCAL_SEARCH_SURFACE_PREFIX
+    elif intent == IntentClass.DIRECTIONS:
+      schema_cls = DirectionsExtractorSchema
+      template_name = _DIRECTIONS_TEMPLATE_NAME
+      surface_prefix = _DIRECTIONS_SURFACE_PREFIX
+    else:
+      raise ValueError(f"Unsupported intent for GwGM extractor: {intent}")
+
+    logger.info(
+        "Using VertexGroundingExtractor for intent %s with schema %s",
+        intent,
+        schema_cls.__name__,
+    )
+    vertex_extractor = self._get_vertex_extractor()
+    extracted_template_params = await vertex_extractor.extract(
+        query, schema_cls, max_places=self.config.max_list_size
+    )
+
+    template_payload = extracted_template_params.model_dump(exclude_none=True)
+    if not template_payload.get("surface_id"):
+      surface_suffix = uuid.uuid4().hex[:8]
+      template_payload["surface_id"] = f"{surface_prefix}-{surface_suffix}"
+
+    merge_options: dict[str, Any] = {}
+    if template_name == _LOCAL_SEARCH_TEMPLATE_NAME:
+      merge_options["max_list_size"] = self.config.max_list_size
+
+    merged_actions = merge_template(
+        template_name, template_payload, **merge_options
+    )
+    a2ui_parts = [create_a2ui_part(action) for action in merged_actions]
+    yield {
+        "is_task_complete": True,
+        "parts": a2ui_parts,
+    }
+
+  async def _handle_mcp_template(
       self,
       intent: IntentClass,
       query: str,
       session_id: str,
       ui_version: str | None = None,
   ) -> AsyncIterable[dict[str, Any]]:
-    """Handles intents that use dynamic extractor agents and templates."""
+    """Handles template intents using the MCP extractor agent."""
     if intent == IntentClass.LOCAL_SEARCH:
       skill_name = _LOCAL_SEARCH_SKILL_NAME
       template_name = _LOCAL_SEARCH_TEMPLATE_NAME
@@ -622,19 +699,15 @@ class MAUIAgentWithTemplates(MAUIAgent):
       template_name = _DIRECTIONS_TEMPLATE_NAME
       surface_prefix = _DIRECTIONS_SURFACE_PREFIX
     else:
-      raise ValueError(f"Unsupported intent for extractor: {intent}")
+      raise ValueError(f"Unsupported intent for MCP extractor: {intent}")
 
-    logger.info("Router matched %s. Dispatching template extractor.", intent)
-
-    merged_parts, fallback_text, parsed_json_data = (
-        await self._run_extractor_and_merge(
-            skill_name=skill_name,
-            template_name=template_name,
-            surface_id_prefix=surface_prefix,
-            cleaned_query=query,
-            session_id=session_id,
-            ui_version=ui_version,
-        )
+    merged_parts, fallback_text, _ = await self._run_extractor_and_merge(
+        skill_name=skill_name,
+        template_name=template_name,
+        surface_id_prefix=surface_prefix,
+        cleaned_query=query,
+        session_id=session_id,
+        ui_version=ui_version,
     )
 
     if merged_parts is not None:
@@ -660,3 +733,26 @@ class MAUIAgentWithTemplates(MAUIAgent):
           "parts": final_parts,
       }
       return
+
+  async def _handle_extracted_intent(
+      self,
+      intent: IntentClass,
+      query: str,
+      session_id: str,
+      ui_version: str | None = None,
+  ) -> AsyncIterable[dict[str, Any]]:
+    """Handles intents that use template extractors."""
+    if intent not in _SUPPORTED_INTENTS:
+      raise ValueError(f"Unsupported intent for extractor: {intent}")
+
+    logger.info("Router matched %s. Dispatching template extractor.", intent)
+
+    if self.config.grounding_mode == GroundingMode.GWGM:
+      async for response_chunk in self._handle_gwgm_template(intent, query):
+        yield response_chunk
+      return
+
+    async for response_chunk in self._handle_mcp_template(
+        intent, query, session_id, ui_version
+    ):
+      yield response_chunk
