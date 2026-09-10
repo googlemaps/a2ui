@@ -162,6 +162,23 @@
         },
         "placeId": {
           "type": "string"
+        },
+        "placePrimaryType": {
+          "type": "string",
+          "enum": [
+            "food_and_drink",
+            "retail",
+            "outdoor",
+            "service",
+            "lodging",
+            "emergency",
+            "entertainment",
+            "ev",
+            "airport",
+            "parking",
+            "closed",
+            "generic"
+          ]
         }
       },
       "required": [

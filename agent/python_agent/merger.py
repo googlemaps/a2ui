@@ -22,6 +22,7 @@ sanitized message structures ready for wire transmission.
 import copy
 import json
 import os
+import re
 from typing import Any, Literal, TypedDict
 import uuid
 
@@ -104,9 +105,22 @@ def _prepare_local_search(
   """Validates and normalizes parameters for the local search template."""
   data_copy = copy.deepcopy(data)
   is_valid = True
+
+  # 1. Normalize heading
+  heading = data_copy.get("heading")
+  if heading and isinstance(heading, str):
+    clean_heading = re.sub(r"^#+\s*", "", heading).strip()
+  else:
+    anchor = data_copy.get("anchor_marker")
+    if isinstance(anchor, dict) and anchor.get("label"):
+      clean_heading = f"Places near {anchor['label']}"
+    else:
+      clean_heading = "Nearby Places"
+  data_copy["heading"] = clean_heading
+
   places = data_copy.get("places")
 
-  # 1. Validate that places is a non-empty list
+  # 2. Validate that places is a non-empty list
   if not isinstance(places, list) or not places:
     is_valid = False
   else:
@@ -158,6 +172,8 @@ def _prepare_local_search(
         }
         if "placeId" in p:
           marker["placeId"] = p["placeId"]
+        if "placePrimaryType" in p:
+          marker["placePrimaryType"] = p["placePrimaryType"]
         markers.append(marker)
       data_copy["markers"] = markers
     else:

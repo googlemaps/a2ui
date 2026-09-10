@@ -37,6 +37,27 @@ class TestExtractor(unittest.TestCase):
     pin = Pin(**data)
     self.assertEqual(pin.label, "Location")
 
+  def test_pin_with_place_primary_type(self):
+    data = {
+        "lat": 1.0,
+        "lng": 2.0,
+        "label": "Coffee Shop",
+        "placePrimaryType": "food_and_drink",
+    }
+    pin = Pin(**data)
+    self.assertEqual(pin.placePrimaryType, "food_and_drink")
+
+  def test_place_pin_with_place_primary_type(self):
+    data = {
+        "placeId": "ChIJ123",
+        "name": "Coffee Shop",
+        "lat": 1.0,
+        "lng": 2.0,
+        "placePrimaryType": "food_and_drink",
+    }
+    pin = PlacePin(**data)
+    self.assertEqual(pin.placePrimaryType, "food_and_drink")
+
   def test_pin_normalize_label_preserves_existing(self):
     data = {
         "lat": 1.0,
@@ -205,6 +226,39 @@ class TestExtractor(unittest.TestCase):
           }
           schema = DirectionsExtractorSchema(**data)
           self.assertEqual(schema.travel_mode, expected_mode)
+
+  def test_local_search_extractor_schema_with_heading(self):
+    """Verifies that LocalSearchExtractorSchema validates with heading."""
+    data = {
+        "heading": "5 Transit Stops Near Seattle Center",
+        "summary": "Here are 5 transit stops.",
+        "center_lat": 47.6205,
+        "center_lng": -122.3493,
+        "places": [{
+            "placeId": "ChIJ111",
+            "name": "Stop 1",
+            "lat": 47.62,
+            "lng": -122.35,
+        }],
+    }
+    schema = LocalSearchExtractorSchema(**data)
+    self.assertEqual(schema.heading, "5 Transit Stops Near Seattle Center")
+
+  def test_local_search_extractor_schema_missing_heading_fails_validation(self):
+    """Verifies that omitting heading raises ValidationError."""
+    data = {
+        "summary": "Here are 5 transit stops.",
+        "center_lat": 47.6205,
+        "center_lng": -122.3493,
+        "places": [{
+            "placeId": "ChIJ111",
+            "name": "Stop 1",
+            "lat": 47.62,
+            "lng": -122.35,
+        }],
+    }
+    with self.assertRaises(pydantic.ValidationError):
+      LocalSearchExtractorSchema(**data)
 
 
 if __name__ == "__main__":
