@@ -15,35 +15,33 @@
  */
 
 import {A2uiController, A2uiLitElement} from '@a2ui/lit/v0_9';
-import {structuralStyles} from '@a2ui/web_core';
+import {structuralStyles} from '@a2ui/web_core/v0_8';
 import {ComponentApi, DynamicStringSchema} from '@a2ui/web_core/v0_9';
 import {css, html, LitElement, nothing} from 'lit';
 import {customElement} from 'lit/decorators.js';
 import {styleMap} from 'lit/directives/style-map.js';
-import {z} from 'zod'
+import {z} from 'zod';
 
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(structuralStyles);
 
 export const PlaceDetailsCompactApi = {
   name: 'PlaceDetailsCompact',
-  schema: z
-    .object({
-      placeId: DynamicStringSchema.describe('The ID of the place to display.'),
-      orientation: z
-        .enum(['horizontal', 'vertical'])
-        .optional()
-        .default('horizontal')
-        .describe('The orientation of the place card.'),
-    })
-    .strict(),
+  schema: z.object({
+             placeId: DynamicStringSchema.describe(
+                 'The ID of the place to display.'),
+             orientation: z.enum(['horizontal', 'vertical'])
+                              .optional()
+                              .default('horizontal')
+                              .describe('The orientation of the place card.'),
+           }).strict(),
 } satisfies ComponentApi;
 
 declare global {
   interface HTMLElementTagNameMap {
-    "gmpx-place-details-compact": HTMLElement & {
-      place: string | object | null;
-      orientation: "horizontal" | "vertical";
+    'gmpx-place-details-compact': HTMLElement&{
+      place: string|object|null;
+      orientation: 'horizontal'|'vertical';
     };
   }
 }
@@ -81,13 +79,18 @@ export class PlaceDetailsCompact extends
 
     const placeId = props.placeId;
 
-    // Default to 'vertical' if this is the only a2ui-placedetailscompact component among its siblings,
-    // otherwise default to 'horizontal'. AI can still override this.
-    const siblingCards = Array.from(this.parentElement?.children || [])
-      .filter(c => c.tagName.toLowerCase() === 'a2ui-placedetailscompact');
-    const autoOrientation = siblingCards.length === 1 ? 'vertical' : 'horizontal';
+    // Default to 'vertical' if this is the only a2ui-placedetailscompact
+    // component among its siblings, otherwise default to 'horizontal'. AI can
+    // still override this.
+    const siblingCards =
+        Array.from(this.parentElement?.children || [])
+            .filter(
+                c => c.tagName.toLowerCase() === 'a2ui-placedetailscompact');
+    const autoOrientation =
+        siblingCards.length === 1 ? 'vertical' : 'horizontal';
 
-    const orientation = (props.orientation ?? autoOrientation).toUpperCase() as google.maps.places.PlaceDetailsOrientationString;
+    const orientation = (props.orientation ?? autoOrientation).toUpperCase() as
+        google.maps.places.PlaceDetailsOrientationString;
 
     const style = {
       'width': '100%',

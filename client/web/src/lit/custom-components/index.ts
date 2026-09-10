@@ -14,5 +14,20 @@
  limitations under the License.
  */
 
-export { A2uiGoogleMap, GoogleMap } from './google_map.js';
-export { A2uiPlaceDetailsCompact, PlaceDetailsCompact } from './place_details_compact.js';
+import {type Marker3DElementOptions, ThreeDMarker} from './3d_marker.js';
+import {A2uiGoogleMap, GoogleMap} from './google_map.js';
+import {A2uiPlaceDetailsCompact, PlaceDetailsCompact} from './place_details_compact.js';
+
+export {type Marker3DElementOptions, ThreeDMarker} from './3d_marker.js';
+export {A2uiGoogleMap, GoogleMap} from './google_map.js';
+export {A2uiPlaceDetailsCompact, PlaceDetailsCompact} from './place_details_compact.js';
+
+export function registerA2UICustomElements(): void {
+  if (typeof customElements === 'undefined') return;
+  if (!customElements.get('a2ui-googlemap')) {
+    customElements.define('a2ui-googlemap', GoogleMap);
+  }
+  if (!customElements.get('a2ui-placedetailscompact')) {
+    customElements.define('a2ui-placedetailscompact', PlaceDetailsCompact);
+  }
+}
