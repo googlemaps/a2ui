@@ -206,6 +206,39 @@ class TestExtractor(unittest.TestCase):
           schema = DirectionsExtractorSchema(**data)
           self.assertEqual(schema.travel_mode, expected_mode)
 
+  def test_local_search_extractor_schema_with_heading(self):
+    """Verifies that LocalSearchExtractorSchema validates with heading."""
+    data = {
+        "heading": "5 Transit Stops Near Seattle Center",
+        "summary": "Here are 5 transit stops.",
+        "center_lat": 47.6205,
+        "center_lng": -122.3493,
+        "places": [{
+            "placeId": "ChIJ111",
+            "name": "Stop 1",
+            "lat": 47.62,
+            "lng": -122.35,
+        }],
+    }
+    schema = LocalSearchExtractorSchema(**data)
+    self.assertEqual(schema.heading, "5 Transit Stops Near Seattle Center")
+
+  def test_local_search_extractor_schema_missing_heading_fails_validation(self):
+    """Verifies that omitting heading raises ValidationError."""
+    data = {
+        "summary": "Here are 5 transit stops.",
+        "center_lat": 47.6205,
+        "center_lng": -122.3493,
+        "places": [{
+            "placeId": "ChIJ111",
+            "name": "Stop 1",
+            "lat": 47.62,
+            "lng": -122.35,
+        }],
+    }
+    with self.assertRaises(pydantic.ValidationError):
+      LocalSearchExtractorSchema(**data)
+
 
 if __name__ == "__main__":
   unittest.main()
