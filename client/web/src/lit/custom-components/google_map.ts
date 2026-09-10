@@ -1,4 +1,3 @@
-/// <reference types="google.maps" />
 /*
  Copyright 2026 Google LLC
 
@@ -16,7 +15,7 @@
  */
 
 import {A2uiController, A2uiLitElement} from '@a2ui/lit/v0_9';
-import {structuralStyles} from '@a2ui/web_core';
+import {structuralStyles} from '@a2ui/web_core/v0_8';
 import {ComponentApi, DynamicNumberSchema, DynamicStringSchema} from '@a2ui/web_core/v0_9';
 import {css, html, LitElement, nothing, PropertyValues} from 'lit';
 import {customElement} from 'lit/decorators.js';
@@ -352,7 +351,16 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
       tilt = 0;
     }
 
-    const routes = props.routes || [];
+    const rawRoutes = props.routes || [];
+    const validRoutes = rawRoutes.filter((route: any) =>
+      route &&
+      route.origin &&
+      route.origin.lat != null &&
+      route.origin.lng != null &&
+      route.destination &&
+      route.destination.lat != null &&
+      route.destination.lng != null
+    );
 
     const style = {
       "width": "100%",
@@ -375,7 +383,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
           internal-usage-attribution-ids="${
         (window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.8_atoui'}"
         >${
-        routes.map(
+        validRoutes.map(
             (route: any) => html`
           <gmp-route-3d
             origin="${route.origin.lat},${route.origin.lng}"
