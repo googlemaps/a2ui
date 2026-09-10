@@ -14,6 +14,11 @@
 """Configuration for the Intent Router, including prompts and schemas."""
 
 import enum
+import re
+from typing import Any
+
+from google import genai
+from google.genai import types
 import pydantic
 
 
@@ -86,3 +91,83 @@ Note: Simple multi-stop routes or routes with specified waypoints (e.g., "A to B
   "query": "Directions from Sacramento to Mendocino via Clear Lake"
 }
 """
+
+
+class VertexIntentClassifier:
+  """Native Vertex AI Intent Classifier using structured output."""
+
+  def __init__(
+      self,
+      project_id: str | None = None,
+      location: str = "global",
+      model_id: str = "gemini-3.5-flash-lite",
+      client: genai.Client | None = None,
+      thinking_budget: int = 0,
+  ):
+    if not project_id and client is None:
+      raise ValueError(
+          "Vertex AI project_id must be provided when client is not supplied."
+      )
+    self.project_id = project_id
+    self.location = location
+    self.model_id = model_id.removeprefix("gemini/").removeprefix("models/")
+    self.thinking_budget = thinking_budget
+    self._client = client
+
+  @property
+  def client(self) -> genai.Client:
+    """Lazily initializes the Vertex genai Client."""
+    if self._client is None:
+      self._client = genai.Client(
+          vertexai=True,
+          project=self.project_id,
+          location=self.location,
+      )
+    return self._client
+
+  async def classify(self, query: str) -> tuple[IntentClass, str]:
+    """Classifies user query intent using Vertex AI structured output.
+
+    Args:
+        query: User input query string.
+
+    Returns:
+        A tuple of (IntentClass, cleaned_query).
+
+    Raises:
+        ValueError: If the model response is empty or cannot be parsed.
+    """
+    config_kwargs: dict[str, Any] = {
+        "system_instruction": ROUTER_SYSTEM_INSTRUCTION,
+        "response_mime_type": "application/json",
+        "response_schema": RouterClassification,
+    }
+    if self.thinking_budget > 0:
+      config_kwargs["thinking_config"] = types.ThinkingConfig(
+          thinking_budget=self.thinking_budget
+      )
+
+    response = await self.client.aio.models.generate_content(
+        model=self.model_id,
+        contents=query,
+        config=types.GenerateContentConfig(**config_kwargs),
+    )
+
+    if response.parsed is not None:
+      if isinstance(response.parsed, RouterClassification):
+        classification = response.parsed
+      elif isinstance(response.parsed, dict):
+        classification = RouterClassification(**response.parsed)
+      else:
+        classification = RouterClassification.model_validate(response.parsed)
+    elif response.text:
+      text = response.text.strip()
+      if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*\n?", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\n?```$", "", text)
+        text = text.strip()
+      classification = RouterClassification.model_validate_json(text)
+    else:
+      raise ValueError("Empty or unparseable response from intent classifier.")
+
+    return classification.intent, classification.query

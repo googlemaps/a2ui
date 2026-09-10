@@ -22,10 +22,16 @@ sanitized message structures ready for wire transmission.
 import copy
 import json
 import os
+import re
 from typing import Any, Literal, TypedDict
 import uuid
 
+from a2a.types import Part
+import pydantic
+
+from a2ui.a2a.parts import create_a2ui_part
 from extractor import normalize_travel_mode
+from router_config import IntentClass
 
 
 class TextOutputDict(TypedDict):
@@ -104,9 +110,22 @@ def _prepare_local_search(
   """Validates and normalizes parameters for the local search template."""
   data_copy = copy.deepcopy(data)
   is_valid = True
+
+  # 1. Normalize heading
+  heading = data_copy.get("heading")
+  if heading and isinstance(heading, str):
+    clean_heading = re.sub(r"^#+\s*", "", heading).strip()
+  else:
+    anchor = data_copy.get("anchor_marker")
+    if isinstance(anchor, dict) and anchor.get("label"):
+      clean_heading = f"Places near {anchor['label']}"
+    else:
+      clean_heading = "Nearby Places"
+  data_copy["heading"] = clean_heading
+
   places = data_copy.get("places")
 
-  # 1. Validate that places is a non-empty list
+  # 2. Validate that places is a non-empty list
   if not isinstance(places, list) or not places:
     is_valid = False
   else:
@@ -158,6 +177,8 @@ def _prepare_local_search(
         }
         if "placeId" in p:
           marker["placeId"] = p["placeId"]
+        if "placePrimaryType" in p:
+          marker["placePrimaryType"] = p["placePrimaryType"]
         markers.append(marker)
       data_copy["markers"] = markers
     else:
@@ -197,7 +218,30 @@ def _prepare_directions(data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
   routes = data_copy.get("routes")
 
-  # 1. Validate that routes is a non-empty list of segment dicts
+  # 1. Normalize heading
+  heading = data_copy.get("heading")
+  if heading and isinstance(heading, str):
+    clean_heading = re.sub(r"^#+\s*", "", heading).strip()
+  else:
+    clean_heading = ""
+
+  if not clean_heading:
+    clean_heading = "Directions"
+    if isinstance(routes, list) and routes and isinstance(routes[0], dict):
+      origin = routes[0].get("origin")
+      destination = routes[-1].get("destination")
+      orig_label = origin.get("label") if isinstance(origin, dict) else None
+      dest_label = (
+          destination.get("label") if isinstance(destination, dict) else None
+      )
+      if orig_label and dest_label:
+        clean_heading = f"Route from {orig_label} to {dest_label}"
+      elif dest_label:
+        clean_heading = f"Directions to {dest_label}"
+
+  data_copy["heading"] = clean_heading
+
+  # 2. Validate that routes is a non-empty list of segment dicts
   if not isinstance(routes, list) or not routes:
     is_valid = False
   else:
@@ -328,3 +372,101 @@ def merge_template(
 
   resolved_json = _replace_placeholders(template_json, data_copy)
   return _remove_none_values(resolved_json)
+
+
+def wrap_in_text_only(
+    text: str, session_id: str = "", surface_id: str | None = None
+) -> list[Part]:
+  """Wraps plain text in a text_only template Part list.
+
+  Args:
+      text: The plain text message to render.
+      session_id: Context session ID used for surface scoping if surface_id is
+        omitted.
+      surface_id: Optional explicit surface ID override.
+
+  Returns:
+      A list of A2A Parts wrapping the merged text_only template actions.
+  """
+  if surface_id:
+    resolved_surface_id = surface_id
+  elif session_id:
+    short_id = uuid.uuid4().hex[:8]
+    resolved_surface_id = f"text-only_{session_id}-{short_id}"
+  else:
+    short_id = uuid.uuid4().hex[:8]
+    resolved_surface_id = f"text-only_{short_id}"
+
+  merged_actions = merge_template(
+      "text_only",
+      {
+          "text": text,
+          "surface_id": resolved_surface_id,
+      },
+  )
+  return [create_a2ui_part(action) for action in merged_actions]
+
+
+def render_template_payload(
+    template_name: str | IntentClass,
+    payload: dict[str, Any] | pydantic.BaseModel,
+    max_list_size: int = 5,
+    surface_id: str | None = None,
+) -> list[Part]:
+  """Renders extracted parameters into layout templates and wraps them in A2UI Parts.
+
+  Args:
+      template_name: The layout template or IntentClass (e.g. 'local_search',
+        'directions', or IntentClass.LOCAL_SEARCH).
+      payload: Dictionary or Pydantic model with extracted parameters.
+      max_list_size: Maximum allowable child elements in list components.
+      surface_id: Optional explicit surface ID override.
+
+  Returns:
+      A list of A2A Parts wrapping the merged template actions.
+  """
+  if isinstance(template_name, IntentClass):
+    if template_name == IntentClass.LOCAL_SEARCH:
+      target_template = "local_search"
+      surface_prefix = "local-search-surface"
+    elif template_name == IntentClass.DIRECTIONS:
+      target_template = "directions"
+      surface_prefix = "directions-surface"
+    elif template_name == IntentClass.TEXT_ONLY:
+      target_template = "text_only"
+      surface_prefix = "text-only-surface"
+    else:
+      target_template = str(template_name.value).lower()
+      surface_prefix = f"{target_template.replace('_', '-')}-surface"
+  else:
+    norm = template_name.lower().replace("-", "_")
+    if norm in ("local_search", "localsearch"):
+      target_template = "local_search"
+      surface_prefix = "local-search-surface"
+    elif norm in ("directions", "direction"):
+      target_template = "directions"
+      surface_prefix = "directions-surface"
+    elif norm in ("text_only", "textonly"):
+      target_template = "text_only"
+      surface_prefix = "text-only-surface"
+    else:
+      target_template = template_name
+      surface_prefix = f"{template_name.replace('_', '-')}-surface"
+
+  if isinstance(payload, pydantic.BaseModel):
+    data_copy = payload.model_dump(exclude_none=True)
+  else:
+    data_copy = copy.deepcopy(payload)
+
+  if surface_id:
+    data_copy["surface_id"] = surface_id
+  elif not data_copy.get("surface_id"):
+    surface_suffix = uuid.uuid4().hex[:8]
+    data_copy["surface_id"] = f"{surface_prefix}-{surface_suffix}"
+
+  merge_options: dict[str, Any] = {}
+  if target_template == "local_search":
+    merge_options["max_list_size"] = max_list_size
+
+  merged_actions = merge_template(target_template, data_copy, **merge_options)
+  return [create_a2ui_part(action) for action in merged_actions]

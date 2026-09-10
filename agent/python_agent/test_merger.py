@@ -18,9 +18,12 @@ import pathlib
 import re
 import unittest
 
-import a2ui
+from a2a.types import DataPart, Part
+
+from google3.third_party.a2ui.agent_sdks.python.a2ui_agent.src.a2ui import schema
 import agent
 import merger
+from router_config import IntentClass
 
 merge_template = merger.merge_template
 
@@ -36,19 +39,17 @@ class TestMerger(unittest.TestCase):
         / "schema"
         / "maps_catalog_extension.json"
     )
-    schema_manager = a2ui.schema.manager.A2uiSchemaManager(
-        version=a2ui.schema.constants.VERSION_0_9,
+    schema_manager = schema.manager.A2uiSchemaManager(
+        version=schema.constants.VERSION_0_9,
         catalogs=[
-            a2ui.schema.catalog.CatalogConfig(
+            schema.catalog.CatalogConfig(
                 name="maps-agentic-ui-catalog",
                 provider=agent.MergedCatalogProvider(
-                    a2ui.schema.constants.VERSION_0_9, str(extension_path)
+                    schema.constants.VERSION_0_9, str(extension_path)
                 ),
             )
         ],
-        schema_modifiers=[
-            a2ui.schema.common_modifiers.remove_strict_validation
-        ],
+        schema_modifiers=[schema.common_modifiers.remove_strict_validation],
     )
     selected_catalog = schema_manager.get_selected_catalog()
     selected_catalog.validator.validate(result)
@@ -143,6 +144,7 @@ class TestMerger(unittest.TestCase):
     """Verifies merging a complete local search payload."""
     data = {
         "surface_id": "local-search-surface-abc",
+        "heading": "Top Coffee Shops in Seattle",
         "summary": "Here are 3 highly-rated coffee shops in Seattle.",
         "center_lat": "47.6062",
         "center_lng": -122.3321,
@@ -185,7 +187,18 @@ class TestMerger(unittest.TestCase):
                     {
                         "id": "root",
                         "component": "Column",
-                        "children": ["summary-text", "map", "list"],
+                        "children": [
+                            "heading-text",
+                            "summary-text",
+                            "map",
+                            "list",
+                        ],
+                    },
+                    {
+                        "id": "heading-text",
+                        "component": "Text",
+                        "variant": "body",
+                        "text": "### Top Coffee Shops in Seattle",
                     },
                     {
                         "id": "summary-text",
@@ -200,6 +213,8 @@ class TestMerger(unittest.TestCase):
                         "component": "GoogleMap",
                         "center": {"lat": 47.6062, "lng": -122.3321},
                         "zoom": 14,
+                        "tilt": 0,
+                        "mode": "roadmap",
                         "markers": [
                             {
                                 "lat": 47.62,
@@ -308,7 +323,7 @@ class TestMerger(unittest.TestCase):
     result = merge_template("local_search", data, max_list_size=2)
     # Check that updateComponents has only 2 markers
     components = result[1]["updateComponents"]["components"]
-    map_comp = next(c for c in components if c["id"] == "map")
+    map_comp = next(comp for comp in components if comp["id"] == "map")
     self.assertEqual(len(map_comp["markers"]), 2)
 
     # Check that updateDataModel has only 2 places
@@ -317,10 +332,57 @@ class TestMerger(unittest.TestCase):
     self.assertEqual(places[0]["placeId"], "1")
     self.assertEqual(places[1]["placeId"], "2")
 
+  def test_merge_local_search_heading_normalization(self):
+    """Verifies that heading is cleaned of markdown headers or synthesized from anchor."""
+    # Case 1: Heading with leading markdown hashtags
+    data_with_hash = {
+        "surface_id": "test-surface",
+        "heading": "### Best Bakeries",
+        "summary": "Here are bakeries.",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 13,
+        "places": [{"placeId": "p1", "name": "B1", "lat": 47.6, "lng": -122.3}],
+    }
+    result = merge_template("local_search", data_with_hash)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(comp for comp in comps if comp["id"] == "heading-text")
+    self.assertEqual(heading_comp["text"], "### Best Bakeries")
+
+    # Case 2: Missing heading with anchor marker
+    data_with_anchor = {
+        "surface_id": "test-surface",
+        "summary": "Here are bakeries.",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 13,
+        "anchor_marker": {"lat": 47.6, "lng": -122.3, "label": "Space Needle"},
+        "places": [{"placeId": "p1", "name": "B1", "lat": 47.6, "lng": -122.3}],
+    }
+    result = merge_template("local_search", data_with_anchor)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(comp for comp in comps if comp["id"] == "heading-text")
+    self.assertEqual(heading_comp["text"], "### Places near Space Needle")
+
+    # Case 3: Missing heading and no anchor
+    data_no_heading = {
+        "surface_id": "test-surface",
+        "summary": "Here are bakeries.",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 13,
+        "places": [{"placeId": "p1", "name": "B1", "lat": 47.6, "lng": -122.3}],
+    }
+    result = merge_template("local_search", data_no_heading)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(comp for comp in comps if comp["id"] == "heading-text")
+    self.assertEqual(heading_comp["text"], "### Nearby Places")
+
   def test_merge_directions_full_json(self):
     """Verifies complete end-to-end directions template merging, placeholder replacement, and travel mode normalization."""
     data = {
         "surface_id": "directions-surface-xyz",
+        "heading": "Walking Route from Dobong to Gangnam",
         "summary": "Typical commute is 1h 15m.",
         "center_lat": "37.5665",
         "center_lng": 126.9780,
@@ -352,13 +414,13 @@ class TestMerger(unittest.TestCase):
                     {
                         "id": "root",
                         "component": "Column",
-                        "children": ["summary-text", "map"],
+                        "children": ["heading-text", "map", "summary-text"],
                     },
                     {
-                        "id": "summary-text",
+                        "id": "heading-text",
                         "component": "Text",
                         "variant": "body",
-                        "text": "Typical commute is 1h 15m.",
+                        "text": "### Walking Route from Dobong to Gangnam",
                     },
                     {
                         "id": "map",
@@ -379,6 +441,12 @@ class TestMerger(unittest.TestCase):
                         }],
                         "travelMode": "walking",
                     },
+                    {
+                        "id": "summary-text",
+                        "component": "Text",
+                        "variant": "body",
+                        "text": "Typical commute is 1h 15m.",
+                    },
                 ],
             },
         },
@@ -394,6 +462,50 @@ class TestMerger(unittest.TestCase):
 
     result = merge_template("directions", data, max_list_size=3)
     self.assertEqual(result, expected)
+
+  def test_merge_directions_heading_fallback(self):
+    """Verifies that missing heading is synthesized from route endpoints."""
+    # Case 1: Heading with leading markdown hashtags
+    data_with_hash = {
+        "surface_id": "test-surface",
+        "heading": "### Driving Route",
+        "summary": "About 15 minutes.",
+        "center_lat": 37.5,
+        "center_lng": 127.0,
+        "zoom": 12,
+        "routes": [{
+            "origin": {"lat": 37.5, "lng": 127.0, "label": "Origin"},
+            "destination": {"lat": 37.6, "lng": 127.1, "label": "Dest"},
+        }],
+    }
+    result = merge_template("directions", data_with_hash)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(c for c in comps if c["id"] == "heading-text")
+    self.assertEqual(heading_comp["text"], "### Driving Route")
+
+    # Case 2: Missing heading with origin and destination labels
+    data_missing = {
+        "surface_id": "test-surface",
+        "summary": "About 15 minutes.",
+        "center_lat": 37.5,
+        "center_lng": 127.0,
+        "zoom": 12,
+        "routes": [{
+            "origin": {"lat": 37.5, "lng": 127.0, "label": "Seattle Center"},
+            "destination": {
+                "lat": 37.6,
+                "lng": 127.1,
+                "label": "Pike Place Market",
+            },
+        }],
+    }
+    result = merge_template("directions", data_missing)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(c for c in comps if c["id"] == "heading-text")
+    self.assertEqual(
+        heading_comp["text"],
+        "### Route from Seattle Center to Pike Place Market",
+    )
 
   def test_validate_directions_output_with_schema(self):
     """Verifies merged directions output passes schema validation."""
@@ -584,7 +696,7 @@ class TestMergerEdgeCases(unittest.TestCase):
     result = merge_template("local_search", data, max_list_size=3)
     update_components = result[1]["updateComponents"]
     map_comp = next(
-        c for c in update_components["components"] if c["id"] == "map"
+        comp for comp in update_components["components"] if comp["id"] == "map"
     )
     # Verify anchorMarker key is NOT in map component (cleanly stripped)
     self.assertNotIn("anchorMarker", map_comp)
@@ -612,7 +724,7 @@ class TestMergerEdgeCases(unittest.TestCase):
     result = merge_template("local_search", data, max_list_size=3)
     update_components = result[1]["updateComponents"]
     map_comp = next(
-        c for c in update_components["components"] if c["id"] == "map"
+        comp for comp in update_components["components"] if comp["id"] == "map"
     )
     expected_markers = [
         {"lat": 47.63, "lng": -122.33, "label": "Custom 1"},
@@ -703,6 +815,160 @@ class TestMergerEdgeCases(unittest.TestCase):
         result[1]["updateComponents"]["components"][1]["text"],
         "Fallback text.",
     )
+
+
+class TestSharedRenderingHelpers(unittest.TestCase):
+  """Unit tests for shared rendering helpers (wrap_in_text_only and render_template_payload)."""
+
+  def test_wrap_in_text_only_with_session_id(self):
+    """Verifies wrap_in_text_only scopes surfaceId with session_id."""
+    parts = merger.wrap_in_text_only("Hello world", session_id="sess-123")
+    self.assertEqual(len(parts), 2)
+    for p in parts:
+      self.assertIsInstance(p, Part)
+      self.assertIsInstance(p.root, DataPart)
+
+    # Check surfaceId in createSurface
+    create_surface = parts[0].root.data["createSurface"]
+    self.assertTrue(
+        create_surface["surfaceId"].startswith("text-only_sess-123-")
+    )
+
+    # Check text content in updateComponents
+    update_comps = parts[1].root.data["updateComponents"]
+    text_comp = update_comps["components"][1]
+    self.assertEqual(text_comp["text"], "Hello world")
+
+  def test_wrap_in_text_only_without_session_id(self):
+    """Verifies wrap_in_text_only generates random surfaceId when session_id is empty."""
+    parts = merger.wrap_in_text_only("Simple text")
+    self.assertEqual(len(parts), 2)
+    create_surface = parts[0].root.data["createSurface"]
+    self.assertTrue(
+        re.fullmatch(r"text-only_[a-f0-9]{8}", create_surface["surfaceId"])
+    )
+
+  def test_wrap_in_text_only_explicit_surface_id(self):
+    """Verifies wrap_in_text_only respects explicit surface_id override."""
+    parts = merger.wrap_in_text_only(
+        "Custom ID text", surface_id="my-custom-text-id"
+    )
+    self.assertEqual(len(parts), 2)
+    create_surface = parts[0].root.data["createSurface"]
+    self.assertEqual(create_surface["surfaceId"], "my-custom-text-id")
+
+  def test_render_template_payload_local_search_string_intent(self):
+    """Verifies render_template_payload with local_search string template name."""
+    payload = {
+        "summary": "Coffee shops",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 14,
+        "places": [
+            {"placeId": "p1", "name": "Coffee 1", "lat": 47.61, "lng": -122.31}
+        ],
+    }
+    parts = merger.render_template_payload("local_search", payload)
+    self.assertEqual(len(parts), 3)
+    for p in parts:
+      self.assertIsInstance(p, Part)
+      self.assertIsInstance(p.root, DataPart)
+    self.assertIn("createSurface", parts[0].root.data)
+    self.assertIn("updateComponents", parts[1].root.data)
+    self.assertIn("updateDataModel", parts[2].root.data)
+
+  def test_render_template_payload_local_search_enum_intent(self):
+    """Verifies render_template_payload with IntentClass.LOCAL_SEARCH."""
+    payload = {
+        "summary": "Coffee shops",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 14,
+        "places": [
+            {"placeId": "p1", "name": "Coffee 1", "lat": 47.61, "lng": -122.31}
+        ],
+    }
+    parts = merger.render_template_payload(IntentClass.LOCAL_SEARCH, payload)
+    self.assertEqual(len(parts), 3)
+
+  def test_render_template_payload_directions_string_and_enum(self):
+    """Verifies render_template_payload with directions string and enum."""
+    payload = {
+        "summary": "Route to park",
+        "center_lat": 40.7,
+        "center_lng": -73.9,
+        "zoom": 12,
+        "routes": [{
+            "origin": {"lat": 40.7, "lng": -73.9, "label": "Start"},
+            "destination": {"lat": 40.8, "lng": -73.8, "label": "End"},
+        }],
+    }
+    parts_str = merger.render_template_payload("directions", payload)
+    self.assertEqual(len(parts_str), 3)
+
+    parts_enum = merger.render_template_payload(IntentClass.DIRECTIONS, payload)
+    self.assertEqual(len(parts_enum), 3)
+
+  def test_render_template_payload_surface_id_generation_and_override(self):
+    """Verifies surface_id generation and explicit override in render_template_payload."""
+    base_payload = {
+        "summary": "Coffee shops",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 14,
+        "places": [
+            {"placeId": "p1", "name": "Coffee 1", "lat": 47.61, "lng": -122.31}
+        ],
+    }
+    # Case 1: Omitted -> generated with prefix
+    parts1 = merger.render_template_payload("local_search", base_payload)
+    surface_id1 = parts1[0].root.data["createSurface"]["surfaceId"]
+    self.assertTrue(
+        re.fullmatch(r"local-search-surface-[a-f0-9]{8}", surface_id1)
+    )
+
+    # Case 2: In payload -> preserved
+    payload_with_id = dict(base_payload, surface_id="payload-surface-id")
+    parts2 = merger.render_template_payload("local_search", payload_with_id)
+    surface_id2 = parts2[0].root.data["createSurface"]["surfaceId"]
+    self.assertEqual(surface_id2, "payload-surface-id")
+
+    # Case 3: Explicit argument -> overrides
+    parts3 = merger.render_template_payload(
+        "local_search", base_payload, surface_id="explicit-arg-id"
+    )
+    surface_id3 = parts3[0].root.data["createSurface"]["surfaceId"]
+    self.assertEqual(surface_id3, "explicit-arg-id")
+
+  def test_render_template_payload_max_list_size_clamping(self):
+    """Verifies max_list_size clamps child elements in render_template_payload."""
+    places = [
+        {
+            "placeId": f"p{i}",
+            "name": f"P{i}",
+            "lat": 47.6 + i * 0.01,
+            "lng": -122.3,
+        }
+        for i in range(5)
+    ]
+    payload = {
+        "summary": "Multiple places",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 14,
+        "places": places,
+    }
+    parts = merger.render_template_payload(
+        "local_search", payload, max_list_size=2
+    )
+    # Check updateComponents markers length
+    update_comps = parts[1].root.data["updateComponents"]["components"]
+    map_comp = next(c for c in update_comps if c.get("id") == "map")
+    self.assertEqual(len(map_comp["markers"]), 2)
+
+    # Check updateDataModel places length
+    update_data = parts[2].root.data["updateDataModel"]["value"]["places"]
+    self.assertEqual(len(update_data), 2)
 
 
 if __name__ == "__main__":
