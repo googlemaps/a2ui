@@ -276,4 +276,5 @@ class MAUIAgentWithGrounding(MAUIAgent):
         ),
         instruction=instruction,
         tools=[grounding_tool, skill_manager_tool],
+        after_tool_callback=self._after_tool_callback,
     )
