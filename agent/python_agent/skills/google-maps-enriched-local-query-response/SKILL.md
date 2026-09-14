@@ -57,7 +57,21 @@ You are an expert in resolving location-based queries using the **A2UI framework
 *   **Quality**: NEVER hallucinate information about places, especially their place IDs, location, business hours, or individual characteristics. Providing incorrect information could lead real people to have bad experiences, wasting time and money.
 *   **Pins**:
     *   `anchorMarker`: Use for the "main" focus (e.g., a hotel).
-    *   `markers`: Use for related results (e.g., surrounding restaurants).
+    *   `markers`: Use for related results (e.g., surrounding restaurants). Every marker in `markers` MUST include `placeId`, `label` (or `name`), `lat`, and `lng`. Every place in `updateDataModel` MUST include `placeId`, `name`, `lat`, `lng`, and `address` (the street address or vicinity returned by Google Maps search).
+    *   **POI Types (`placePrimaryType`)**: Determine `placePrimaryType` using the descriptions or categories in the tool response. If insufficient, infer it from the user prompt and place title.
+        Supported categories:
+        - `food_and_drink`: Restaurants, cafes, bars, bakeries, coffee shops, dining.
+        - `retail`: Stores, shops, boutiques, supermarkets, malls, markets.
+        - `outdoor`: Parks, trails, gardens, natural landmarks, beaches, scenic spots.
+        - `service`: Banks, salons, repair, gas stations, dry cleaners, post offices.
+        - `lodging`: Hotels, resorts, motels, hostels, B&Bs.
+        - `emergency`: Hospitals, urgent care, police, fire stations.
+        - `entertainment`: Theaters, museums, cinemas, stadiums, amusement parks, venues.
+        - `ev`: EV charging stations.
+        - `airport`: Airports.
+        - `parking`: Parking lots and garages.
+        - `closed`: Permanently closed businesses.
+        - `generic`: Default fallback when ambiguous or not clearly matching above categories.
 *   **References**: Refer to items in the data model via `path` for dynamic content.
 *   **Child Components**: When using a Column or Row layout, ensure that each child component referenced in the `children` array is also included in the `surfaceUpdate` as its own component definition.
 
@@ -197,8 +211,8 @@ MUST NOT pass a reference to an array directly.
       "path": "/",
       "value": {
         "items": [
-          { "placeId": "ChIabc123" },
-          { "placeId": "ChIabc123" }
+          { "placeId": "ChIabc123", "name": "Place 1", "address": "123 Main St" },
+          { "placeId": "ChIdef456", "name": "Place 2", "address": "456 Market St" }
         ]
       }
     }
