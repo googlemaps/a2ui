@@ -339,8 +339,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     mock_runner = mock.MagicMock()
 
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
+            "heading": "Directions from home to work",
             "summary": "Typical commute is 45 mins.",
             "center_lat": 37.5,
             "center_lng": 127.0,
@@ -470,8 +471,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
+            "heading": "Bus directions to work",
             "summary": "Take bus 10 to work.",
             "center_lat": 37.5,
             "center_lng": 127.0,
@@ -524,8 +526,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
+            "heading": "Walking route to park",
             "summary": "Walk for 15 minutes.",
             "center_lat": 37.5,
             "center_lng": 127.0,
@@ -580,8 +583,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
+            "heading": "Biking route to work",
             "summary": "Bike for 25 minutes.",
             "center_lat": 37.5,
             "center_lng": 127.0,
@@ -639,8 +643,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
 
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
+            "heading": "Directions to work",
             "summary": "Typical commute is 45 mins.",
             "center_lat": 37.5,
             "center_lng": 127.0,
@@ -721,8 +726,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     mock_runner = mock.MagicMock()
 
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_local_search_template",
         args={
+            "heading": "Top Sushi Places in Seattle",
             "summary": "Here are some sushi places.",
             "center_lat": 47.6062,
             "center_lng": -122.3321,
@@ -763,6 +769,20 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         create_surface["surfaceId"].startswith("local-search-surface-")
     )
 
+    update_components = parts[1].root.data["updateComponents"]
+    heading_comp = next(
+        comp
+        for comp in update_components["components"]
+        if comp["id"] == "heading-text"
+    )
+    self.assertEqual(heading_comp["text"], "### Top Sushi Places in Seattle")
+
+    map_comp = next(
+        comp for comp in update_components["components"] if comp["id"] == "map"
+    )
+    self.assertEqual(map_comp["tilt"], 0)
+    self.assertEqual(map_comp["mode"], "roadmap")
+
     update_data_model = parts[2].root.data["updateDataModel"]
     # Verify places array was successfully populated in data model
     self.assertEqual(update_data_model["path"], "/")
@@ -788,9 +808,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
 
-    # Mock invalid set_model_response arguments (missing required center_lat)
+    # Mock invalid render_local_search_template arguments (missing required center_lat)
     invalid_args = {"summary": "Invalid data", "places": []}
-    mock_fc = MockFunctionCall("set_model_response", invalid_args)
+    mock_fc = MockFunctionCall("render_local_search_template", invalid_args)
     mock_event_fc = MockEvent(function_calls=[mock_fc])
     mock_event_text = MockEvent(
         content=MockContent([MockPart("Fallback text here.")])
@@ -843,8 +863,19 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        "set_model_response",
-        {"summary": "Coffee", "places": [{"name": "Starbucks"}]},
+        "render_local_search_template",
+        {
+            "heading": "Coffee Shops",
+            "summary": "Coffee",
+            "center_lat": 47.6,
+            "center_lng": -122.3,
+            "places": [{
+                "placeId": "1",
+                "name": "Starbucks",
+                "lat": 47.6,
+                "lng": -122.3,
+            }],
+        },
     )
     mock_runner.run_async.return_value = MockAsyncIterator(
         [MockEvent(function_calls=[mock_fc])]
@@ -858,7 +889,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         "Mock validation error"
     )
     mock_schema_manager = mock.MagicMock()
-    mock_schema_manager.get_catalog.return_value = mock_catalog
+    mock_schema_manager.get_selected_catalog.return_value = mock_catalog
     agent._schema_managers = {"v0.9": mock_schema_manager}
 
     mock_fallback_runner = mock.MagicMock()
@@ -1097,10 +1128,23 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         extractor_agent = agent._build_dynamic_extractor_agent(  # pylint: disable=protected-access
             "local-search-template-response"
         )
-        self.assertNotIn(
-            "Shared guidelines content", extractor_agent.instruction
-        )
-        self.assertIn("Base skill instructions", extractor_agent.instruction)
+
+  def test_build_dynamic_extractor_agent_directions_loads_skill_instructions(
+      self,
+  ):
+    """Verifies that directions skill instructions from disk are loaded into the extractor agent."""
+    agent = MAUIAgentWithTemplates(base_url="http://test-url")
+    extractor_agent = agent._build_dynamic_extractor_agent(  # pylint: disable=protected-access
+        "directions-template-response"
+    )
+    self.assertIn("less than a minute", extractor_agent.instruction)
+    self.assertIn(
+        "Always round seconds to the nearest minute",
+        extractor_agent.instruction,
+    )
+    tool_names = [t.name for t in extractor_agent.tools if hasattr(t, "name")]
+    self.assertIn("render_directions_template", tool_names)
+
 
 if __name__ == "__main__":
   unittest.main()
