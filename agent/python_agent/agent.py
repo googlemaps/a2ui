@@ -51,8 +51,21 @@ from a2ui.parser.streaming import A2uiStreamParser
 from a2ui.schema.catalog import CatalogConfig
 from a2ui.schema.catalog_provider import A2uiCatalogProvider
 from a2ui.schema.common_modifiers import remove_strict_validation
-from a2ui.schema.constants import A2UI_CLOSE_TAG, A2UI_OPEN_TAG, VERSION_0_9
+from a2ui.parser.constants import (
+    MSG_TYPE_CREATE_SURFACE,
+    MSG_TYPE_DELETE_SURFACE,
+    MSG_TYPE_UPDATE_COMPONENTS,
+    MSG_TYPE_UPDATE_DATA_MODEL,
+)
+from a2ui.schema.constants import (
+    A2UI_CLOSE_TAG,
+    A2UI_OPEN_TAG,
+    A2UI_SURFACE_ID_KEY,
+    VERSION_0_9,
+)
 from a2ui.schema.manager import A2uiSchemaManager
+
+from .after_tools_callback import _add_maps_tools_tokens_to_part, after_tools_callback
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +156,24 @@ class MergedCatalogProvider(A2uiCatalogProvider):
     return catalog
 
 
+def extract_surface_id(data: Any) -> str | None:
+  """Extracts the surface ID from an A2UI payload dictionary or part."""
+  if not isinstance(data, dict):
+    return None
+  for key in (
+      MSG_TYPE_CREATE_SURFACE,
+      MSG_TYPE_UPDATE_COMPONENTS,
+      MSG_TYPE_UPDATE_DATA_MODEL,
+      MSG_TYPE_DELETE_SURFACE,
+  ):
+    target = data.get(key)
+    if isinstance(target, dict):
+      surface_id = target.get(A2UI_SURFACE_ID_KEY)
+      if surface_id:
+        return str(surface_id)
+  return None
+
+
 class MAUIAgent:
   """An agent that finds restaurants based on user criteria."""
 
@@ -159,6 +190,7 @@ class MAUIAgent:
     self._model_name = model_name
     self._user_id = "remote_agent"
     self._shared_session_service = InMemorySessionService()
+    self._after_tool_callback = after_tools_callback
     self._text_runner: Runner | None = self._build_runner(
         self._build_llm_agent()
     )
@@ -303,6 +335,7 @@ class MAUIAgent:
         ),
         instruction=instruction,
         tools=[grounding_lite_mcp, skill_manager_tool],
+        after_tool_callback=self._after_tool_callback,
     )
 
   async def stream(
@@ -414,15 +447,28 @@ class MAUIAgent:
             "--- MAUIAgent.stream: Streamed part: %s ---", token_stream()
         )
 
-        async for part in stream_response_to_parts(
-            self._parsers[session_id],
-            token_stream(),
-        ):
-          logger.info("-- MAUIAgent.stream: Streamed part: %s ---", part)
-          yield {
-              "is_task_complete": False,
-              "parts": [part],
-          }
+        session_surface_id = None
+        # Wrap stream parsing in try/except to prevent A2uiValidatorError from crashing the ASGI app.
+        # This ensures execution falls through to the deleteSurface/retry loop below.
+        try:
+          async for part in stream_response_to_parts(
+              self._parsers[session_id],
+              token_stream(),
+          ):
+            _add_maps_tools_tokens_to_part(part, session)
+            logger.info("-- MAUIAgent.stream: Streamed part: %s ---", part)
+            # TODO(b/553539577): Remove this workaround once A2UI fixes the stream parser state issue.
+            if isinstance(part.root, DataPart):
+              s_id = extract_surface_id(part.root.data)
+              if s_id:
+                session_surface_id = s_id
+                logger.info("[WORKAROUND] Sniffed surfaceId '%s' from streamed part", session_surface_id)
+            yield {
+                "is_task_complete": False,
+                "parts": [part],
+            }
+        except Exception as e:
+          logger.warning("--- MAUIAgent.stream: Error during stream parsing (will fall through to retry loop): %s ---", e)
       else:
         async for token in token_stream():
           yield {
@@ -528,6 +574,9 @@ class MAUIAgent:
             filtered_parts.append(p)
         final_parts = filtered_parts
 
+        for p in final_parts:
+          _add_maps_tools_tokens_to_part(p, session)
+
         yield {
             "is_task_complete": True,
             "parts": final_parts,
@@ -542,6 +591,26 @@ class MAUIAgent:
             attempt,
             max_retries + 1,
         )
+
+        # Extract surfaceId to clear the failed UI card on the client
+        surface_id = session_surface_id or getattr(self._parsers.get(session_id), "surface_id", None)
+
+        if surface_id:
+          logger.info("--- MAUIAgent.stream: Sending deleteSurface for '%s' to clear failed attempt ---", surface_id)
+          yield {
+              "is_task_complete": False,
+              "parts": [
+                  Part(
+                      root=DataPart(
+                          data={
+                              "version": "v0.9",
+                              "deleteSurface": {"surfaceId": surface_id},
+                          }
+                      )
+                  )
+              ],
+          }
+
         # Prepare the query for the retry
         current_query_text = (
             f"Your previous response was invalid. {error_message} You MUST"
@@ -573,3 +642,5 @@ class MAUIAgent:
         ],
     }
     # --- End: UI Validation and Retry Logic ---
+
+
