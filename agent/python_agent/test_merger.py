@@ -143,6 +143,7 @@ class TestMerger(unittest.TestCase):
     """Verifies merging a complete local search payload."""
     data = {
         "surface_id": "local-search-surface-abc",
+        "heading": "Top Coffee Shops in Seattle",
         "summary": "Here are 3 highly-rated coffee shops in Seattle.",
         "center_lat": "47.6062",
         "center_lng": -122.3321,
@@ -185,7 +186,18 @@ class TestMerger(unittest.TestCase):
                     {
                         "id": "root",
                         "component": "Column",
-                        "children": ["summary-text", "map", "list"],
+                        "children": [
+                            "heading-text",
+                            "summary-text",
+                            "map",
+                            "list",
+                        ],
+                    },
+                    {
+                        "id": "heading-text",
+                        "component": "Text",
+                        "variant": "body",
+                        "text": "### Top Coffee Shops in Seattle",
                     },
                     {
                         "id": "summary-text",
@@ -200,6 +212,8 @@ class TestMerger(unittest.TestCase):
                         "component": "GoogleMap",
                         "center": {"lat": 47.6062, "lng": -122.3321},
                         "zoom": 14,
+                        "tilt": 0,
+                        "mode": "roadmap",
                         "markers": [
                             {
                                 "lat": 47.62,
@@ -308,7 +322,7 @@ class TestMerger(unittest.TestCase):
     result = merge_template("local_search", data, max_list_size=2)
     # Check that updateComponents has only 2 markers
     components = result[1]["updateComponents"]["components"]
-    map_comp = next(c for c in components if c["id"] == "map")
+    map_comp = next(comp for comp in components if comp["id"] == "map")
     self.assertEqual(len(map_comp["markers"]), 2)
 
     # Check that updateDataModel has only 2 places
@@ -317,10 +331,57 @@ class TestMerger(unittest.TestCase):
     self.assertEqual(places[0]["placeId"], "1")
     self.assertEqual(places[1]["placeId"], "2")
 
+  def test_merge_local_search_heading_normalization(self):
+    """Verifies that heading is cleaned of markdown headers or synthesized from anchor."""
+    # Case 1: Heading with leading markdown hashtags
+    data_with_hash = {
+        "surface_id": "test-surface",
+        "heading": "### Best Bakeries",
+        "summary": "Here are bakeries.",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 13,
+        "places": [{"placeId": "p1", "name": "B1", "lat": 47.6, "lng": -122.3}],
+    }
+    result = merge_template("local_search", data_with_hash)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(comp for comp in comps if comp["id"] == "heading-text")
+    self.assertEqual(heading_comp["text"], "### Best Bakeries")
+
+    # Case 2: Missing heading with anchor marker
+    data_with_anchor = {
+        "surface_id": "test-surface",
+        "summary": "Here are bakeries.",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 13,
+        "anchor_marker": {"lat": 47.6, "lng": -122.3, "label": "Space Needle"},
+        "places": [{"placeId": "p1", "name": "B1", "lat": 47.6, "lng": -122.3}],
+    }
+    result = merge_template("local_search", data_with_anchor)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(comp for comp in comps if comp["id"] == "heading-text")
+    self.assertEqual(heading_comp["text"], "### Places near Space Needle")
+
+    # Case 3: Missing heading and no anchor
+    data_no_heading = {
+        "surface_id": "test-surface",
+        "summary": "Here are bakeries.",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 13,
+        "places": [{"placeId": "p1", "name": "B1", "lat": 47.6, "lng": -122.3}],
+    }
+    result = merge_template("local_search", data_no_heading)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(comp for comp in comps if comp["id"] == "heading-text")
+    self.assertEqual(heading_comp["text"], "### Nearby Places")
+
   def test_merge_directions_full_json(self):
     """Verifies complete end-to-end directions template merging, placeholder replacement, and travel mode normalization."""
     data = {
         "surface_id": "directions-surface-xyz",
+        "heading": "Walking Route from Dobong to Gangnam",
         "summary": "Typical commute is 1h 15m.",
         "center_lat": "37.5665",
         "center_lng": 126.9780,
@@ -352,13 +413,13 @@ class TestMerger(unittest.TestCase):
                     {
                         "id": "root",
                         "component": "Column",
-                        "children": ["summary-text", "map"],
+                        "children": ["heading-text", "map", "summary-text"],
                     },
                     {
-                        "id": "summary-text",
+                        "id": "heading-text",
                         "component": "Text",
                         "variant": "body",
-                        "text": "Typical commute is 1h 15m.",
+                        "text": "### Walking Route from Dobong to Gangnam",
                     },
                     {
                         "id": "map",
@@ -379,6 +440,12 @@ class TestMerger(unittest.TestCase):
                         }],
                         "travelMode": "walking",
                     },
+                    {
+                        "id": "summary-text",
+                        "component": "Text",
+                        "variant": "body",
+                        "text": "Typical commute is 1h 15m.",
+                    },
                 ],
             },
         },
@@ -394,6 +461,50 @@ class TestMerger(unittest.TestCase):
 
     result = merge_template("directions", data, max_list_size=3)
     self.assertEqual(result, expected)
+
+  def test_merge_directions_heading_fallback(self):
+    """Verifies that missing heading is synthesized from route endpoints."""
+    # Case 1: Heading with leading markdown hashtags
+    data_with_hash = {
+        "surface_id": "test-surface",
+        "heading": "### Driving Route",
+        "summary": "About 15 minutes.",
+        "center_lat": 37.5,
+        "center_lng": 127.0,
+        "zoom": 12,
+        "routes": [{
+            "origin": {"lat": 37.5, "lng": 127.0, "label": "Origin"},
+            "destination": {"lat": 37.6, "lng": 127.1, "label": "Dest"},
+        }],
+    }
+    result = merge_template("directions", data_with_hash)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(c for c in comps if c["id"] == "heading-text")
+    self.assertEqual(heading_comp["text"], "### Driving Route")
+
+    # Case 2: Missing heading with origin and destination labels
+    data_missing = {
+        "surface_id": "test-surface",
+        "summary": "About 15 minutes.",
+        "center_lat": 37.5,
+        "center_lng": 127.0,
+        "zoom": 12,
+        "routes": [{
+            "origin": {"lat": 37.5, "lng": 127.0, "label": "Seattle Center"},
+            "destination": {
+                "lat": 37.6,
+                "lng": 127.1,
+                "label": "Pike Place Market",
+            },
+        }],
+    }
+    result = merge_template("directions", data_missing)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(c for c in comps if c["id"] == "heading-text")
+    self.assertEqual(
+        heading_comp["text"],
+        "### Route from Seattle Center to Pike Place Market",
+    )
 
   def test_validate_directions_output_with_schema(self):
     """Verifies merged directions output passes schema validation."""
@@ -584,7 +695,7 @@ class TestMergerEdgeCases(unittest.TestCase):
     result = merge_template("local_search", data, max_list_size=3)
     update_components = result[1]["updateComponents"]
     map_comp = next(
-        c for c in update_components["components"] if c["id"] == "map"
+        comp for comp in update_components["components"] if comp["id"] == "map"
     )
     # Verify anchorMarker key is NOT in map component (cleanly stripped)
     self.assertNotIn("anchorMarker", map_comp)
@@ -612,7 +723,7 @@ class TestMergerEdgeCases(unittest.TestCase):
     result = merge_template("local_search", data, max_list_size=3)
     update_components = result[1]["updateComponents"]
     map_comp = next(
-        c for c in update_components["components"] if c["id"] == "map"
+        comp for comp in update_components["components"] if comp["id"] == "map"
     )
     expected_markers = [
         {"lat": 47.63, "lng": -122.33, "label": "Custom 1"},
