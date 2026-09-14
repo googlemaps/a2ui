@@ -14,13 +14,15 @@
  limitations under the License.
  */
 
-import * as v0_9 from "@a2ui/web_core/v0_9";
-import { basicCatalog, Context } from "@a2ui/lit/v0_9";
-import { LitElement, html } from "lit";
-import { ContextProvider } from "@lit/context";
-import { renderMarkdown } from "@a2ui/markdown-it";
-import * as Types from "@a2ui/web_core/types/types";
-import { mapsAgenticUICatalog } from "./catalog";
+import {basicCatalog, Context} from '@a2ui/lit/v0_9';
+import {renderMarkdown} from '@a2ui/markdown-it';
+import * as Types from '@a2ui/web_core/types/types';
+import * as v0_9 from '@a2ui/web_core/v0_9';
+import {ContextProvider} from '@lit/context';
+import {html, LitElement} from 'lit';
+
+import {mapsAgenticUICatalog} from './catalog';
+import {type GroundingSource} from './custom-components/grounding_sources';
 
 export class MAUIProviders extends LitElement {
   private markdownProvider = new ContextProvider(this, {
@@ -36,24 +38,46 @@ export class MAUIProviders extends LitElement {
   }
 }
 
-if (!customElements.get("maui-providers")) {
-  customElements.define("maui-providers", MAUIProviders);
+if (!customElements.get('maui-providers')) {
+  customElements.define('maui-providers', MAUIProviders);
 }
 
-export type TimelineItem =
-  | { type: "text"; text: string }
-  | { type: "user"; text: string }
-  | { type: "action"; text: string; action: string }
-  | { type: "surface"; surfaceId: string };
+export type TimelineItem =|{
+  type: 'text';
+  text: string;
+  sources?: GroundingSource[]
+}
+|{
+  type: 'user';
+  text: string
+}
+|{
+  type: 'action';
+  text: string;
+  action: string
+}
+|{
+  type: 'surface';
+  surfaceId: string;
+  sources?: GroundingSource[]
+}
+|{
+  type: 'sources';
+  sources: GroundingSource[]
+};
 
-const A2UI_TOP_LEVEL_KEYS = ['createSurface', 'updateComponents', 'updateDataModel', 'deleteSurface', 'beginRendering', 'surfaceUpdate', 'dataModelUpdate'];
+const A2UI_TOP_LEVEL_KEYS = [
+  'createSurface', 'updateComponents', 'updateDataModel', 'deleteSurface',
+  'beginRendering', 'surfaceUpdate', 'dataModelUpdate'
+];
 
 export class A2UIRenderer {
   private readonly messageProcessor = new v0_9.MessageProcessor(
-    [mapsAgenticUICatalog],
-    async (action: v0_9.A2uiClientAction): Promise<any> => {
-      console.warn("Action handling is unimplemented", action);
-    },
+      [mapsAgenticUICatalog],
+      async(action: v0_9.A2uiClientAction):
+          Promise<any> => {
+            console.warn('Action handling is unimplemented', action);
+          },
   );
   private timelineItems: TimelineItem[] = [];
 
@@ -90,21 +114,84 @@ export class A2UIRenderer {
   /**
    * Processes a response from the A2UI client and updates the timeline.
    */
-  processResponse(orderedParts: Array<{ type: "text", text: string } | { type: "a2ui", message: any }>) {
+  processResponse(
+      orderedParts:
+          Array<{type: 'text', text: string}|{type: 'a2ui', message: any}>) {
     const uiMessages: any[] = [];
     const newItems: TimelineItem[] = [];
 
     for (const part of orderedParts) {
-      if (part.type === "text") {
-        newItems.push({ type: "text", text: part.text });
-      } else if (part.type === "a2ui") {
+      if (part.type === 'text') {
+        const lastNewItem =
+            newItems.length > 0 ? newItems[newItems.length - 1] : null;
+
+        let lastTimelineTextIndex = -1;
+        for (let j = this.timelineItems.length - 1; j >= 0; j--) {
+          if (this.timelineItems[j].type === 'text') {
+            lastTimelineTextIndex = j;
+            break;
+          }
+        }
+
+        if (lastNewItem && lastNewItem.type === 'text') {
+          lastNewItem.text += part.text;
+        } else if (lastTimelineTextIndex !== -1) {
+          const lastTimelineTextItem =
+              this.timelineItems[lastTimelineTextIndex] as
+              {type: 'text', text: string};
+          const updatedItem = {
+            ...lastTimelineTextItem,
+            text: lastTimelineTextItem.text + part.text
+          };
+          this.timelineItems = [
+            ...this.timelineItems.slice(0, lastTimelineTextIndex), updatedItem,
+            ...this.timelineItems.slice(lastTimelineTextIndex + 1)
+          ];
+        } else {
+          newItems.push({type: 'text', text: part.text});
+        }
+      } else if (part.type === 'a2ui') {
+        if (part.message && part.message.groundingSources) {
+          const sources = part.message.groundingSources as GroundingSource[];
+          let attached = false;
+          for (let i = newItems.length - 1; i >= 0; i--) {
+            const item = newItems[i];
+            if (item.type === 'surface' || item.type === 'text') {
+              item.sources = sources;
+              attached = true;
+              break;
+            }
+          }
+          if (!attached) {
+            for (let i = this.timelineItems.length - 1; i >= 0; i--) {
+              const item = this.timelineItems[i];
+              if (item.type === 'surface' || item.type === 'text') {
+                const updatedItem = {...item, sources};
+                this.timelineItems = [
+                  ...this.timelineItems.slice(0, i),
+                  updatedItem,
+                  ...this.timelineItems.slice(i + 1),
+                ];
+                attached = true;
+                break;
+              }
+            }
+          }
+          if (!attached) {
+            newItems.push({type: 'sources', sources});
+          }
+          continue;
+        }
+
         uiMessages.push(part.message);
         const surfaceId = this.getSurfaceId(part.message);
 
         // Record the surface in the timeline if it's new
-        if (!this.timelineItems.find(t => t.type === "surface" && t.surfaceId === surfaceId) &&
-          !newItems.find(t => t.type === "surface" && t.surfaceId === surfaceId)) {
-          newItems.push({ type: "surface", surfaceId });
+        if (!this.timelineItems.find(
+                t => t.type === 'surface' && t.surfaceId === surfaceId) &&
+            !newItems.find(
+                t => t.type === 'surface' && t.surfaceId === surfaceId)) {
+          newItems.push({type: 'surface', surfaceId});
         }
       }
     }
@@ -119,6 +206,6 @@ export class A2UIRenderer {
    * Adds a user message to the timeline.
    */
   addUserMessage(text: string) {
-    this.timelineItems = [...this.timelineItems, { type: "user", text }];
+    this.timelineItems = [...this.timelineItems, {type: 'user', text}];
   }
 }

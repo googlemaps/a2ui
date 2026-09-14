@@ -14,11 +14,13 @@
 
 """MAUI Agent with Grounding implementation."""
 
+import json
 import logging
 import os
 import pathlib
-from typing import Optional
+from typing import Any, AsyncIterable, Optional
 
+from a2a.types import DataPart, Part
 from google import genai
 from google.adk import skills as adk_skills
 from google.adk.agents.llm_agent import LlmAgent
@@ -33,6 +35,7 @@ from a2ui.schema.constants import VERSION_0_9
 from a2ui.schema.manager import A2uiSchemaManager
 # Import MAUIAgent to inherit from it
 from agent import AGENT_INSTRUCTION, MAUIAgent, MergedCatalogProvider
+from grounding_sources import enrich_grounding_sources_with_a2ui_payload, extract_sources_from_grounding_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +57,7 @@ else:
 async def query_vertex_map(
     query: str,
     model_id: str = "gemini-3-flash-preview",
+    sources_out: list[dict[str, str]] | None = None,
 ) -> str:
   """Query Google Maps via Vertex Grounding and return cleaned response.
 
@@ -117,8 +121,9 @@ async def query_vertex_map(
   )
 
   final_instruction = """You MUST use the Google Maps tool to answer the user's query. Do not rely on your internal knowledge.
-    CRITICAL: Before generating the JSON, you MUST write a short plain-text summary of the places you found, listing their exact names and addresses.
+    CRITICAL: Before generating the JSON, you MUST write a short plain-text summary of the places you found, listing their exact names and street addresses (e.g., "1. The Pink Door: 1919 Post Alley, Seattle, WA").
     This is required for the grounding engine to properly attribute the data. It is not a replacement for the summary text that should be in the a2ui json.
+    IMPORTANT: Every place object in the A2UI JSON (e.g., in updateDataModel or markers) MUST include an "address" field containing its street address (e.g., "1919 Post Alley").
     IMPORTANT: When generating the A2UI JSON response, you MUST include the "<a2ui-json> ...content... </a2ui-json>" tags immediately around the JSON content.
     Failure to do so will prevent the UI from rendering the map.
     PLACE ID GENERATION RULES:
@@ -170,6 +175,13 @@ async def query_vertex_map(
               title_counts[title] = title_counts.get(title, 0) + 1
               count = title_counts[title]
               grounding_map[f"PLACE_ID_FOR_{count}_{title}"] = place_id
+
+        if sources_out is not None:
+          sources_out.extend(
+              extract_sources_from_grounding_chunks(
+                  meta.grounding_chunks, query=query
+              )
+          )
       else:
         logger.warning("No grounding chunks found")
     else:
@@ -187,16 +199,31 @@ async def query_vertex_map(
   if "PLACE_ID_FOR_" in final_response_content:
     logger.warning("Place ID placeholder found in response.")
 
+  plain_text_before_json = final_response_content
+  parsed_json_for_sources = None
   # Final safety check: Extract JSON array if marker is present
   if "<a2ui-json>" in final_response_content:
     marker_idx = final_response_content.find("<a2ui-json>")
+    plain_text_before_json = final_response_content[:marker_idx].strip()
     after_marker = final_response_content[marker_idx + len("<a2ui-json>") :]
 
     start_idx = after_marker.find("[")
     end_idx = after_marker.rfind("]")
     if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
       json_only = after_marker[start_idx : end_idx + 1]
+      try:
+        parsed_json_for_sources = json.loads(json_only)
+      except Exception:  # pylint: disable=broad-exception-caught
+        parsed_json_for_sources = None
       final_response_content = "<a2ui-json>" + json_only + "</a2ui-json>"
+
+  if sources_out is not None:
+    enrich_grounding_sources_with_a2ui_payload(
+        sources_out,
+        parsed_json_for_sources,
+        query=query,
+        plain_text=plain_text_before_json,
+    )
 
   return final_response_content
 
@@ -214,6 +241,7 @@ class MAUIAgentWithGrounding(MAUIAgent):
         agent_name="MAUI Agent with Grounding",
         model_name=model_name,
     )
+    self._current_sources: list[dict[str, str]] = []
 
   async def query_vertex_map(self, query: str) -> str:
     """Query Google Maps via Vertex Grounding and return cleaned response.
@@ -227,7 +255,26 @@ class MAUIAgentWithGrounding(MAUIAgent):
     model_id = (
         self._model_name.removeprefix("gemini/").removeprefix("models/")
     )
-    return await query_vertex_map(query, model_id=model_id)
+    self._current_sources = []
+    return await query_vertex_map(
+        query, model_id=model_id, sources_out=self._current_sources
+    )
+
+  async def stream(
+      self, query: str, session_id: str, ui_version: str | None = None
+  ) -> AsyncIterable[dict[str, Any]]:
+    """Streams responses from base agent and attaches groundingSources to final parts."""
+    self._current_sources = []
+    async for item in super().stream(query, session_id, ui_version):
+      if item.get("is_task_complete") and self._current_sources:
+        parts = list(item.get("parts", []))
+        parts.append(
+            Part(
+                root=DataPart(data={"groundingSources": self._current_sources})
+            )
+        )
+        item["parts"] = parts
+      yield item
 
   def _build_llm_agent(
       self, schema_manager: A2uiSchemaManager | None = None
@@ -276,4 +323,5 @@ class MAUIAgentWithGrounding(MAUIAgent):
         ),
         instruction=instruction,
         tools=[grounding_tool, skill_manager_tool],
+        after_tool_callback=self._after_tool_callback,
     )
