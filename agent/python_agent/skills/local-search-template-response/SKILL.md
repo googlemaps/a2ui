@@ -6,7 +6,8 @@ description: Extractor skill for local place search queries. Extracts location a
 # Core Objective
 
 Extract structured parameters for local searches. You must call maps tools to
-locate matching businesses/places, and populate the response fields.
+locate matching businesses/places, and call `render_local_search_template` to
+render the results.
 
 ## Grounding & Tool-Calling Policy (CRITICAL)
 
@@ -15,9 +16,9 @@ locate matching businesses/places, and populate the response fields.
     internal memory or training weights.
 2.  **MANDATORY TOOL CALLS**: You MUST call the `search_places` tool first to
     find actual venues matching the user's query near the requested locations.
-3.  **EXACT MATCH**: Any place name, coordinates, or Place ID returned in your
-    final response MUST correspond exactly to the data returned by the
-    `search_places` tool call.
+3.  **EXACT MATCH & PLACE TYPES**: Any place name, coordinates, or Place ID returned in your
+    final response MUST correspond exactly to the data returned by the `search_places` tool call.
+    Determine `placePrimaryType` using the descriptions or categories in the tool response. If insufficient, infer it from the user prompt and place title.
 
 ## Multi-Step Location Resolution Policy (Anchored Search)
 
@@ -57,9 +58,11 @@ If search queries return empty results (`{}`) or fail:
 
 ## Output Fields
 
-You MUST populate all required fields in the output schema, and optionally the anchor marker if resolved:
+You MUST call `render_local_search_template` with all required fields in the
+schema, and optionally the anchor marker if resolved:
 
--   **`summary`**: A detailed response summarizing the search results, following the **Conversational Text Style Guidelines** below.
+-   **`heading`**: A concise, constraint-confirming primary heading in sentence case that starts with or includes the exact number of places provided in the UI response, reflecting the prompt and primary reference location (e.g., '5 vegetarian restaurants near The Plaza Hotel', '5 transit stops near Seattle Center'). Use only the primary reference location without redundant city/state nesting. Plain text only; do NOT include markdown hashtags or conversational filler.
+-   **`summary`**: A concise 1-paragraph overview that covers all returned places by weaving them into natural, contrasting groups (e.g., pairing lively group-friendly spots vs. intimate neighborhood bistros) rather than listing them one by one. Broadly characterize the dining or activity landscape near the reference location using concrete, sensory details, bolding every place name (e.g., **Carmine's** and **Tony's Di Napoli**), and directly addressing any prompt constraints. For nearby places, never describe distances as numbers (e.g., do not say "0.3 miles" or "500 meters"). Instead, generalize (e.g., "a short walk", "just steps away", or "a quick stroll"). Do NOT include conversational greetings ('Sure!', 'Here are...') and do NOT list place names in bullet points (individual place cards handle individual places).
 -   **`center_lat`**: Latitude of the center of results. Use the coordinates of
     the resolved anchor location (or the average of the results if no anchor is
     resolved).
@@ -67,5 +70,5 @@ You MUST populate all required fields in the output schema, and optionally the a
     the resolved anchor location (or the average of the results if no anchor is
     resolved).
 -   **`zoom`**: Recommended map zoom level. Default to 13.
--   **`places`**: A list of places found (limit to max list size, e.g. 3).
+-   **`places`**: Return 5 grounded places in the 'places' array by default. If the user prompt explicitly specifies a number of places, return exactly that number in the 'places' array if possible. For each place, determine `placePrimaryType` using the descriptions or categories in the tool response (or infer it from the user prompt and place title) matching supported types (`food_and_drink`, `retail`, `outdoor`, `service`, `lodging`, `entertainment`, `ev`, `airport`, `parking`, `closed`, `emergency`, `generic`).
 -   **`anchor_marker`**: (Optional) Pin details for the resolved starting/anchor location.
