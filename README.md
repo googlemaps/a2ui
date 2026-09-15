@@ -297,7 +297,6 @@ Agentic UI Toolkit requires an API Key to use Google Maps Platform products. To 
 
 Your API Key must have the following APIs enabled in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials):
 
-* Geocoding API
 * Maps JavaScript API
 * Places UI Kit
 * Routes API
