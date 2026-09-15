@@ -14,6 +14,9 @@ AI Maps Grounding.
     `DIRECTIONS`) and structured parameter extraction for low latency.
 *   `agent_with_grounding.py`: Contains `MAUIAgentWithGrounding`, extending the
     base agent with Vertex AI Grounding capabilities.
+*   `template_tool.py`: Contains standard ADK `BaseTool` implementations
+    (`RenderLocalSearchTemplateTool`, `RenderDirectionsTemplateTool`,
+    `RenderTextOnlyTemplateTool`, and `TemplateToolset`) for template rendering.
 *   `agent_config.py`: Contains `AgentConfig` and `FallbackMode` configurations
     (`TEXT` vs `DYNAMIC`).
 *   `extractor.py` & `merger.py`: Parameter extraction schemas and template
