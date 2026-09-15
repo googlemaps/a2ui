@@ -51,8 +51,21 @@ from a2ui.parser.streaming import A2uiStreamParser
 from a2ui.schema.catalog import CatalogConfig
 from a2ui.schema.catalog_provider import A2uiCatalogProvider
 from a2ui.schema.common_modifiers import remove_strict_validation
-from a2ui.schema.constants import A2UI_CLOSE_TAG, A2UI_OPEN_TAG, VERSION_0_9
+from a2ui.parser.constants import (
+    MSG_TYPE_CREATE_SURFACE,
+    MSG_TYPE_DELETE_SURFACE,
+    MSG_TYPE_UPDATE_COMPONENTS,
+    MSG_TYPE_UPDATE_DATA_MODEL,
+)
+from a2ui.schema.constants import (
+    A2UI_CLOSE_TAG,
+    A2UI_OPEN_TAG,
+    A2UI_SURFACE_ID_KEY,
+    VERSION_0_9,
+)
 from a2ui.schema.manager import A2uiSchemaManager
+
+from .after_tools_callback import _add_maps_tools_tokens_to_part, after_tools_callback
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +105,8 @@ AGENT_INSTRUCTION = """
     **Important**: When answering a location-based question, you may need to find up-to-date information
     about places or routes. Use your skills or tools to answer the user. When returning information for places, always
     fetch the place's name, address, lat, lng, and place id.
+    When returning places in `updateDataModel` or components, every place object MUST include `name`, `address` (or street/vicinity), `lat`, `lng`, and `placeId`.
+    In the `GoogleMap` component, the `markers` property MUST ALWAYS be an explicit array of marker objects (e.g. `[{"lat": ..., "lng": ..., "label": ..., "placeId": ...}]`). NEVER use data binding like `{"path": "/markers"}` for the markers property.
 
     **Important**: Consider that subsequent requests are likely to be part of the same "user journey", and keep track of
     any context that you may need to provide to the user. Examples:
@@ -103,6 +118,7 @@ AGENT_INSTRUCTION = """
     All A2UI message objects (e.g., `createSurface`, `updateComponents`, `updateDataModel`) MUST include a `"version": "v0.9"` property.
     When generating a `PlaceCard`, you MUST explicitly set the `"orientation"` property: use `"vertical"` for single results and `"horizontal"` for lists.
     If you have more than one of these blocks, the UI will not render correctly.
+
 
 """
 
@@ -143,6 +159,24 @@ class MergedCatalogProvider(A2uiCatalogProvider):
     return catalog
 
 
+def extract_surface_id(data: Any) -> str | None:
+  """Extracts the surface ID from an A2UI payload dictionary or part."""
+  if not isinstance(data, dict):
+    return None
+  for key in (
+      MSG_TYPE_CREATE_SURFACE,
+      MSG_TYPE_UPDATE_COMPONENTS,
+      MSG_TYPE_UPDATE_DATA_MODEL,
+      MSG_TYPE_DELETE_SURFACE,
+  ):
+    target = data.get(key)
+    if isinstance(target, dict):
+      surface_id = target.get(A2UI_SURFACE_ID_KEY)
+      if surface_id:
+        return str(surface_id)
+  return None
+
+
 class MAUIAgent:
   """An agent that finds restaurants based on user criteria."""
 
@@ -159,6 +193,7 @@ class MAUIAgent:
     self._model_name = model_name
     self._user_id = "remote_agent"
     self._shared_session_service = InMemorySessionService()
+    self._after_tool_callback = after_tools_callback
     self._text_runner: Runner | None = self._build_runner(
         self._build_llm_agent()
     )
@@ -303,6 +338,7 @@ class MAUIAgent:
         ),
         instruction=instruction,
         tools=[grounding_lite_mcp, skill_manager_tool],
+        after_tool_callback=self._after_tool_callback,
     )
 
   async def stream(
@@ -414,15 +450,38 @@ class MAUIAgent:
             "--- MAUIAgent.stream: Streamed part: %s ---", token_stream()
         )
 
-        async for part in stream_response_to_parts(
-            self._parsers[session_id],
-            token_stream(),
-        ):
-          logger.info("-- MAUIAgent.stream: Streamed part: %s ---", part)
-          yield {
-              "is_task_complete": False,
-              "parts": [part],
-          }
+        session_surface_id = None
+        # Wrap stream parsing in try/except to prevent A2uiValidatorError from crashing the ASGI app.
+        # This ensures execution falls through to the deleteSurface/retry loop below.
+        token_gen = token_stream()
+        try:
+          async for part in stream_response_to_parts(
+              self._parsers[session_id],
+              token_gen,
+          ):
+            _add_maps_tools_tokens_to_part(part, session)
+            logger.info("-- MAUIAgent.stream: Streamed part: %s ---", part)
+            # TODO(b/553539577): Remove this workaround once A2UI fixes the stream parser state issue.
+            if isinstance(part.root, DataPart):
+              s_id = extract_surface_id(part.root.data)
+              if s_id:
+                session_surface_id = s_id
+                logger.info("[WORKAROUND] Sniffed surfaceId '%s' from streamed part", session_surface_id)
+            yield {
+                "is_task_complete": False,
+                "parts": [part],
+            }
+        except Exception as e:
+          logger.warning("--- MAUIAgent.stream: Error during stream parsing (will fall through to retry loop): %s ---", e)
+          # Drain remaining tokens from the same generator so full_content_list is complete and runner finishes cleanly
+          try:
+            async for _ in token_gen:
+              pass
+          except Exception as drain_err:
+            logger.debug(
+                "--- MAUIAgent.stream: Error draining token stream: %s ---",
+                drain_err,
+            )
       else:
         async for token in token_stream():
           yield {
@@ -528,6 +587,9 @@ class MAUIAgent:
             filtered_parts.append(p)
         final_parts = filtered_parts
 
+        for p in final_parts:
+          _add_maps_tools_tokens_to_part(p, session)
+
         yield {
             "is_task_complete": True,
             "parts": final_parts,
@@ -542,6 +604,26 @@ class MAUIAgent:
             attempt,
             max_retries + 1,
         )
+
+        # Extract surfaceId to clear the failed UI card on the client
+        surface_id = session_surface_id or getattr(self._parsers.get(session_id), "surface_id", None)
+
+        if surface_id:
+          logger.info("--- MAUIAgent.stream: Sending deleteSurface for '%s' to clear failed attempt ---", surface_id)
+          yield {
+              "is_task_complete": False,
+              "parts": [
+                  Part(
+                      root=DataPart(
+                          data={
+                              "version": "v0.9",
+                              "deleteSurface": {"surfaceId": surface_id},
+                          }
+                      )
+                  )
+              ],
+          }
+
         # Prepare the query for the retry
         current_query_text = (
             f"Your previous response was invalid. {error_message} You MUST"

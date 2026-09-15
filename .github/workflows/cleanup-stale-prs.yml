@@ -1,0 +1,84 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Cleanup Stale Draft PRs
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # Daily at 02:00 UTC
+  workflow_dispatch:
+    inputs:
+      older_than_days:
+        description: 'Close draft PRs older than N days'
+        required: false
+        default: '3'
+        type: string
+      dry_run:
+        description: 'Dry run (simulate without closing PRs or deleting branches)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  cleanup:
+    name: Cleanup Draft PRs
+    # zizmor: ignore[unpinned-images]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close stale draft PRs and delete branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          INPUT_DAYS: ${{ inputs.older_than_days }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          DAYS="${INPUT_DAYS:-3}"
+          DRY_RUN="${INPUT_DRY_RUN:-false}"
+
+          echo "Searching for open draft PRs with head branch matching 'test_*' older than $DAYS day(s)..."
+
+          CUTOFF_EPOCH=$(date -d "$DAYS days ago" +%s)
+          echo "Cutoff timestamp: $CUTOFF_EPOCH ($(date -d "@$CUTOFF_EPOCH" --utc --iso-8601=seconds))"
+
+          PRS_JSON=$(gh pr list --repo "$GH_REPO" --state open --draft --json number,headRefName,updatedAt)
+
+          echo "$PRS_JSON" | jq -c '.[]' | while read -r pr; do
+            PR_NUMBER=$(echo "$pr" | jq -r '.number')
+            HEAD_REF=$(echo "$pr" | jq -r '.headRefName')
+            UPDATED_AT=$(echo "$pr" | jq -r '.updatedAt')
+
+            # Only target Copybara presubmit branches (prefix test_)
+            if [[ ! "$HEAD_REF" =~ ^test_ ]]; then
+              echo "Skipping PR #$PR_NUMBER (head branch '$HEAD_REF' does not match 'test_*')"
+              continue
+            fi
+
+            PR_EPOCH=$(date -d "$UPDATED_AT" +%s)
+            if [ "$PR_EPOCH" -lt "$CUTOFF_EPOCH" ]; then
+              echo "PR #$PR_NUMBER ($HEAD_REF, updated at $UPDATED_AT) is older than $DAYS day(s)."
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "[DRY RUN] Would close PR #$PR_NUMBER and delete branch '$HEAD_REF'"
+              else
+                echo "Closing PR #$PR_NUMBER and deleting branch '$HEAD_REF'..."
+                gh pr close "$PR_NUMBER" --repo "$GH_REPO" --comment "Automatically closing stale presubmit draft PR and cleaning up branch." --delete-branch || \
+                gh pr close "$PR_NUMBER" --repo "$GH_REPO" --comment "Automatically closing stale presubmit draft PR."
+              fi
+            else
+              echo "Keeping PR #$PR_NUMBER ($HEAD_REF, updated at $UPDATED_AT) - active within $DAYS day(s)."
+            fi
+          done
