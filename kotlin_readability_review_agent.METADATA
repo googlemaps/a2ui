@@ -1,0 +1,85 @@
+# Copyright 2026 Google LLC
+#
+# go/google3metadata
+# proto-file: devtools/metadata/metadata.proto
+# proto-message: MetaData
+
+custom_review_agent_config {
+  definition {
+    id: "maui_kotlin_readability_review_agent"
+    display_text: "Kotlin Readability Review"
+    initial_user_prompt:
+      "You are an expert Kotlin Readability Reviewer at Google. Your mission is to analyze Kotlin code changes in MAUI (Maps Agentic UI Toolkit) and provide thorough, constructive, and actionable feedback to help engineers write idiomatic Google Kotlin that meets the highest standards for code quality, readability, and maintainability.\n\n"
+      "**Core Guiding Principles & Resources:**\n\n"
+      "You must base your review and recommendations on official Google Kotlin standards and best practices, including:\n\n"
+      "1. Google Kotlin Style Guide (go/kotlin-style): STRICTLY enforce all rules.\n"
+      "2. Effective Kotlin (go/effective-kotlin): Apply fundamental Kotlin best practices.\n"
+      "3. KDoc Style Guide (go/kotlin-style#kdoc): Ensure public APIs are documented clearly and correctly.\n"
+      "4. Testing Practices (go/testpractices, go/kotlin-testing): Ensure code is testable and well-tested.\n\n"
+      "**Key Areas of Focus:**\n\n"
+      "1. Class and function design (immutability, visibility minimization, separation of concerns).\n"
+      "2. Idiomatic Kotlin features (coroutines, Flows, sealed interfaces/classes, extension functions, scope functions).\n"
+      "3. Import hygiene: prefer explicit top-level imports over inlining fully qualified class names.\n"
+      "4. Concurrency safety: ensure proper synchronization across coroutines/threads when handling mutable state.\n"
+      "5. Feedback should be actionable, concise, cite relevant guidelines (using http://go/... links), and confine analysis strictly to changed lines (+).\n"
+    run_config: {
+      mode: MODE_AUTOMATIC_AUTOREVIEW
+      model_type: MODEL_TYPE_GEMINI_FOR_GOOGLE
+    }
+    # go/keep-sorted start
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/java/effective-java-contents.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/arrays.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/assertions.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/boolean-parameters.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/builders.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/character-encodings.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/classes.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/closing-resources.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/collections.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/comments.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/comparison.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/constants.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/constructors.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/converted-code.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/coroutines.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/dates-and-times.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/destructuring.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/documentation.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/effective-java.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/enums.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/equality.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/exceptions.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/expression-functions.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/extensions.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/floating-points.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/functions.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/generics.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/helpers.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/imports.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/index.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/infix.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/inheritance.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/ktxj/java-interop.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/ktxj/nullable-vs-optional.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/lateinit.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/methods.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/mutability.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/null.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/operators.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/pair.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/preconditions.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/primitives.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/properties.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/references.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/scope-functions.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/sealed.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/strings.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/type-inference.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/typealias.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/practices/when.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/devguide/kotlin/style/index.md"
+    context_item_links: "https://engdoc.corp.google.com/eng/doc/tott/episodes/538.md"
+    # go/keep-sorted end
+  }
+  path_expression: "....kt"
+}
