@@ -96,7 +96,29 @@ export class A2UIRenderer {
 
     for (const part of orderedParts) {
       if (part.type === "text") {
-        newItems.push({ type: "text", text: part.text });
+        const lastNewItem = newItems.length > 0 ? newItems[newItems.length - 1] : null;
+
+        let lastTimelineTextIndex = -1;
+        for (let j = this.timelineItems.length - 1; j >= 0; j--) {
+          if (this.timelineItems[j].type === "text") {
+            lastTimelineTextIndex = j;
+            break;
+          }
+        }
+
+        if (lastNewItem && lastNewItem.type === "text") {
+          lastNewItem.text += part.text;
+        } else if (lastTimelineTextIndex !== -1) {
+          const lastTimelineTextItem = this.timelineItems[lastTimelineTextIndex] as { type: "text", text: string };
+          const updatedItem = { ...lastTimelineTextItem, text: lastTimelineTextItem.text + part.text };
+          this.timelineItems = [
+            ...this.timelineItems.slice(0, lastTimelineTextIndex),
+            updatedItem,
+            ...this.timelineItems.slice(lastTimelineTextIndex + 1)
+          ];
+        } else {
+          newItems.push({ type: "text", text: part.text });
+        }
       } else if (part.type === "a2ui") {
         uiMessages.push(part.message);
         const surfaceId = this.getSurfaceId(part.message);
