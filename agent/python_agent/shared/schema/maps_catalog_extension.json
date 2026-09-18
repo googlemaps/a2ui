@@ -4,6 +4,7 @@
   "title": "Google Maps Agentic UI Catalog Extensions",
   "components": {
     "GoogleMap": {
+      "description": "Renders an interactive Google Map with markers, an anchor marker and routes.",
       "type": "object",
       "allOf": [
         {
@@ -44,7 +45,7 @@
               "description": "The map mode."
             },
             "anchorMarker": {
-              "$ref": "#/$defs/DynamicLatLng",
+              "$ref": "#/$defs/AnchorMarker",
               "description": "The anchor marker location."
             },
             "markers": {
@@ -55,6 +56,7 @@
               "description": "List of markers."
             },
             "routes": {
+              "description": "Routes to draw on the map, as origin/destination pairs.",
               "type": "array",
               "items": {
                 "type": "object",
@@ -88,6 +90,7 @@
       "unevaluatedProperties": false
     },
     "PlaceDetailsCompact": {
+      "description": "Renders a compact Google Maps place card with photo, rating, type and price.",
       "type": "object",
       "allOf": [
         {
@@ -148,6 +151,55 @@
         }
       ]
     },
+    "AnchorMarker": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AnchorMarkerPin"
+        },
+        {
+          "$ref": "common_types.json#/$defs/DataBinding"
+        }
+      ]
+    },
+    "AnchorMarkerPin": {
+      "type": "object",
+      "properties": {
+        "lat": {
+          "type": "number"
+        },
+        "lng": {
+          "type": "number"
+        },
+        "label": {
+          "type": "string"
+        },
+        "placeId": {
+          "type": "string"
+        },
+        "placePrimaryType": {
+          "type": "string",
+          "enum": [
+            "food_and_drink",
+            "retail",
+            "outdoor",
+            "service",
+            "lodging",
+            "emergency",
+            "entertainment",
+            "ev",
+            "airport",
+            "parking",
+            "closed",
+            "generic"
+          ]
+        }
+      },
+      "required": [
+        "lat",
+        "lng"
+      ],
+      "additionalProperties": false
+    },
     "MapPin": {
       "type": "object",
       "properties": {
@@ -162,6 +214,23 @@
         },
         "placeId": {
           "type": "string"
+        },
+        "placePrimaryType": {
+          "type": "string",
+          "enum": [
+            "food_and_drink",
+            "retail",
+            "outdoor",
+            "service",
+            "lodging",
+            "emergency",
+            "entertainment",
+            "ev",
+            "airport",
+            "parking",
+            "closed",
+            "generic"
+          ]
         }
       },
       "required": [
