@@ -22,10 +22,19 @@ sanitized message structures ready for wire transmission.
 import copy
 import json
 import os
+import pkgutil
+import re
 from typing import Any, Literal, TypedDict
 import uuid
 
-from extractor import normalize_travel_mode
+from templates.directions.schema import normalize_travel_mode
+
+# The catalog the templates bind their surface to when the host does not name
+# one. Hosts that register the Maps components in a catalog of their own (for
+# example Gemini Enterprise, whose composite catalog carries `GoogleMap` and
+# `PlaceDetailsCompact` alongside its Material and basic components) pass that
+# catalog's id instead, because a surface resolves against exactly one catalog.
+DEFAULT_CATALOG_ID = "a2ui://maps-agentic-ui-catalog.json"
 
 
 class TextOutputDict(TypedDict):
@@ -104,9 +113,22 @@ def _prepare_local_search(
   """Validates and normalizes parameters for the local search template."""
   data_copy = copy.deepcopy(data)
   is_valid = True
+
+  # 1. Normalize heading
+  heading = data_copy.get("heading")
+  if heading and isinstance(heading, str):
+    clean_heading = re.sub(r"^#+\s*", "", heading).strip()
+  else:
+    anchor = data_copy.get("anchor_marker")
+    if isinstance(anchor, dict) and anchor.get("label"):
+      clean_heading = f"Places near {anchor['label']}"
+    else:
+      clean_heading = "Nearby Places"
+  data_copy["heading"] = clean_heading
+
   places = data_copy.get("places")
 
-  # 1. Validate that places is a non-empty list
+  # 2. Validate that places is a non-empty list
   if not isinstance(places, list) or not places:
     is_valid = False
   else:
@@ -158,6 +180,8 @@ def _prepare_local_search(
         }
         if "placeId" in p:
           marker["placeId"] = p["placeId"]
+        if "placePrimaryType" in p:
+          marker["placePrimaryType"] = p["placePrimaryType"]
         markers.append(marker)
       data_copy["markers"] = markers
     else:
@@ -197,7 +221,30 @@ def _prepare_directions(data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
   routes = data_copy.get("routes")
 
-  # 1. Validate that routes is a non-empty list of segment dicts
+  # 1. Normalize heading
+  heading = data_copy.get("heading")
+  if heading and isinstance(heading, str):
+    clean_heading = re.sub(r"^#+\s*", "", heading).strip()
+  else:
+    clean_heading = ""
+
+  if not clean_heading:
+    clean_heading = "Directions"
+    if isinstance(routes, list) and routes and isinstance(routes[0], dict):
+      origin = routes[0].get("origin")
+      destination = routes[-1].get("destination")
+      orig_label = origin.get("label") if isinstance(origin, dict) else None
+      dest_label = (
+          destination.get("label") if isinstance(destination, dict) else None
+      )
+      if orig_label and dest_label:
+        clean_heading = f"Route from {orig_label} to {dest_label}"
+      elif dest_label:
+        clean_heading = f"Directions to {dest_label}"
+
+  data_copy["heading"] = clean_heading
+
+  # 2. Validate that routes is a non-empty list of segment dicts
   if not isinstance(routes, list) or not routes:
     is_valid = False
   else:
@@ -265,7 +312,10 @@ def _prepare_directions(data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 def merge_template(
-    template_name: str, data: dict[str, Any], max_list_size: int = 5
+    template_name: str,
+    data: dict[str, Any],
+    max_list_size: int = 5,
+    catalog_id: str = DEFAULT_CATALOG_ID,
 ) -> list[MergedMessage]:
   """Loads static template skeleton JSON and returns merged wire response.
 
@@ -279,6 +329,9 @@ def merge_template(
         `TemplateExtractor` (e.g. `places`, `summary`, `center_lat`).
       max_list_size: Maximum allowable child elements in lists (`places`) to
         bound payload rendering latency.
+      catalog_id: Catalog the created surface binds to. Defaults to the Maps
+        catalog; hosts that register the Maps components under a catalog of
+        their own pass that id.
 
   Returns:
       A list of message dictionaries. For `text_only`, returns the 2-part A2UI
@@ -300,7 +353,10 @@ def merge_template(
     template_name, data_copy = _prepare_directions(data_copy)
   current_dir = os.path.dirname(os.path.abspath(__file__))
   templates_dir = os.path.join(current_dir, "templates")
-  template_path = os.path.join(templates_dir, f"{template_name}.json")
+  template_path = os.path.join(templates_dir, template_name, "layout.json")
+
+  # Ensure the catalog ID is set here as well.
+  data_copy["catalog_id"] = catalog_id
 
   if not os.path.exists(template_path):
     raise FileNotFoundError(
@@ -318,6 +374,9 @@ def merge_template(
         base_name = fn[:-5]
         default_surface_ids.add(f"{base_name}_surface")
         default_surface_ids.add(f"{base_name.replace('_', '-')}-surface")
+      elif os.path.isdir(os.path.join(templates_dir, fn)):
+        default_surface_ids.add(f"{fn}_surface")
+        default_surface_ids.add(f"{fn.replace('_', '-')}-surface")
 
   if (
       not data_copy.get("surface_id")
