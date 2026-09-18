@@ -1,0 +1,29 @@
+{
+  "intent": "DIRECTIONS",
+  "surface_prefix": "directions-surface",
+  "archetype": "Standard navigation, route directions, walking/driving/transit times, or navigation instructions between an origin and destination. This includes multi-stop routes and routes with specified waypoints.",
+  "empty_fallback_text": "Could not calculate travel directions.",
+  "tool_description": "Renders an interactive Google Maps directions and routing UI component populated with route segments, travel mode, and a summary response.",
+  "conformance_example": {
+    "surface_id": "test-surface",
+    "heading": "Directions",
+    "summary": "Commute is 15 mins.",
+    "center_lat": 37.5,
+    "center_lng": 127.0,
+    "zoom": 12,
+    "routes": [
+      {
+        "origin": {"lat": 37.4, "lng": 126.9, "label": "Start"},
+        "destination": {"lat": 37.6, "lng": 127.1, "label": "End"}
+      }
+    ],
+    "travel_mode": "driving"
+  },
+  "few_shot_examples": [
+    {
+      "user_query": "Directions from Sacramento to Mendocino via Clear Lake",
+      "intent": "DIRECTIONS",
+      "query": "Directions from Sacramento to Mendocino via Clear Lake"
+    }
+  ]
+}
