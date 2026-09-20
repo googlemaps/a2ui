@@ -24,7 +24,7 @@ describe('PlaceDetailsCompact Component', () => {
 
        // 2. Render the component with a place ID
        const element = document.createElement('a2ui-placedetailscompact') as PlaceDetailsCompact;
-       (element as any).controller = {
+       (element as any)._controller = {
          props: {placeId: 'ChIJN1t_tDeuEmsRUsoyG83frY4'}
        };
        document.body.appendChild(element);

@@ -97,15 +97,22 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
   /// - Parameter context: The SwiftUI context.
   /// - Returns: A configured WKWebView.
   func makeUIView(context: Context) -> WKWebView {
+    configureWebView(coordinator: context.coordinator)
+  }
+
+  /// Configures the WKWebView instance with user scripts, bridge message handlers, and local HTML assets.
+  /// - Parameter coordinator: The coordinator handling navigation and message callbacks.
+  /// - Returns: A configured WKWebView instance.
+  func configureWebView(coordinator: Coordinator) -> WKWebView {
     let config = WKWebViewConfiguration()
     let contentController = WKUserContentController()
 
     // Expose iOS bridge to JS (window.webkit.messageHandlers.iOS)
     // This allows the web component to communicate user interactions (like "get_directions") back to Swift.
-    contentController.add(context.coordinator, name: "iOS")
+    contentController.add(coordinator, name: "iOS")
 
     // Allows the JS ResizeObserver to notify Swift when the content height changes
-    contentController.add(context.coordinator, name: "heightObserver")
+    contentController.add(coordinator, name: "heightObserver")
 
     // Inject a script to intercept console.log and console.error output from the WKWebView.
     // This forwards JS logs to the native bridge, making it much easier to debug the web component in Xcode.
@@ -144,8 +151,8 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
       webView.isInspectable = true
     }
 
-    webView.navigationDelegate = context.coordinator
-    webView.uiDelegate = context.coordinator
+    webView.navigationDelegate = coordinator
+    webView.uiDelegate = coordinator
     webView.scrollView.isScrollEnabled = false  // Prevent double scrolling inside the chat list
 
     // Fix for the gray background sometimes seen at the boundaries of WKWebViews.
@@ -173,9 +180,16 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
   ///   - uiView: The WKWebView instance to update.
   ///   - context: The SwiftUI context.
   func updateUIView(_ uiView: WKWebView, context: Context) {
-    // If the view updates and JS is ready, push the JSON
-    if context.coordinator.isJSReady {
-      context.coordinator.injectJSON(uiView, payload: payload)
+    updateWebView(uiView, coordinator: context.coordinator)
+  }
+
+  /// Pushes the latest JSON payload to the WebView if the JavaScript bridge is ready.
+  /// - Parameters:
+  ///   - uiView: The WKWebView instance to update.
+  ///   - coordinator: The coordinator tracking the JavaScript ready state.
+  func updateWebView(_ uiView: WKWebView, coordinator: Coordinator) {
+    if coordinator.isJSReady {
+      coordinator.injectJSON(uiView, payload: payload)
     }
   }
 
@@ -189,6 +203,7 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
     var parent: A2UIMessageRepresentableView
     var isJSReady = false
     var lastInjectedPayload: String?
+    var startTime: CFAbsoluteTime? = CFAbsoluteTimeGetCurrent()
 
     /// Initializes the coordinator with a reference to its parent view.
     /// - Parameter parent: The parent A2UIMessageRepresentableView.
@@ -242,7 +257,8 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
     func injectJSON(_ webView: WKWebView, payload: Any) {
       // Use JSONSerialization to safely escape the native Swift object for inclusion in JavaScript.
       let jsonString: String
-      if let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
+      if JSONSerialization.isValidJSONObject(payload),
+        let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
         let str = String(data: jsonData, encoding: .utf8)
       {
         jsonString = str
@@ -295,7 +311,9 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
           // Only update if difference > 5 to prevent infinite SwiftUI layout loops
           if abs(parent.dynamicHeight - targetHeight) > 5 {
             parent.dynamicHeight = targetHeight
-            parent.onRenderComplete?(parent.webViewID, 0.0, "success")
+            let latency = startTime != nil ? (CFAbsoluteTimeGetCurrent() - startTime!) : 0.0
+            parent.onRenderComplete?(parent.webViewID, latency, "success")
+            startTime = nil
           }
         }
       } else if message.name == "iOS",
