@@ -1,3 +1,17 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 plugins {
     id 'com.android.library' version '9.0.0'
     id 'maven-publish'
@@ -31,6 +45,16 @@ android {
         }
     }
 
+    // Robolectric needs the AGP-merged manifest, resources and assets. Without
+    // this, `context.assets` is empty and Robolectric cannot read `targetSdk`,
+    // so it falls back to its minimum supported SDK where API 23/24 WebViewClient
+    // overloads do not exist.
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+        }
+    }
+
     publishing {
         singleVariant('release')
     }
@@ -52,6 +76,9 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.robolectric:robolectric:4.11.1'
+    testImplementation 'com.google.truth:truth:1.4.2'
+    testImplementation 'org.mockito:mockito-core:5.11.0'
+    testImplementation 'org.mockito.kotlin:mockito-kotlin:5.2.1'
 }
 
 afterEvaluate {
