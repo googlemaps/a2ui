@@ -21,6 +21,22 @@ BaseModel = pydantic.BaseModel
 Field = pydantic.Field
 
 
+PlacePrimaryType = Literal[
+    "food_and_drink",
+    "outdoor",
+    "retail",
+    "gas_station",
+    "ev",
+    "bank",
+    "lodging",
+    "emergency",
+    "entertainment",
+    "airport",
+    "parking",
+    "generic",
+]
+
+
 class Pin(BaseModel):
   """Representation of a Map Pin."""
 
@@ -35,6 +51,10 @@ class Pin(BaseModel):
   # Note: Using camelCase field name to match frontend A2UI requirements.
   placeId: str | None = Field(  # pylint: disable=invalid-name
       default=None, description="Optional Google Maps Place ID"
+  )
+  placePrimaryType: PlacePrimaryType | None = Field(  # pylint: disable=invalid-name
+      default=None,
+      description="Optional primary POI category type string",
   )
 
   @pydantic.model_validator(mode="before")
@@ -73,19 +93,41 @@ class PlacePin(BaseModel):
   name: str = Field(description="Name of the place")
   lat: float = Field(description="Latitude coordinates")
   lng: float = Field(description="Longitude coordinates")
+  placePrimaryType: PlacePrimaryType | None = Field(  # pylint: disable=invalid-name
+      default=None,
+      description="Optional primary POI category type string",
+  )
 
 
 class LocalSearchExtractorSchema(BaseModel):
   """Structured parameters to render a local search UI update."""
 
+  heading: str = Field(
+      description=(
+          "A concise, constraint-confirming primary heading in sentence case"
+          " that starts with or includes the exact number of places provided"
+          " in the UI response, reflecting the prompt and primary reference"
+          " location (e.g. '5 vegetarian restaurants near The Plaza Hotel',"
+          " '5 transit stops near Seattle Center'). Plain text only; do"
+          " NOT include markdown hashtags or conversational filler."
+      ),
+  )
   summary: str = Field(
       description=(
-          "A detailed response summarizing the search results that fully and"
-          " clearly answers all aspects of the user's prompt (including"
-          " qualitative criteria, preferences, and comparisons). Use markdown"
-          " formatting (bullet points, bolding, tables) and break into"
-          " paragraphs as needed. Bold place names."
-      )
+          "A concise 1-paragraph overview that covers all returned places by"
+          " weaving them into natural, contrasting groups (e.g., pairing"
+          " lively group-friendly spots vs. intimate neighborhood bistros)"
+          " rather than listing them one by one. Broadly characterize the"
+          " dining or activity landscape near the reference location using"
+          " concrete, sensory details, bolding every place name (e.g.,"
+          " **Carmine's** and **Tony's Di Napoli**), and directly addressing"
+          " any prompt constraints. For nearby places, never describe"
+          " distances as numbers (e.g., do not say '0.3 miles' or '500"
+          " meters'); instead generalize (e.g., 'a short walk', 'just steps"
+          " away', 'a quick stroll'). Plain text with markdown bolding only;"
+          " do NOT include conversational greetings ('Sure!', 'Here are...')"
+          " and do NOT list place names in bullet points."
+      ),
   )
   center_lat: float = Field(description="Latitude of the center of results")
   center_lng: float = Field(description="Longitude of the center of results")
@@ -93,7 +135,7 @@ class LocalSearchExtractorSchema(BaseModel):
       default=13, description="Recommended map zoom level (typically 13)"
   )
   places: list[PlacePin] = Field(
-      description="A list of places found (limit to max list size, e.g. 3)"
+      description="A list of places found (limit to max list size, e.g. 5)"
   )
   anchor_marker: Pin | None = Field(
       default=None,
@@ -156,12 +198,18 @@ def normalize_travel_mode(mode: Any) -> str | None:
 class DirectionsExtractorSchema(BaseModel):
   """Structured parameters to render a directions UI update."""
 
+  heading: str = Field(
+      description=(
+          "A concise, constraint-confirming primary heading for the response."
+          " Plain text only (e.g., 'Walking route from Seattle Center to Pike"
+          " Place Market', 'Driving directions to JFK Airport')."
+      )
+  )
   summary: str = Field(
       description=(
-          "A detailed response summarizing the travel directions and route"
-          " options that fully answers all user questions, route comparisons,"
-          " and travel context requested in the prompt. Use markdown formatting"
-          " and break into paragraphs if helpful."
+          "A natural, direct resolution of the route prompt describing"
+          " approximate travel duration and distance (e.g. 'Driving from"
+          " [Origin] to [Destination] takes about 19 minutes (14 miles).')."
       )
   )
   center_lat: float = Field(
