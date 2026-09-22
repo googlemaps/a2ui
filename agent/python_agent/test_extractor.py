@@ -14,6 +14,7 @@
 
 """Tests for extractor.py."""
 
+import typing
 import unittest
 import pydantic
 from extractor import (
@@ -21,6 +22,7 @@ from extractor import (
     LocalSearchExtractorSchema,
     Pin,
     PlacePin,
+    PlacePrimaryType,
 )
 
 
@@ -37,6 +39,83 @@ class TestExtractor(unittest.TestCase):
     pin = Pin(**data)
     self.assertEqual(pin.label, "Location")
 
+  def test_pin_with_place_primary_type(self):
+    data = {
+        "lat": 1.0,
+        "lng": 2.0,
+        "label": "Coffee Shop",
+        "placePrimaryType": "food_and_drink",
+    }
+    pin = Pin(**data)
+    self.assertEqual(pin.placePrimaryType, "food_and_drink")
+
+  def test_place_pin_with_place_primary_type(self):
+    data = {
+        "placeId": "ChIJ123",
+        "name": "Coffee Shop",
+        "lat": 1.0,
+        "lng": 2.0,
+        "placePrimaryType": "food_and_drink",
+    }
+    pin = PlacePin(**data)
+    self.assertEqual(pin.placePrimaryType, "food_and_drink")
+
+  def test_place_primary_type_matches_supported_taxonomy(self):
+    # Pinned so that adding or removing a category is a deliberate edit that
+    # also has to be mirrored in the client lookups and the agent skills.
+    self.assertEqual(
+        typing.get_args(PlacePrimaryType),
+        (
+            "food_and_drink",
+            "outdoor",
+            "retail",
+            "gas_station",
+            "ev",
+            "bank",
+            "lodging",
+            "emergency",
+            "entertainment",
+            "airport",
+            "parking",
+            "generic",
+        ),
+    )
+
+  def test_pin_accepts_every_supported_place_primary_type(self):
+    for place_primary_type in typing.get_args(PlacePrimaryType):
+      with self.subTest(placePrimaryType=place_primary_type):
+        pin = Pin(
+            lat=1.0,
+            lng=2.0,
+            label="Place",
+            placePrimaryType=place_primary_type,
+        )
+        self.assertEqual(pin.placePrimaryType, place_primary_type)
+
+  def test_place_pin_accepts_every_supported_place_primary_type(self):
+    for place_primary_type in typing.get_args(PlacePrimaryType):
+      with self.subTest(placePrimaryType=place_primary_type):
+        pin = PlacePin(
+            placeId="ChIJ123",
+            name="Place",
+            lat=1.0,
+            lng=2.0,
+            placePrimaryType=place_primary_type,
+        )
+        self.assertEqual(pin.placePrimaryType, place_primary_type)
+
+  def test_pin_rejects_retired_place_primary_types(self):
+    # `service` was split into `gas_station`/`bank`, and `closed` was dropped.
+    for place_primary_type in ("service", "closed"):
+      with self.subTest(placePrimaryType=place_primary_type):
+        with self.assertRaises(pydantic.ValidationError):
+          Pin(
+              lat=1.0,
+              lng=2.0,
+              label="Place",
+              placePrimaryType=place_primary_type,
+          )
+
   def test_pin_normalize_label_preserves_existing(self):
     data = {
         "lat": 1.0,
@@ -50,6 +129,7 @@ class TestExtractor(unittest.TestCase):
   def test_directions_extractor_schema_normalize_travel_mode(self):
     """Verifies that travel mode is normalized to lowercase."""
     data = {
+        "heading": "Commute Route",
         "summary": "Commute is 1h.",
         "center_lat": 37.5,
         "center_lng": 127.0,
@@ -65,6 +145,7 @@ class TestExtractor(unittest.TestCase):
   def test_directions_extractor_schema_with_routes(self):
     """Verifies that DirectionsExtractorSchema can be initialized with routes."""
     data = {
+        "heading": "Scenic Route",
         "summary": "Scenic route.",
         "center_lat": 37.5,
         "center_lng": 127.0,
@@ -91,6 +172,7 @@ class TestExtractor(unittest.TestCase):
   ):
     """Verifies that omitting travel_mode raises ValidationError."""
     data = {
+        "heading": "Directions Route",
         "summary": "Directions summary",
         "center_lat": 37.5,
         "center_lng": 127.0,
@@ -109,6 +191,7 @@ class TestExtractor(unittest.TestCase):
     for invalid_mode in ["flying", "", None, "scooter", 123]:
       with self.subTest(invalid_mode=invalid_mode):
         data = {
+            "heading": "Directions Route",
             "summary": "Directions summary",
             "center_lat": 37.5,
             "center_lng": 127.0,
@@ -123,6 +206,7 @@ class TestExtractor(unittest.TestCase):
     for mode in ["driving", "walking", "transit", "bicycling"]:
       with self.subTest(mode=mode):
         data = {
+            "heading": f"Going via {mode}",
             "summary": f"Going via {mode}",
             "center_lat": 37.5,
             "center_lng": 127.0,
@@ -197,6 +281,7 @@ class TestExtractor(unittest.TestCase):
       for synonym in synonyms:
         with self.subTest(synonym=synonym, expected=expected_mode):
           data = {
+              "heading": "Commute",
               "summary": "Commute",
               "center_lat": 37.5,
               "center_lng": 127.0,
@@ -205,6 +290,88 @@ class TestExtractor(unittest.TestCase):
           }
           schema = DirectionsExtractorSchema(**data)
           self.assertEqual(schema.travel_mode, expected_mode)
+
+  def test_directions_extractor_schema_with_heading(self):
+    """Verifies that DirectionsExtractorSchema validates with heading."""
+    data = {
+        "heading": "Walking route from Seattle Center to Pike Place Market",
+        "summary": "Walking takes about 25 minutes (1 mile).",
+        "center_lat": 47.6205,
+        "center_lng": -122.3493,
+        "travel_mode": "walking",
+        "routes": [{
+            "origin": {
+                "lat": 47.6205,
+                "lng": -122.3493,
+                "label": "Seattle Center",
+            },
+            "destination": {
+                "lat": 47.6097,
+                "lng": -122.3422,
+                "label": "Pike Place Market",
+            },
+        }],
+    }
+    schema = DirectionsExtractorSchema(**data)
+    self.assertEqual(
+        schema.heading, "Walking route from Seattle Center to Pike Place Market"
+    )
+
+  def test_directions_extractor_schema_missing_heading_fails_validation(self):
+    """Verifies that omitting heading raises ValidationError."""
+    data = {
+        "summary": "Walking takes about 25 minutes (1 mile).",
+        "center_lat": 47.6205,
+        "center_lng": -122.3493,
+        "travel_mode": "walking",
+        "routes": [{
+            "origin": {
+                "lat": 47.6205,
+                "lng": -122.3493,
+                "label": "Seattle Center",
+            },
+            "destination": {
+                "lat": 47.6097,
+                "lng": -122.3422,
+                "label": "Pike Place Market",
+            },
+        }],
+    }
+    with self.assertRaises(pydantic.ValidationError):
+      DirectionsExtractorSchema(**data)
+
+  def test_local_search_extractor_schema_with_heading(self):
+    """Verifies that LocalSearchExtractorSchema validates with heading."""
+    data = {
+        "heading": "5 Transit Stops Near Seattle Center",
+        "summary": "Here are 5 transit stops.",
+        "center_lat": 47.6205,
+        "center_lng": -122.3493,
+        "places": [{
+            "placeId": "ChIJ111",
+            "name": "Stop 1",
+            "lat": 47.62,
+            "lng": -122.35,
+        }],
+    }
+    schema = LocalSearchExtractorSchema(**data)
+    self.assertEqual(schema.heading, "5 Transit Stops Near Seattle Center")
+
+  def test_local_search_extractor_schema_missing_heading_fails_validation(self):
+    """Verifies that omitting heading raises ValidationError."""
+    data = {
+        "summary": "Here are 5 transit stops.",
+        "center_lat": 47.6205,
+        "center_lng": -122.3493,
+        "places": [{
+            "placeId": "ChIJ111",
+            "name": "Stop 1",
+            "lat": 47.62,
+            "lng": -122.35,
+        }],
+    }
+    with self.assertRaises(pydantic.ValidationError):
+      LocalSearchExtractorSchema(**data)
 
 
 if __name__ == "__main__":
