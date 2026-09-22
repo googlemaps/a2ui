@@ -14,11 +14,14 @@
 
 """MAUI Agent with Grounding implementation."""
 
+from collections.abc import AsyncIterable
 import logging
 import os
 import pathlib
-from typing import Optional
+from typing import Any, Optional
+import uuid
 
+from a2a.types import Part
 from google import genai
 from google.adk import skills as adk_skills
 from google.adk.agents.llm_agent import LlmAgent
@@ -31,10 +34,26 @@ from a2ui.schema.catalog import CatalogConfig
 from a2ui.schema.common_modifiers import remove_strict_validation
 from a2ui.schema.constants import VERSION_0_9
 from a2ui.schema.manager import A2uiSchemaManager
-# Import MAUIAgent to inherit from it
+import merger
+import place_id_resolution
 from agent import AGENT_INSTRUCTION, MAUIAgent, MergedCatalogProvider
+from agent_config import FallbackMode, GroundingTemplateConfig
+from extractor import DirectionsExtractorSchema, LocalSearchExtractorSchema
+from router_config import IntentClass, VertexIntentClassifier
+from vertex_grounding_extractor import VertexGroundingExtractor
 
 logger = logging.getLogger(__name__)
+
+_GROUNDED_TEXT_BASE_INSTRUCTION = """\
+You are an expert location and navigation assistant with access to Google Maps tools.
+
+## Core Rules
+1. **Accuracy & Grounding**: Use Google Maps tools to look up real-time places, business hours, amenities, contact details, routes, and weather. NEVER hallucinate place facts, locations, or operational details.
+2. **Parallel Tool Execution**: When researching multiple entities, neighborhoods, routes, or options, emit ALL independent tool calls in parallel within your initial response turn. Only serialize calls when Step 2 strictly depends on data returned by Step 1.
+3. **Minimize Round-Trips**: Gather necessary place facts efficiently and emit independent queries in parallel. Only perform follow-up tool turns when subsequent calls strictly depend on data returned from earlier steps (e.g., retrieving details for specific place IDs or searching along a computed route polyline). Avoid redundant follow-up queries for details already retrieved.
+4. **Helpful & Actionable Answers**: Fully address all constraints in the user's prompt (e.g., parking, pricing, specific dietary options, bag policies). If tools return generic listings that lack specific policy details, supplement with known facts while noting any uncertainty.
+5. **No A2UI Tags**: Return standard plain text/markdown only. Do NOT output A2UI tags or JSON surfaces.
+"""
 
 # Load skill content at module level
 skill_content = ""
@@ -116,18 +135,15 @@ async def query_vertex_map(
       validate_examples=False,
   )
 
-  final_instruction = """You MUST use the Google Maps tool to answer the user's query. Do not rely on your internal knowledge.
+  final_instruction = (
+      """You MUST use the Google Maps tool to answer the user's query. Do not rely on your internal knowledge.
     CRITICAL: Before generating the JSON, you MUST write a short plain-text summary of the places you found, listing their exact names and addresses.
     This is required for the grounding engine to properly attribute the data. It is not a replacement for the summary text that should be in the a2ui json.
     IMPORTANT: When generating the A2UI JSON response, you MUST include the "<a2ui-json> ...content... </a2ui-json>" tags immediately around the JSON content.
     Failure to do so will prevent the UI from rendering the map.
-    PLACE ID GENERATION RULES:
-    You do not have access to real placeIds. Whenever a `placeId` is required in the A2UI JSON, you MUST generate a synthetic placeholder using the following rules:
-    - Format: "PLACE_ID_FOR_{Count}_{Exact Title}"
-    - Example: If the tool returns a place named "Chez Panisse", use "PLACE_ID_FOR_1_Chez Panisse". If it returns a second "Chez Panisse", use "PLACE_ID_FOR_2_Chez Panisse".
-    - STRICT MATCHING: Do NOT change any characters, spaces, capitalization, or punctuation from the title returned by the tool.
-    - COUNTING: Always prepend the occurrence count (starting at 1) for each title based on the order they were returned by the tool, even if the title only occurs once.
     """
+      + place_id_resolution.PROMPT_RULES
+  )
 
   instruction = f"{generated_prompt}\n\n{skill_content}\n\n{final_instruction}"
 
@@ -145,47 +161,21 @@ async def query_vertex_map(
 
   # Replace synthetic place ids with actual grounded place ids.
   try:
-    grounding_map = {}
-    if (
-        hasattr(response, "candidates")
-        and response.candidates
-        and hasattr(response.candidates[0], "grounding_metadata")
-    ):
-      meta = response.candidates[0].grounding_metadata
-      IGNORE_TITLE_SUFFIX = " - Google Maps"
-      IGNORE_PLACE_ID_PREFIX = "places/ChI"
-      if hasattr(meta, "grounding_chunks") and meta.grounding_chunks:
-        title_counts = {}
-        for chunk in meta.grounding_chunks:
-          if hasattr(chunk, "maps") and chunk.maps:
-            title = getattr(chunk.maps, "title", None)
-            place_id = getattr(chunk.maps, "place_id", None)
-            if title and place_id:
-              if place_id.startswith(IGNORE_PLACE_ID_PREFIX):
-                place_id = place_id[len(IGNORE_PLACE_ID_PREFIX) - 3:]
-              if title.endswith(IGNORE_TITLE_SUFFIX):
-                title = title[:-len(IGNORE_TITLE_SUFFIX)]
-
-              # Track how many times this title has appeared
-              title_counts[title] = title_counts.get(title, 0) + 1
-              count = title_counts[title]
-              grounding_map[f"PLACE_ID_FOR_{count}_{title}"] = place_id
-      else:
-        logger.warning("No grounding chunks found")
-    else:
-      logger.warning("No grounding metadata found")
-
-    if grounding_map:
-      for key, value in grounding_map.items():
-        final_response_content = final_response_content.replace(key, value)
-    else:
-      logger.warning("No grounding map found")
-
+    attribution_sources = place_id_resolution.extract_attribution_sources(
+        response
+    )
+    final_response_content, unresolved_placeholders = (
+        place_id_resolution.resolve_place_ids(
+            final_response_content, attribution_sources
+        )
+    )
+    if unresolved_placeholders:
+      logger.warning(
+          "%d Place ID placeholder(s) remain in the response.",
+          unresolved_placeholders,
+      )
   except Exception as e:  # pylint: disable=broad-exception-caught
     logger.error("Error during Place ID cleanup: %s", e)
-
-  if "PLACE_ID_FOR_" in final_response_content:
-    logger.warning("Place ID placeholder found in response.")
 
   # Final safety check: Extract JSON array if marker is present
   if "<a2ui-json>" in final_response_content:
@@ -208,12 +198,246 @@ class MAUIAgentWithGrounding(MAUIAgent):
       self,
       base_url: str,
       model_name: str = "gemini/gemini-3-flash-preview",
+      template_config: GroundingTemplateConfig | None = None,
   ):
     super().__init__(
         base_url,
         agent_name="MAUI Agent with Grounding",
         model_name=model_name,
     )
+    self.template_config = template_config
+    self._genai_client: genai.Client | None = None
+    self._router_classifier: VertexIntentClassifier | None = None
+    self._vertex_extractor: VertexGroundingExtractor | None = None
+
+  def _get_genai_client(self) -> genai.Client:
+    """Lazily initializes and caches a shared genai.Client."""
+    if self._genai_client is None:
+      cfg = self.template_config or GroundingTemplateConfig()
+      project_id = (
+          cfg.project_id
+          or os.environ.get("GOOGLE_CLOUD_PROJECT")
+          or os.environ.get("VERTEX_PROJECT_ID")
+      )
+      if not project_id:
+        raise ValueError(
+            "GOOGLE_CLOUD_PROJECT environment variable is not set. You must"
+            " set a valid Google Cloud project ID to use the Agent with"
+            " Grounding."
+        )
+      self._genai_client = genai.Client(
+          vertexai=True,
+          project=project_id,
+          location=cfg.location,
+      )
+    return self._genai_client
+
+  def _get_router_classifier(self) -> VertexIntentClassifier:
+    """Lazily initializes and caches the VertexIntentClassifier."""
+    if self._router_classifier is None:
+      cfg = self.template_config or GroundingTemplateConfig()
+      self._router_classifier = VertexIntentClassifier(
+          project_id=cfg.project_id,
+          location=cfg.location,
+          model_id=cfg.router_model,
+          client=self._get_genai_client(),
+          thinking_budget=cfg.router_thinking_budget,
+      )
+    return self._router_classifier
+
+  def _load_shared_guidelines(self) -> str:
+    """Loads shared guidelines for vertex grounding extractor if present."""
+    guidelines_path = (
+        pathlib.Path(__file__).parent
+        / "shared"
+        / "instructions"
+        / "voice_and_tone.md"
+    )
+    if guidelines_path.exists():
+      with open(guidelines_path, "r") as f:
+        return f.read()
+    return ""
+
+  def _get_vertex_extractor(self) -> VertexGroundingExtractor:
+    """Lazily initializes and caches the VertexGroundingExtractor."""
+    if self._vertex_extractor is None:
+      cfg = self.template_config or GroundingTemplateConfig()
+      self._vertex_extractor = VertexGroundingExtractor(
+          project_id=cfg.project_id,
+          location=cfg.location,
+          model_id=cfg.extractor_model,
+          shared_guidelines=self._load_shared_guidelines(),
+          client=self._get_genai_client(),
+          thinking_budget=cfg.extractor_thinking_budget,
+      )
+    return self._vertex_extractor
+
+  def _wrap_in_text_only(self, text: str, session_id: str) -> list[Part]:
+    """Wraps plain text in a text_only template Part list."""
+    return merger.wrap_in_text_only(text, session_id=session_id)
+
+  async def _handle_grounded_text(
+      self, cleaned_query: str, session_id: str
+  ) -> list[Part]:
+    """Generates a grounded plain text response using Vertex AI GwGM."""
+    vertex_extractor = self._get_vertex_extractor()
+    try:
+      response = await vertex_extractor.client.aio.models.generate_content(
+          model=vertex_extractor.model_id,
+          contents=cleaned_query,
+          config=types.GenerateContentConfig(
+              system_instruction=_GROUNDED_TEXT_BASE_INSTRUCTION,
+              tools=[types.Tool(google_maps=types.GoogleMaps())],
+          ),
+      )
+      answer_text = response.text or ""
+    except Exception as e:
+      logger.exception("Error generating grounded text with Vertex AI: %s", e)
+      answer_text = ""
+
+    if not answer_text:
+      answer_text = (
+          "I'm sorry, I encountered an issue retrieving location details"
+          " right now."
+      )
+    return self._wrap_in_text_only(answer_text, session_id)
+
+  async def _classify_intent(self, query: str) -> tuple[IntentClass, str]:
+    """Classifies the query intent and returns the intent and cleaned query."""
+    classifier = self._get_router_classifier()
+    return await classifier.classify(query)
+
+  async def _handle_template_intent(
+      self,
+      intent: IntentClass,
+      query: str,
+  ) -> AsyncIterable[dict[str, Any]]:
+    """Handles supported template intents using Vertex Grounding with Google Maps."""
+    if intent == IntentClass.LOCAL_SEARCH:
+      schema_cls = LocalSearchExtractorSchema
+      template_name = "local_search"
+    elif intent == IntentClass.DIRECTIONS:
+      schema_cls = DirectionsExtractorSchema
+      template_name = "directions"
+    else:
+      raise ValueError(f"Unsupported intent for GwGM template: {intent}")
+
+    logger.info(
+        "Using VertexGroundingExtractor for intent %s with schema %s",
+        intent,
+        schema_cls.__name__,
+    )
+    cfg = self.template_config or GroundingTemplateConfig()
+    vertex_extractor = self._get_vertex_extractor()
+    extracted_template_params = await vertex_extractor.extract(
+        query, schema_cls, max_places=cfg.max_list_size
+    )
+
+    a2ui_parts = merger.render_template_payload(
+        template_name=template_name,
+        payload=extracted_template_params,
+        max_list_size=cfg.max_list_size,
+    )
+    yield {
+        "is_task_complete": True,
+        "parts": a2ui_parts,
+    }
+
+  async def stream(
+      self, query: str, session_id: str, ui_version: str | None = None
+  ) -> AsyncIterable[dict[str, Any]]:
+    """Streams responses, routing via intent classifier to template extractors if enabled."""
+    if not self.template_config or not self.template_config.enabled:
+      async for part in super().stream(query, session_id, ui_version):
+        yield part
+      return
+
+    if not ui_version:
+      logger.info("No ui_version provided. Routing to base text streaming.")
+      async for part in super().stream(query, session_id, ui_version):
+        yield part
+      return
+
+    cfg = self.template_config
+    try:
+      intent, cleaned_query = await self._classify_intent(query)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      logger.warning("Intent routing failed: %s.", e, exc_info=True)
+      if cfg.fallback_mode == FallbackMode.DYNAMIC:
+        async for part in super().stream(query, session_id, ui_version):
+          yield part
+        return
+      intent, cleaned_query = IntentClass.TEXT_ONLY, query
+
+    if intent == IntentClass.OTHER_SPATIAL:
+      if cfg.fallback_mode == FallbackMode.DYNAMIC:
+        logger.warning(
+            "Router matched OTHER_SPATIAL and fallback_mode is DYNAMIC. "
+            "Falling back to Dynamic UI flow."
+        )
+        async for part in super().stream(query, session_id, ui_version):
+          yield part
+        return
+      else:
+        logger.info(
+            "Router matched OTHER_SPATIAL and fallback_mode is TEXT. "
+            "Executing grounded text fallback flow."
+        )
+        final_parts = await self._handle_grounded_text(
+            cleaned_query, session_id
+        )
+        yield {
+            "is_task_complete": True,
+            "parts": final_parts,
+        }
+        return
+
+    elif intent == IntentClass.TEXT_ONLY:
+      logger.info("Executing fast text response flow for TEXT_ONLY intent.")
+      final_parts = await self._handle_grounded_text(cleaned_query, session_id)
+      yield {
+          "is_task_complete": True,
+          "parts": final_parts,
+      }
+      return
+
+    elif intent in {IntentClass.LOCAL_SEARCH, IntentClass.DIRECTIONS}:
+      try:
+        async for part in self._handle_template_intent(intent, cleaned_query):
+          yield part
+        return
+      except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.warning(
+            "Template extraction failed for %s: %s", intent, e, exc_info=True
+        )
+        if cfg.fallback_mode == FallbackMode.DYNAMIC:
+          logger.warning(
+              "Falling back to dynamic generation due to template error."
+          )
+          async for part in super().stream(query, session_id, ui_version):
+            yield part
+          return
+        else:
+          logger.info("Falling back to grounded text due to template error.")
+          final_parts = await self._handle_grounded_text(
+              cleaned_query, session_id
+          )
+          yield {
+              "is_task_complete": True,
+              "parts": final_parts,
+          }
+          return
+
+    # Fallback for un-implemented intents or validation failures
+    if cfg.fallback_mode == FallbackMode.TEXT:
+      final_parts = await self._handle_grounded_text(cleaned_query, session_id)
+      yield {
+          "is_task_complete": True,
+          "parts": final_parts,
+      }
+    else:
+      async for part in super().stream(query, session_id, ui_version):
+        yield part
 
   async def query_vertex_map(self, query: str) -> str:
     """Query Google Maps via Vertex Grounding and return cleaned response.
@@ -224,9 +448,7 @@ class MAUIAgentWithGrounding(MAUIAgent):
     Returns:
         The grounded and cleaned A2UI response string.
     """
-    model_id = (
-        self._model_name.removeprefix("gemini/").removeprefix("models/")
-    )
+    model_id = self._model_name.removeprefix("gemini/").removeprefix("models/")
     return await query_vertex_map(query, model_id=model_id)
 
   def _build_llm_agent(
@@ -276,4 +498,5 @@ class MAUIAgentWithGrounding(MAUIAgent):
         ),
         instruction=instruction,
         tools=[grounding_tool, skill_manager_tool],
+        after_tool_callback=self._after_tool_callback,
     )
