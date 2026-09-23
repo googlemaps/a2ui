@@ -75,6 +75,28 @@ return (
 );
 ```
 
+### 3. Streaming Responses (`sendStream`)
+`A2UIClient` also supports real-time incremental Server-Sent Events (SSE) streaming via `client.sendStream(messageText)` (`message/stream`). You can use a `useStreaming` boolean flag to switch between streaming (`client.sendStream`) and non-streaming (`client.send`):
+
+```tsx
+const useStreaming = true; // Set to false to use non-streaming client.send()
+
+async function handleSend(messageText: string) {
+  renderer.addUserMessage(messageText);
+
+  if (useStreaming) {
+    // Stream incremental text and A2UI component updates via SSE (message/stream)
+    for await (const chunk of client.sendStream(messageText)) {
+      renderer.processResponse([chunk]);
+    }
+  } else {
+    // Wait for the full response in a single payload (message/send)
+    const response = await client.send(messageText);
+    renderer.processResponse(response);
+  }
+}
+```
+
 ## Local Development
 
 To make changes to this package and test them in an application:
