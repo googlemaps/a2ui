@@ -14,59 +14,86 @@
 
 """MAUI Agent with template-based latency optimization."""
 
-import asyncio
-import json
+import dataclasses
+import inspect
 import logging
 import pathlib
+import re
 from types import SimpleNamespace
 from typing import Any, AsyncIterable
 import uuid
 
-from a2a.types import DataPart
 from a2a.types import Part
 from google.adk import skills as adk_skills
 from google.adk.agents import run_config
 from google.adk.agents.llm_agent import LlmAgent
-from google.adk.events.event import Event
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.models.llm_request import LlmRequest
 from google.adk.runners import Runner
-from google.adk.tools.set_model_response_tool import SetModelResponseTool
 from google.genai import types
 import pydantic
 
 from a2ui.a2a.parts import create_a2ui_part
+from a2ui.schema.constants import VERSION_0_9
 from a2ui.schema.manager import (
     A2uiSchemaManager,
 )
 from agent import MAUIAgent
 from agent_config import AgentConfig
 from agent_config import FallbackMode
-from extractor import DirectionsExtractorSchema
-from extractor import LocalSearchExtractorSchema
 from merger import merge_template
 from router_config import IntentClass
 from router_config import ROUTER_SYSTEM_INSTRUCTION
 from router_config import RouterClassification
+from template_tool import (
+    BaseTemplateTool,
+    RenderDirectionsTemplateTool,
+    RenderLocalSearchTemplateTool,
+    RenderTextOnlyTemplateTool,
+    STATE_RENDERED_A2UI_DATA,
+    STATE_RENDERED_A2UI_PARTS,
+)
 
 logger = logging.getLogger(__name__)
-_SKILL_BASE_PATH = pathlib.Path(__file__).parent / "skills"
+_SKILL_BASE_PATH = pathlib.Path(__file__).parent / "templates"
 _SHARED_INSTRUCTIONS_PATH = (
     pathlib.Path(__file__).parent / "shared" / "instructions"
 )
-_LOCAL_SEARCH_SKILL_NAME = "local-search-template-response"
-_LOCAL_SEARCH_TEMPLATE_NAME = "local_search"
-_LOCAL_SEARCH_SURFACE_PREFIX = "local-search-surface"
 
-_DIRECTIONS_SKILL_NAME = "directions-template-response"
-_DIRECTIONS_TEMPLATE_NAME = "directions"
-_DIRECTIONS_SURFACE_PREFIX = "directions-surface"
 
-_EXTRACTOR_SCHEMAS = {
-    _LOCAL_SEARCH_SKILL_NAME: LocalSearchExtractorSchema,
-    _DIRECTIONS_SKILL_NAME: DirectionsExtractorSchema,
+@dataclasses.dataclass(frozen=True)
+class TemplateInfo:
+  """Metadata describing a template definition."""
+
+  template_name: str
+  skill_name: str
+  surface_prefix: str
+  tool_class: type[BaseTemplateTool]
+
+  def __getitem__(self, key: str) -> Any:
+    return getattr(self, key)
+
+
+TEMPLATE_INFO: dict[IntentClass, TemplateInfo] = {
+    IntentClass.LOCAL_SEARCH: TemplateInfo(
+        template_name="local_search",
+        skill_name="local_search",
+        surface_prefix="local-search-surface",
+        tool_class=RenderLocalSearchTemplateTool,
+    ),
+    IntentClass.DIRECTIONS: TemplateInfo(
+        template_name="directions",
+        skill_name="directions",
+        surface_prefix="directions-surface",
+        tool_class=RenderDirectionsTemplateTool,
+    ),
 }
-_SUPPORTED_INTENTS = {IntentClass.LOCAL_SEARCH, IntentClass.DIRECTIONS}
+
+_SUPPORTED_INTENTS: set[IntentClass] = set(TEMPLATE_INFO.keys())
+
+_TEMPLATE_TOOL_NAMES: set[str] = {
+    info.tool_class.name for info in TEMPLATE_INFO.values()
+} | {"render_text_only_template"}
 
 _GROUNDED_TEXT_BASE_INSTRUCTION = """\
 You are an expert location and navigation assistant with access to Google Maps tools.
@@ -79,6 +106,28 @@ You are an expert location and navigation assistant with access to Google Maps t
 5. **No A2UI Tags**: Return standard plain text/markdown only. Do NOT output A2UI tags or JSON surfaces.
 """
 
+_LOCATION_ERROR_FALLBACK_TEXT = (
+    "I'm sorry, I encountered an issue retrieving location details right now."
+)
+
+
+def _normalize_version(version: str | None) -> str:
+  """Canonicalizes an A2UI version string to the key used by version maps.
+
+  The A2UI extension URI carries the version as `v0.9`, while the schema
+  constants (and therefore `_schema_managers`) use the bare `0.9`. Callers may
+  pass either form, so both are collapsed to the bare form here.
+
+  Args:
+    version: Requested A2UI version, e.g. `0.9` or `v0.9`. May be None.
+
+  Returns:
+    The bare version string, defaulting to `VERSION_0_9` when unspecified.
+  """
+  if not version:
+    return VERSION_0_9
+  return version.removeprefix("v")
+
 
 class MAUIAgentWithTemplates(MAUIAgent):
   """MAUI Agent extending base with server-side layout templates and query intent routing."""
@@ -90,11 +139,28 @@ class MAUIAgentWithTemplates(MAUIAgent):
     self.extractor_client = LiteLlm(model=self.config.template_model)
     self.fallback_client = LiteLlm(model=self.config.generic_model)
 
+    self._extractor_agents: dict[str, LlmAgent] = {}
+    self._extractor_runners: dict[str, Runner] = {}
+    self._grounded_text_agent = self._build_grounded_text_agent(
+        client=self.extractor_client
+    )
+    self._grounded_text_runner = self._build_runner(self._grounded_text_agent)
+    self._fallback_text_agent = self._build_grounded_text_agent(
+        client=self.fallback_client
+    )
+    self._fallback_text_runner = self._build_runner(self._fallback_text_agent)
+
+    for version, schema_manager in self._schema_managers.items():
+      agent = self._build_unified_extractor_agent(schema_manager=schema_manager)
+      key = _normalize_version(version)
+      self._extractor_agents[key] = agent
+      self._extractor_runners[key] = self._build_runner(agent)
+
   def _build_runner(self, agent: LlmAgent) -> Runner:
     runner = super()._build_runner(agent)
-    # The extractor agent runs inside a dynamically created runner.
+    # The extractor agent runs inside a persistent runner.
     # We must enable auto_create_session to prevent SessionNotFoundError
-    # since we don't pre-create the session for this runner.
+    # when new sessions are encountered.
     runner.auto_create_session = True
     return runner
 
@@ -107,7 +173,7 @@ class MAUIAgentWithTemplates(MAUIAgent):
   ) -> dict[str, Any] | None:
     """Callback for tool errors during extraction."""
     # pylint: disable=unused-argument
-    if tool.name == "set_model_response" and isinstance(
+    if tool.name in _TEMPLATE_TOOL_NAMES and isinstance(
         error, pydantic.ValidationError
     ):
       logger.warning(
@@ -137,86 +203,135 @@ class MAUIAgentWithTemplates(MAUIAgent):
         logger.warning("Failed to load shared style guidelines: %s", e)
     return ""
 
-  def _build_dynamic_extractor_agent(
-      self,
-      skill_name: str,
-      schema_manager: A2uiSchemaManager | None = None,
-  ) -> LlmAgent:
-    """Builds an extractor agent loaded directly with the target skill's prompt."""
-    skill_dir = _SKILL_BASE_PATH / skill_name
-    skill = adk_skills.load_skill_from_dir(skill_dir)
-    skill_instructions = skill.instructions
-    shared_guidelines = self._load_shared_guidelines()
-    if shared_guidelines:
-      skill_instructions = f"{skill_instructions}\n\n{shared_guidelines}"
-
-    # Extractors use template_model, generic UI uses generic_model
-    if skill_name.endswith("-template-response"):
-      model_name = self.config.template_model
-    else:
-      model_name = self.config.generic_model
-
-    logger.info(
-        f"Building extractor agent for '{skill_name}' using model: {model_name}"
-    )
+  def _build_grounded_text_agent(self, client: LiteLlm) -> LlmAgent:
+    """Builds a persistent agent for Maps-grounded plain text responses."""
+    system_instruction = self._get_grounded_text_instruction()
+    generate_content_config = None
+    if (
+        client == self.extractor_client
+        and self.config.extractor_thinking_budget > 0
+    ):
+      generate_content_config = types.GenerateContentConfig(
+          thinking_config=types.ThinkingConfig(
+              thinking_budget=self.config.extractor_thinking_budget
+          )
+      )
 
     tools = [self.make_grounding_lite_mcp()]
-    output_schema = _EXTRACTOR_SCHEMAS.get(skill_name)
+    return LlmAgent(
+        model=client,
+        name="maui_grounded_text_agent",
+        description="Agent for text responses with Maps grounding",
+        instruction=system_instruction,
+        tools=tools,
+        generate_content_config=generate_content_config,
+    )
+
+  def _build_unified_extractor_instruction(self) -> str:
+    """Assembles unified extractor system instruction across supported template skills."""
+    instructions_list = [
+        "You are an expert location and navigation assistant with access to"
+        " Google Maps tools and layout template rendering tools."
+    ]
+
+    for info in TEMPLATE_INFO.values():
+      skill_dir = _SKILL_BASE_PATH / info.skill_name
+      if skill_dir.exists():
+        try:
+          skill = adk_skills.load_skill_from_dir(skill_dir)
+          instructions_list.append(f"\n{skill.instructions}")
+        except Exception as e:
+          logger.warning(
+              "Failed to load skill for '%s': %s", info.template_name, e
+          )
+
+    shared_guidelines = self._load_shared_guidelines()
+    if shared_guidelines:
+      instructions_list.append(f"## Style Guidelines\n{shared_guidelines}")
+
+    target_intent_rules = []
+    for intent, info in sorted(
+        TEMPLATE_INFO.items(), key=lambda entry: entry[0].value
+    ):
+      target_intent_rules.append(
+          f"   - `[TARGET_INTENT: {intent.value}]`: Invoke"
+          f" `{info.tool_class.name}`.\n"
+          "     Do NOT invoke any other template rendering tool."
+      )
+    target_intent_rules_text = "\n".join(target_intent_rules)
+
+    workflow_rules = (
+        "## Execution and Tool Usage Rules\n"
+        "1. Follow the previous rules for gathering the necessary information"
+        " using\n"
+        "   Google Maps tools.\n"
+        "2. When the user prompt begins with `[TARGET_INTENT: <INTENT>]`, you"
+        " MUST\n"
+        "   strictly invoke the corresponding template rendering tool as your"
+        " final\n"
+        "   step:\n"
+        f"{target_intent_rules_text}\n"
+        "3. Your final action MUST be this template rendering tool call.\n"
+        "   Do NOT emit raw JSON or `<a2ui-json>` blocks in your text"
+        " response."
+    )
+    instructions_list.append(workflow_rules)
+
+    return "\n\n".join(instructions_list)
+
+  def _build_unified_extractor_agent(
+      self,
+      schema_manager: A2uiSchemaManager | None = None,
+  ) -> LlmAgent:
+    """Builds a single unified extractor agent with all template rendering tools."""
+    raw_instructions = self._build_unified_extractor_instruction()
+
+    tools = [self.make_grounding_lite_mcp()]
+    for info in TEMPLATE_INFO.values():
+      tools.append(
+          info.tool_class(
+              schema_manager=schema_manager,
+              max_list_size=self.config.max_list_size,
+              surface_id_prefix=info.surface_prefix,
+          )
+      )
+    tools.append(
+        RenderTextOnlyTemplateTool(
+            schema_manager=schema_manager,
+            surface_id_prefix="text-only-surface",
+        )
+    )
 
     generate_content_config = None
-    if output_schema:
-      # Manually inject SetModelResponseTool
-      set_response_tool = SetModelResponseTool(output_schema)
-      tools.append(set_response_tool)
-
-      # Manually append instruction
-      workaround_instruction = (
-          "IMPORTANT: You have access to other tools, but you must provide"
-          " your final response using the set_model_response tool with the"
-          " required structured format. After using any other tools needed to"
-          " complete the task, always call set_model_response with your final"
-          " answer in the specified schema format."
+    if self.config.extractor_thinking_budget > 0:
+      generate_content_config = types.GenerateContentConfig(
+          thinking_config=types.ThinkingConfig(
+              thinking_budget=self.config.extractor_thinking_budget
+          )
       )
-      if skill_name == _LOCAL_SEARCH_SKILL_NAME:
-        workaround_instruction += (
-            "\nCRITICAL CONSTRAINT: You MUST extract and display at most"
-            f" {self.config.max_list_size} of the most relevant places. Do not"
-            " mention, recommend, or extract more than"
-            f" {self.config.max_list_size} places in your text response or your"
-            " set_model_response tool call."
-        )
-      skill_instructions = f"{skill_instructions}\n\n{workaround_instruction}"
-
-      if self.config.extractor_thinking_budget > 0:
-        generate_content_config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(
-                thinking_budget=self.config.extractor_thinking_budget
-            )
-        )
-        logger.info(
-            "Applying template extractor thinking budget limit:"
-            f" {self.config.extractor_thinking_budget} tokens"
-        )
-
-    if schema_manager:
-      instruction = schema_manager.generate_system_prompt(
-          role_description=skill_instructions,
-          include_schema=True,
-          include_examples=False,
-          validate_examples=False,
+      logger.info(
+          "Applying template extractor thinking budget limit:"
+          f" {self.config.extractor_thinking_budget} tokens"
       )
-    else:
-      instruction = skill_instructions
+
+    # Template tools directly handle catalog rendering via schema_manager.
+    # Do not inject SDK-level `<a2ui-json>` wrapping rules into the
+    # extractor LLM prompt.
+    instruction = raw_instructions
 
     return LlmAgent(
-        model=LiteLlm(model=model_name),
-        name="maui_agent",
-        description="An extractor agent executing specific Maps tool tasks",
+        model=LiteLlm(model=self.config.template_model),
+        name="maui_unified_extractor_agent",
+        description=(
+            "A unified extractor agent executing Maps tasks and template"
+            " rendering"
+        ),
         instruction=instruction,
         tools=tools,
-        output_schema=None,  # Keep output_schema as None in LlmAgent
+        output_schema=None,
         generate_content_config=generate_content_config,
         on_tool_error_callback=self._on_tool_error,
+        after_tool_callback=self._after_tool_callback,
     )
 
   async def _run_extractor(
@@ -225,10 +340,19 @@ class MAUIAgentWithTemplates(MAUIAgent):
       agent: LlmAgent,
       current_message: types.Content,
       session_id: str,
-  ) -> tuple[dict[str, Any] | None, list[str]]:
-    """Runs the extractor agent and collects its output (structured or text)."""
-    parsed_json_data = None
+      state_delta: dict[str, Any] | None = None,
+  ) -> tuple[list[Part] | None, list[str], dict[str, Any] | None]:
+    """Runs the extractor agent and collects its output (rendered parts or text)."""
+    rendered_parts: list[Part] | None = None
+    rendered_data: dict[str, Any] | None = None
     full_content_list = []
+
+    merged_state_delta = {
+        "expression": "{expression}",
+        "base_url": self.base_url,
+    }
+    if state_delta:
+      merged_state_delta.update(state_delta)
 
     async for event in runner.run_async(
         user_id=self._user_id,
@@ -237,63 +361,48 @@ class MAUIAgentWithTemplates(MAUIAgent):
             streaming_mode=run_config.StreamingMode.SSE
         ),
         new_message=current_message,
-        # Initialize session state.
-        # "expression" is required to prevent KeyError during ADK's prompt
-        # state injection, as the A2UI catalog schema contains "${expression}"
-        # placeholders. "base_url" is passed for consistency with the main
-        # agent session state.
-        state_delta={
-            "expression": "{expression}",
-            "base_url": self.base_url,
-        },
+        state_delta=merged_state_delta,
     ):
       if hasattr(event, "get_function_calls"):
         for fc in event.get_function_calls():
-          if fc.name == "set_model_response":
+          if fc.name in _TEMPLATE_TOOL_NAMES:
             logger.info(
-                "Intercepted set_model_response tool call with args: %s",
+                "--- AGENT_WITH_TEMPLATES: Observed %s tool call with args:"
+                " %s ---",
+                fc.name,
                 fc.args,
             )
 
-            # Find SetModelResponseTool in agent tools
             target_tool = None
             for t in agent.tools:
-              if getattr(t, "name", None) == "set_model_response":
+              if getattr(t, "name", None) == fc.name:
                 target_tool = t
                 break
 
             if target_tool and hasattr(target_tool, "run_async"):
+              tool_ctx = SimpleNamespace(state={})
               try:
-                noop_tool_context = SimpleNamespace(
-                    actions=SimpleNamespace(set_model_response=None)
+                tool_result = await target_tool.run_async(
+                    args=fc.args, tool_context=tool_ctx
                 )
-                validated_data = await target_tool.run_async(
-                    args=fc.args, tool_context=noop_tool_context
-                )
-                # SetModelResponseTool.run_async catches ValidationError internally
-                # and returns a dict with "error" key instead of raising the exception.
                 if (
-                    isinstance(validated_data, dict)
-                    and "error" in validated_data
+                    isinstance(tool_result, dict)
+                    and "error" not in tool_result
+                    and STATE_RENDERED_A2UI_PARTS in tool_ctx.state
                 ):
-                  logger.warning(
-                      "Local Pydantic validation failed: %s. Continuing.",
-                      validated_data["error"],
-                  )
-                else:
-                  parsed_json_data = validated_data
+                  rendered_parts = tool_ctx.state[STATE_RENDERED_A2UI_PARTS]
+                  rendered_data = tool_ctx.state.get(STATE_RENDERED_A2UI_DATA)
                   logger.info(
-                      "Local Pydantic validation passed! Short-circuiting."
+                      "--- AGENT_WITH_TEMPLATES: Template tool %s succeeded!"
+                      " Captured %d rendered parts. ---",
+                      fc.name,
+                      len(rendered_parts),
                   )
                   break
-              except pydantic.ValidationError as e:
+              except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.warning(
-                    "Local Pydantic validation failed: %s. Continuing.",
-                    e,
+                    "--- AGENT_WITH_TEMPLATES: Tool execution error: %s ---", e
                 )
-            else:
-              parsed_json_data = fc.args
-              break
 
       if event.content and event.content.parts:
         if event.partial:
@@ -306,69 +415,68 @@ class MAUIAgentWithTemplates(MAUIAgent):
             if p.text:
               full_content_list.append(p.text)
 
-    return parsed_json_data, full_content_list
+    if rendered_parts is None and getattr(runner, "session_service", None):
+      get_session_fn = getattr(runner.session_service, "get_session", None)
+      if callable(get_session_fn):
+        try:
+          res = get_session_fn(
+              app_name=getattr(runner, "app_name", ""),
+              user_id=self._user_id,
+              session_id=session_id,
+          )
+          if inspect.isawaitable(res):
+            session = await res
+            if session and getattr(session, "state", None):
+              rendered_parts = session.state.get(STATE_RENDERED_A2UI_PARTS)
+              rendered_data = session.state.get(STATE_RENDERED_A2UI_DATA)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+          logger.debug("Could not retrieve session from session_service: %s", e)
+
+    return rendered_parts, full_content_list, rendered_data
 
   async def _run_extractor_and_merge(
       self,
-      skill_name: str,
-      template_name: str,
-      surface_id_prefix: str,
+      intent: IntentClass,
       cleaned_query: str,
       session_id: str,
       ui_version: str | None = None,
   ) -> tuple[list[Part] | None, str | None, dict[str, Any] | None]:
-    """Runs the dynamic extractor agent and merges output into the template."""
-    # 1. Resolve catalog schema manager and validator
-    schema_manager = self._schema_managers.get(ui_version)
-    selected_catalog = None
-    if schema_manager:
-      # Retrieve the resolved catalog config for validation.
-      # Replacing the deprecated get_catalog("maps-agentic-ui-catalog")
-      # API call.
-      selected_catalog = schema_manager.get_selected_catalog()
+    """Runs the persistent extractor agent runner and returns rendered template parts."""
+    version = _normalize_version(ui_version)
 
-    # 2. Build the extractor agent and runner
-    agent = self._build_dynamic_extractor_agent(
-        skill_name,
-        schema_manager=schema_manager,
-    )
-    runner = self._build_runner(agent)
+    # 1. Resolve persistent runner and agent, falling back to the default
+    # version when the requested one has no pre-built extractor.
+    if version not in self._extractor_agents:
+      logger.warning(
+          "No extractor agent built for A2UI version '%s'. Falling back to"
+          " '%s'.",
+          version,
+          VERSION_0_9,
+      )
+      version = VERSION_0_9
+    agent = self._extractor_agents[version]
+    runner = self._extractor_runners[version]
 
-    # 3. Setup user query message
+    # 2. Setup user query message with target intent hint
+    target_hint = intent.value
+    formatted_prompt = f"[TARGET_INTENT: {target_hint}]\n{cleaned_query}"
     current_message = types.Content(
-        role="user", parts=[types.Part.from_text(text=cleaned_query)]
+        role="user", parts=[types.Part.from_text(text=formatted_prompt)]
     )
 
-    # 4. Run extractor runner, collecting output
-    parsed_json_data, full_content_list = await self._run_extractor(
-        runner, agent, current_message, session_id
+    # 3. Run extractor runner, collecting output
+    rendered_parts, full_content_list, rendered_data = (
+        await self._run_extractor(
+            runner,
+            agent,
+            current_message,
+            session_id,
+            state_delta={"target_intent": target_hint},
+        )
     )
 
-    # 5. Handle output layout merging
-    if parsed_json_data is not None:
-      logger.info(
-          "Template parameters extracted successfully. Merging template."
-      )
-      if "surface_id" not in parsed_json_data:
-        short_id = uuid.uuid4().hex[:8]
-        parsed_json_data["surface_id"] = f"{surface_id_prefix}-{short_id}"
-
-      merged_actions = merge_template(
-          template_name,
-          parsed_json_data,
-          max_list_size=self.config.max_list_size,
-      )
-
-      if selected_catalog:
-        logger.info("Validating merged template against A2UI catalog schema.")
-        try:
-          selected_catalog.validator.validate(merged_actions)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-          logger.warning("Catalog validation failed: %s. Falling back.", e)
-          return None, None, None
-
-      final_parts = [create_a2ui_part(action) for action in merged_actions]
-      return final_parts, None, parsed_json_data
+    if rendered_parts is not None:
+      return rendered_parts, None, rendered_data
     else:
       raw_text = "".join(full_content_list)
       return None, raw_text, None
@@ -510,7 +618,23 @@ class MAUIAgentWithTemplates(MAUIAgent):
       return IntentClass.TEXT_ONLY, query
 
   def _wrap_in_text_only(self, text: str, session_id: str) -> list[Part]:
-    """Wraps plain text in a text_only template Part list."""
+    """Sanitizes text and wraps it in a text_only template Part list.
+
+    Strips residual <a2ui-json> tags from input. If the resulting text is empty,
+    defaults to a standardized location error message.
+
+    Args:
+      text: Raw plain text or model output to wrap.
+      session_id: Context session ID used for surface identification.
+
+    Returns:
+      A list containing the rendered text_only A2UI Part.
+    """
+    text = re.sub(
+        r"</?\s*a2ui-json(?:\s+[^>]*|/)?\s*>", "", text, flags=re.IGNORECASE
+    ).strip()
+    if not text:
+      text = _LOCATION_ERROR_FALLBACK_TEXT
     short_id = uuid.uuid4().hex[:8]
     merged_actions = merge_template(
         "text_only",
@@ -526,31 +650,24 @@ class MAUIAgentWithTemplates(MAUIAgent):
     return _GROUNDED_TEXT_BASE_INSTRUCTION
 
   async def _handle_grounded_text(
-      self, cleaned_query: str, session_id: str, client: LiteLlm
+      self,
+      cleaned_query: str,
+      session_id: str,
+      client: LiteLlm | None = None,
+      runner: Runner | None = None,
   ) -> list[Part]:
-    """Generates a grounded plain text response using the provided model client with GroundingLite tools."""
-    system_instruction = self._get_grounded_text_instruction()
-    generate_content_config = None
-    if (
-        client == self.extractor_client
-        and self.config.extractor_thinking_budget > 0
-    ):
-      generate_content_config = types.GenerateContentConfig(
-          thinking_config=types.ThinkingConfig(
-              thinking_budget=self.config.extractor_thinking_budget
-          )
-      )
+    """Generates a grounded plain text response using pre-configured runner with GroundingLite tools."""
+    if runner is None:
+      if client == self.fallback_client:
+        runner = self._fallback_text_runner
+      else:
+        runner = self._grounded_text_runner
 
-    tools = [self.make_grounding_lite_mcp()]
-    agent = LlmAgent(
-        model=client,
-        name="maui_grounded_text_agent",
-        description="Agent for text responses with Maps grounding",
-        instruction=system_instruction,
-        tools=tools,
-        generate_content_config=generate_content_config,
-    )
-    runner = self._build_runner(agent)
+    if runner is None:
+      target_client = client or self.extractor_client
+      agent = self._build_grounded_text_agent(client=target_client)
+      runner = self._build_runner(agent)
+
     current_message = types.Content(
         role="user", parts=[types.Part.from_text(text=cleaned_query)]
     )
@@ -582,10 +699,7 @@ class MAUIAgentWithTemplates(MAUIAgent):
       logger.warning("Grounded text generation failed: %s", e)
 
     if not answer_text:
-      answer_text = (
-          "I'm sorry, I encountered an issue retrieving location details"
-          " right now."
-      )
+      answer_text = _LOCATION_ERROR_FALLBACK_TEXT
 
     return self._wrap_in_text_only(answer_text, session_id)
 
@@ -594,7 +708,10 @@ class MAUIAgentWithTemplates(MAUIAgent):
   ) -> list[Part]:
     """Generates a plain text response for TEXT_ONLY intent using template_model with grounding."""
     return await self._handle_grounded_text(
-        cleaned_query, session_id, client=self.extractor_client
+        cleaned_query,
+        session_id,
+        client=self.extractor_client,
+        runner=self._grounded_text_runner,
     )
 
   async def _handle_grounded_text_fallback(
@@ -602,7 +719,10 @@ class MAUIAgentWithTemplates(MAUIAgent):
   ) -> list[Part]:
     """Generates a grounded plain text response for fallback/complex spatial queries using generic_model."""
     return await self._handle_grounded_text(
-        cleaned_query, session_id, client=self.fallback_client
+        cleaned_query,
+        session_id,
+        client=self.fallback_client,
+        runner=self._fallback_text_runner,
     )
 
   async def _handle_extracted_intent(
@@ -613,29 +733,27 @@ class MAUIAgentWithTemplates(MAUIAgent):
       ui_version: str | None = None,
   ) -> AsyncIterable[dict[str, Any]]:
     """Handles intents that use dynamic extractor agents and templates."""
-    if intent == IntentClass.LOCAL_SEARCH:
-      skill_name = _LOCAL_SEARCH_SKILL_NAME
-      template_name = _LOCAL_SEARCH_TEMPLATE_NAME
-      surface_prefix = _LOCAL_SEARCH_SURFACE_PREFIX
-    elif intent == IntentClass.DIRECTIONS:
-      skill_name = _DIRECTIONS_SKILL_NAME
-      template_name = _DIRECTIONS_TEMPLATE_NAME
-      surface_prefix = _DIRECTIONS_SURFACE_PREFIX
-    else:
+    info = TEMPLATE_INFO.get(intent)
+    if not info:
       raise ValueError(f"Unsupported intent for extractor: {intent}")
 
     logger.info("Router matched %s. Dispatching template extractor.", intent)
 
-    merged_parts, fallback_text, parsed_json_data = (
-        await self._run_extractor_and_merge(
-            skill_name=skill_name,
-            template_name=template_name,
-            surface_id_prefix=surface_prefix,
-            cleaned_query=query,
-            session_id=session_id,
-            ui_version=ui_version,
-        )
-    )
+    try:
+      merged_parts, fallback_text, _ = await self._run_extractor_and_merge(
+          intent=intent,
+          cleaned_query=query,
+          session_id=session_id,
+          ui_version=ui_version,
+      )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      logger.warning(
+          "Extractor execution failed for intent %s: %s. Falling back to"
+          " grounded text.",
+          intent,
+          e,
+      )
+      merged_parts, fallback_text = None, None
 
     if merged_parts is not None:
       yield {
@@ -644,17 +762,14 @@ class MAUIAgentWithTemplates(MAUIAgent):
       }
       return
     else:
+      if fallback_text:
+        logger.debug("Discarded raw extractor output: %s", fallback_text)
       logger.warning(
           "Template extraction failed for intent %s. "
           "Always falling back to plain text response.",
           intent,
       )
-      if not fallback_text:
-        final_parts = await self._handle_grounded_text_fallback(
-            query, session_id
-        )
-      else:
-        final_parts = self._wrap_in_text_only(fallback_text, session_id)
+      final_parts = await self._handle_grounded_text_fallback(query, session_id)
       yield {
           "is_task_complete": True,
           "parts": final_parts,
