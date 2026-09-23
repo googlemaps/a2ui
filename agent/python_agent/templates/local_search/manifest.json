@@ -1,0 +1,12 @@
+{
+  "intent": "LOCAL_SEARCH",
+  "surface_prefix": "local-search-surface",
+  "archetype": "Search for categories of interest, places, businesses, or points of interest within a specific geographic proximity.",
+  "few_shot_examples": [
+    {
+      "user_query": "Find coffee shops near Central Park",
+      "intent": "LOCAL_SEARCH",
+      "query": "coffee shops near Central Park"
+    }
+  ]
+}
