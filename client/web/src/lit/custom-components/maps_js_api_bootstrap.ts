@@ -18,8 +18,8 @@
  * Installs the official Maps JS API Dynamic Library Import
  * bootstrap, using `@googlemaps/js-api-loader`.
  *
- * Not built in google3. The GitHub/npm export moves this file over
- * `maps_js_api_bootstrap.ts`, which uses the google3 inline Maps loader. Keep
+ * Not built in internal. The GitHub/npm export moves this file over
+ * `maps_js_api_bootstrap.ts`, which uses the internal inline Maps loader. Keep
  * both files' exports identical.
  */
 
