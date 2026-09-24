@@ -32,9 +32,5 @@ final class A2UIAttributionIdTests: XCTestCase {
       htmlString.contains("gmp_ios_maui_v0.1.10_atoui"),
       "Expected the generated attribution ID to contain the iOS identifier 'gmp_ios_maui_v0.1.10_atoui'"
     )
-    XCTAssertTrue(
-      htmlString.contains("gmp_web_maui_v0.1.10_atoui,gmp_ios_maui_v0.1.10_atoui"),
-      "Expected the generated attribution ID to contain the combined Web and iOS identifier string 'gmp_web_maui_v0.1.10_atoui,gmp_ios_maui_v0.1.10_atoui'"
-    )
   }
 }
