@@ -1,0 +1,13 @@
+{
+  "intent": "DIRECTIONS",
+  "surface_prefix": "directions-surface",
+  "archetype": "Standard navigation, route directions, walking/driving/transit times, or navigation instructions between an origin and destination. This includes multi-stop routes and routes with specified waypoints.",
+  "empty_fallback_text": "Could not calculate travel directions.",
+  "few_shot_examples": [
+    {
+      "user_query": "Directions from Sacramento to Mendocino via Clear Lake",
+      "intent": "DIRECTIONS",
+      "query": "Directions from Sacramento to Mendocino via Clear Lake"
+    }
+  ]
+}
