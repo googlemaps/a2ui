@@ -16,7 +16,6 @@
 
 import dataclasses
 import enum
-from typing import Optional
 
 
 class FallbackMode(str, enum.Enum):
@@ -42,11 +41,47 @@ class AgentConfig:
   """
 
   max_list_size: int = 5
-  router_model: str = "gemini/gemini-3.1-flash-lite"
-  template_model: str = "gemini/gemini-3.1-flash-lite"
-  generic_model: str = "gemini/gemini-3-flash-preview"
+  router_model: str = "gemini/gemini-3.5-flash-lite"
+  template_model: str = "gemini/gemini-3.5-flash-lite"
+  generic_model: str = "gemini/gemini-3.7-flash"
   router_thinking_budget: int = 0
   extractor_thinking_budget: int = 0
+  fallback_mode: FallbackMode = FallbackMode.TEXT
+
+  def __post_init__(self):
+    if not isinstance(self.fallback_mode, FallbackMode):
+      try:
+        object.__setattr__(
+            self, "fallback_mode", FallbackMode(self.fallback_mode)
+        )
+      except ValueError:
+        raise ValueError(
+            f"Invalid fallback_mode: {self.fallback_mode}. Must be one of"
+            " FallbackMode values."
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class GroundingTemplateConfig:
+  """Configuration for template-based execution in MAUIAgentWithGrounding.
+
+  Attributes:
+      enabled: Whether to use template-based extraction and rendering.
+      router_model: Model used for query intent routing.
+      router_thinking_budget: Thinking budget for routing model.
+      extractor_model: Model used for Vertex AI grounding template extraction.
+      extractor_thinking_budget: Thinking budget for extraction model.
+      max_list_size: Max number of place elements returned in layout updates.
+      fallback_mode: Fallback strategy when specialized template extraction is
+        not used or fails (TEXT or DYNAMIC).
+  """
+
+  enabled: bool = True
+  router_model: str = "gemini-3.1-flash-lite"
+  router_thinking_budget: int = 0
+  extractor_model: str = "gemini-3.5-flash-lite"
+  extractor_thinking_budget: int = 0
+  max_list_size: int = 5
   fallback_mode: FallbackMode = FallbackMode.TEXT
 
   def __post_init__(self):

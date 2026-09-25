@@ -20,12 +20,24 @@ sanitized message structures ready for wire transmission.
 """
 
 import copy
+import importlib.resources
 import json
-import os
+import re
 from typing import Any, Literal, TypedDict
 import uuid
 
-from extractor import normalize_travel_mode
+from a2a.types import Part
+import pydantic
+
+from a2ui.a2a.parts import create_a2ui_part
+from templates.directions.schema import normalize_travel_mode
+
+# The catalog the templates bind their surface to when the host does not name
+# one. Hosts that register the Maps components in a catalog of their own (for
+# example Gemini Enterprise, whose composite catalog carries `GoogleMap` and
+# `PlaceDetailsCompact` alongside its Material and basic components) pass that
+# catalog's id instead, because a surface resolves against exactly one catalog.
+DEFAULT_CATALOG_ID = "a2ui://maps-agentic-ui-catalog.json"
 
 
 class TextOutputDict(TypedDict):
@@ -104,9 +116,22 @@ def _prepare_local_search(
   """Validates and normalizes parameters for the local search template."""
   data_copy = copy.deepcopy(data)
   is_valid = True
+
+  # 1. Normalize heading
+  heading = data_copy.get("heading")
+  if heading and isinstance(heading, str):
+    clean_heading = re.sub(r"^#+\s*", "", heading).strip()
+  else:
+    anchor = data_copy.get("anchor_marker")
+    if isinstance(anchor, dict) and anchor.get("label"):
+      clean_heading = f"Places near {anchor['label']}"
+    else:
+      clean_heading = "Nearby Places"
+  data_copy["heading"] = clean_heading
+
   places = data_copy.get("places")
 
-  # 1. Validate that places is a non-empty list
+  # 2. Validate that places is a non-empty list
   if not isinstance(places, list) or not places:
     is_valid = False
   else:
@@ -158,6 +183,8 @@ def _prepare_local_search(
         }
         if "placeId" in p:
           marker["placeId"] = p["placeId"]
+        if "placePrimaryType" in p:
+          marker["placePrimaryType"] = p["placePrimaryType"]
         markers.append(marker)
       data_copy["markers"] = markers
     else:
@@ -197,7 +224,30 @@ def _prepare_directions(data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
   routes = data_copy.get("routes")
 
-  # 1. Validate that routes is a non-empty list of segment dicts
+  # 1. Normalize heading
+  heading = data_copy.get("heading")
+  if heading and isinstance(heading, str):
+    clean_heading = re.sub(r"^#+\s*", "", heading).strip()
+  else:
+    clean_heading = ""
+
+  if not clean_heading:
+    clean_heading = "Directions"
+    if isinstance(routes, list) and routes and isinstance(routes[0], dict):
+      origin = routes[0].get("origin")
+      destination = routes[-1].get("destination")
+      orig_label = origin.get("label") if isinstance(origin, dict) else None
+      dest_label = (
+          destination.get("label") if isinstance(destination, dict) else None
+      )
+      if orig_label and dest_label:
+        clean_heading = f"Route from {orig_label} to {dest_label}"
+      elif dest_label:
+        clean_heading = f"Directions to {dest_label}"
+
+  data_copy["heading"] = clean_heading
+
+  # 2. Validate that routes is a non-empty list of segment dicts
   if not isinstance(routes, list) or not routes:
     is_valid = False
   else:
@@ -265,7 +315,10 @@ def _prepare_directions(data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 def merge_template(
-    template_name: str, data: dict[str, Any], max_list_size: int = 5
+    template_name: str,
+    data: dict[str, Any],
+    max_list_size: int = 5,
+    catalog_id: str = DEFAULT_CATALOG_ID,
 ) -> list[MergedMessage]:
   """Loads static template skeleton JSON and returns merged wire response.
 
@@ -279,6 +332,9 @@ def merge_template(
         `TemplateExtractor` (e.g. `places`, `summary`, `center_lat`).
       max_list_size: Maximum allowable child elements in lists (`places`) to
         bound payload rendering latency.
+      catalog_id: Catalog the created surface binds to. Defaults to the Maps
+        catalog; hosts that register the Maps components under a catalog of
+        their own pass that id.
 
   Returns:
       A list of message dictionaries. For `text_only`, returns the 2-part A2UI
@@ -298,26 +354,41 @@ def merge_template(
     template_name, data_copy = _prepare_local_search(data_copy, max_list_size)
   elif template_name == "directions":
     template_name, data_copy = _prepare_directions(data_copy)
-  current_dir = os.path.dirname(os.path.abspath(__file__))
-  templates_dir = os.path.join(current_dir, "templates")
-  template_path = os.path.join(templates_dir, f"{template_name}.json")
+  # Templates ship as package data. They are resolved through
+  # `importlib.resources` rather than a `__file__`-relative filesystem path
+  # because the agent is also served from a zip-imported archive, where
+  # `__file__` names an entry inside the archive that never exists on disk and
+  # every `os.path` probe against it reports missing.
+  templates_dir = importlib.resources.files(__package__).joinpath("templates")
+  resource_path = f"templates/{template_name}/layout.json"
+  template_path = templates_dir.joinpath(template_name, "layout.json")
 
-  if not os.path.exists(template_path):
+  # Ensure the catalog ID is set here as well.
+  data_copy["catalog_id"] = catalog_id
+
+  if not template_path.is_file():
+    # The message names the resource rather than interpolating
+    # `template_path`, because stringifying a traversable that points into an
+    # archive can itself raise and mask this error.
     raise FileNotFoundError(
-        f"Template '{template_name}' not found at {template_path}"
+        f"Template '{template_name}' not found: package '{__package__}'"
+        f" has no '{resource_path}'"
     )
 
-  with open(template_path, "r") as f:
-    template_json = json.load(f)
+  template_json = json.loads(template_path.read_text(encoding="utf-8"))
 
   # Smart Turn-Unique `surface_id` Scoping via Dynamic Template Discovery:
   default_surface_ids = set()
-  if os.path.exists(templates_dir):
-    for fn in os.listdir(templates_dir):
-      if fn.endswith(".json"):
-        base_name = fn[:-5]
+  if templates_dir.is_dir():
+    for entry in templates_dir.iterdir():
+      name = entry.name
+      if name.endswith(".json"):
+        base_name = name[:-5]
         default_surface_ids.add(f"{base_name}_surface")
         default_surface_ids.add(f"{base_name.replace('_', '-')}-surface")
+      elif entry.is_dir():
+        default_surface_ids.add(f"{name}_surface")
+        default_surface_ids.add(f"{name.replace('_', '-')}-surface")
 
   if (
       not data_copy.get("surface_id")
@@ -328,3 +399,92 @@ def merge_template(
 
   resolved_json = _replace_placeholders(template_json, data_copy)
   return _remove_none_values(resolved_json)
+
+
+def wrap_in_text_only(
+    text: str, session_id: str = "", surface_id: str | None = None
+) -> list[Part]:
+  """Wraps plain text in a text_only template Part list.
+
+  Args:
+      text: The plain text message to render.
+      session_id: Context session ID used for surface scoping if surface_id is
+        omitted.
+      surface_id: Optional explicit surface ID override.
+
+  Returns:
+      A list of A2A Parts wrapping the merged text_only template actions.
+  """
+  if surface_id:
+    resolved_surface_id = surface_id
+  elif session_id:
+    short_id = uuid.uuid4().hex[:8]
+    resolved_surface_id = f"text-only_{session_id}-{short_id}"
+  else:
+    short_id = uuid.uuid4().hex[:8]
+    resolved_surface_id = f"text-only_{short_id}"
+
+  merged_actions = merge_template(
+      "text_only",
+      {
+          "text": text,
+          "surface_id": resolved_surface_id,
+      },
+  )
+  return [create_a2ui_part(action) for action in merged_actions]
+
+
+def render_template_payload(
+    template_name: str | Any,
+    payload: dict[str, Any] | pydantic.BaseModel,
+    max_list_size: int = 5,
+    surface_id: str | None = None,
+) -> list[Part]:
+  """Renders extracted parameters into layout templates and wraps them in A2UI Parts.
+
+  Args:
+      template_name: The layout template or Intent name (e.g. 'local_search',
+        'directions', or 'LOCAL_SEARCH').
+      payload: Dictionary or Pydantic model with extracted parameters.
+      max_list_size: Maximum allowable child elements in list components.
+      surface_id: Optional explicit surface ID override.
+
+  Returns:
+      A list of A2A Parts wrapping the merged template actions.
+  """
+  raw_name = (
+      template_name.value
+      if hasattr(template_name, "value")
+      else str(template_name)
+  )
+  normalized_template_name = raw_name.lower().replace("-", "_")
+  if normalized_template_name in ("local_search", "localsearch"):
+    target_template = "local_search"
+    surface_prefix = "local-search-surface"
+  elif normalized_template_name in ("directions", "direction"):
+    target_template = "directions"
+    surface_prefix = "directions-surface"
+  elif normalized_template_name in ("text_only", "textonly"):
+    target_template = "text_only"
+    surface_prefix = "text-only-surface"
+  else:
+    target_template = normalized_template_name
+    surface_prefix = f"{normalized_template_name.replace('_', '-')}-surface"
+
+  if isinstance(payload, pydantic.BaseModel):
+    data_copy = payload.model_dump(exclude_none=True)
+  else:
+    data_copy = copy.deepcopy(payload)
+
+  if surface_id:
+    data_copy["surface_id"] = surface_id
+  elif not data_copy.get("surface_id"):
+    surface_suffix = uuid.uuid4().hex[:8]
+    data_copy["surface_id"] = f"{surface_prefix}-{surface_suffix}"
+
+  merge_options: dict[str, Any] = {}
+  if target_template == "local_search":
+    merge_options["max_list_size"] = max_list_size
+
+  merged_actions = merge_template(target_template, data_copy, **merge_options)
+  return [create_a2ui_part(action) for action in merged_actions]
