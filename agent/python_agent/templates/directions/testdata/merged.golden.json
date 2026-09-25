@@ -1,0 +1,70 @@
+[
+  {
+    "version": "v0.9",
+    "createSurface": {
+      "surfaceId": "test-surface",
+      "catalogId": "a2ui://maps-agentic-ui-catalog.json"
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateComponents": {
+      "surfaceId": "test-surface",
+      "components": [
+        {
+          "id": "root",
+          "component": "Column",
+          "children": [
+            "heading-text",
+            "map",
+            "summary-text"
+          ]
+        },
+        {
+          "id": "heading-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "### Directions"
+        },
+        {
+          "id": "map",
+          "component": "GoogleMap",
+          "center": {
+            "lat": 37.5,
+            "lng": 127.0
+          },
+          "zoom": 12,
+          "routes": [
+            {
+              "origin": {
+                "lat": 37.4,
+                "lng": 126.9,
+                "label": "Start"
+              },
+              "destination": {
+                "lat": 37.6,
+                "lng": 127.1,
+                "label": "End"
+              }
+            }
+          ],
+          "travelMode": "driving"
+        },
+        {
+          "id": "summary-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "Commute is 15 mins."
+        }
+      ]
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateDataModel": {
+      "surfaceId": "test-surface",
+      "path": "/",
+      "value": {}
+    }
+  }
+]
