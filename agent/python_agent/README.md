@@ -14,13 +14,19 @@ AI Maps Grounding.
     `DIRECTIONS`) and structured parameter extraction for low latency.
 *   `agent_with_grounding.py`: Contains `MAUIAgentWithGrounding`, extending the
     base agent with Vertex AI Grounding capabilities.
+*   `template_tool.py`: Contains standard ADK `BaseTool` implementations
+    (`BaseTemplateTool`, `RenderTextOnlyTemplateTool`, and `TemplateToolset`)
+    for template rendering. `MAUIAgentWithTemplates` builds a `BaseTemplateTool`
+    directly from each registered bundle.
 *   `agent_config.py`: Contains `AgentConfig` and `FallbackMode` configurations
     (`TEXT` vs `DYNAMIC`).
-*   `extractor.py` & `merger.py`: Parameter extraction schemas and template
-    merging engine.
-*   `shared/`: Contains layout templates (e.g. `local-search-template.json`,
-    `directions-template.json`) and schema extensions
-    (`maps_catalog_extension.json`).
+*   `template_registry.py` & `merger.py`: Template bundle discovery and the
+    generic layout merging engine.
+*   `templates/<intent>/`: Self-contained template bundles. Each holds
+    `manifest.json` (routing and render policy), `layout.json` (the A2UI
+    skeleton), `schema.py` (the extraction schema), `SKILL.md` (extraction
+    prompt), and a co-located `test_schema.py`.
+*   `shared/`: Contains schema extensions (`maps_catalog_extension.json`).
 *   `skills/`: Contains specific skill definitions used by the agents.
 *   `pyproject.toml`: Configuration file for the package, using Hatchling as the build backend.
 
@@ -131,6 +137,25 @@ class MAUIAgentExecutor(AgentExecutor):
       self, request: RequestContext, event_queue: EventQueue
   ) -> Task | None:
     raise ServerError(error=UnsupportedOperationError())
+```
+
+### 3. Enabling Real-Time SSE Streaming (`StreamingRequestHandler`)
+
+To serve both real-time Server-Sent Events (`message/stream`) and standard single-response requests (`message/send`) from your `A2AStarletteApplication`, pass `StreamingRequestHandler` as the `http_handler`:
+
+```python
+from a2a.server.apps import A2AStarletteApplication
+from a2a.server.tasks import InMemoryTaskStore
+from streaming_request_handler import StreamingRequestHandler
+
+request_handler = StreamingRequestHandler(
+    agent_executor=agent_executor,
+    task_store=InMemoryTaskStore(),
+)
+server = A2AStarletteApplication(
+    agent_card=default_agent.agent_card,
+    http_handler=request_handler,
+)
 ```
 
 ## Google API Keys
