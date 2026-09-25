@@ -29,6 +29,7 @@ jobs:
   main:
     name: Validate PR title
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       pull-requests: read
       statuses: write
