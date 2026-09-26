@@ -108,7 +108,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         return self.mock_router
       elif model in (
           "gemini/template-model",
-          "gemini/gemini-3-flash-preview",
+          "gemini/gemini-3.7-flash",
           "gemini/generic-model",
       ):
         return self.mock_extractor
@@ -189,9 +189,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         template_model="gemini/template-model",
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._grounded_text_runner = mock_runner
 
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
-      results = await self._collect_stream(agent, "hello")
+    results = await self._collect_stream(agent, "hello")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -230,9 +230,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         template_model="gemini/template-model",
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._grounded_text_runner = mock_runner
 
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
-      results = await self._collect_stream(agent, "hello")
+    results = await self._collect_stream(agent, "hello")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -265,9 +265,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         template_model="gemini/template-model",
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._grounded_text_runner = mock_runner
 
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
-      results = await self._collect_stream(agent, "hello")
+    results = await self._collect_stream(agent, "hello")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -317,10 +317,11 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
   def test_init_without_config_uses_default(self):
     agent = MAUIAgentWithTemplates(base_url="http://test-url")
     self.assertIsNotNone(agent.config)
-    self.assertEqual(agent.config.router_model, "gemini/gemini-3.1-flash-lite")
+    self.assertEqual(agent.config.router_model, "gemini/gemini-3.5-flash-lite")
     self.assertEqual(
-        agent.config.template_model, "gemini/gemini-3.1-flash-lite"
+        agent.config.template_model, "gemini/gemini-3.5-flash-lite"
     )
+    self.assertEqual(agent.config.generic_model, "gemini/gemini-3.7-flash")
     self.assertEqual(agent.config.fallback_mode, FallbackMode.TEXT)
 
   @mock.patch(_LITELLM_PATH)
@@ -339,8 +340,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     mock_runner = mock.MagicMock()
 
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
+            "heading": "Directions from home to work",
             "summary": "Typical commute is 45 mins.",
             "center_lat": 37.5,
             "center_lng": 127.0,
@@ -370,17 +372,15 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         template_model="gemini/template-model",
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._extractor_runners["0.9"] = mock_runner
 
-    # Patch _build_runner
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
-      # Run stream
-      results = []
-      async for item in agent.stream(
-          query="directions from home to work",
-          session_id="session_123",
-          ui_version="v0.9",
-      ):
-        results.append(item)
+    results = []
+    async for item in agent.stream(
+        query="directions from home to work",
+        session_id="session_123",
+        ui_version="v0.9",
+    ):
+      results.append(item)
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -432,15 +432,16 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         template_model="gemini/template-model",
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._extractor_runners["0.9"] = mock_runner
+    agent._fallback_text_runner = mock_runner
 
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
-      results = []
-      async for item in agent.stream(
-          query="directions to work",
-          session_id="session_123",
-          ui_version="v0.9",
-      ):
-        results.append(item)
+    results = []
+    async for item in agent.stream(
+        query="directions to work",
+        session_id="session_123",
+        ui_version="v0.9",
+    ):
+      results.append(item)
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -470,8 +471,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
+            "heading": "Bus directions to work",
             "summary": "Take bus 10 to work.",
             "center_lat": 37.5,
             "center_lng": 127.0,
@@ -501,9 +503,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         template_model="gemini/template-model",
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._extractor_runners["0.9"] = mock_runner
 
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
-      results = await self._collect_stream(agent, query="bus to work")
+    results = await self._collect_stream(agent, query="bus to work")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -524,8 +526,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
+            "heading": "Walking route to park",
             "summary": "Walk for 15 minutes.",
             "center_lat": 37.5,
             "center_lng": 127.0,
@@ -555,9 +558,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         template_model="gemini/template-model",
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._extractor_runners["0.9"] = mock_runner
 
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
-      results = await self._collect_stream(agent, query="walk to park")
+    results = await self._collect_stream(agent, query="walk to park")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -580,8 +583,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
+            "heading": "Biking route to work",
             "summary": "Bike for 25 minutes.",
             "center_lat": 37.5,
             "center_lng": 127.0,
@@ -611,9 +615,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         template_model="gemini/template-model",
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._extractor_runners["0.9"] = mock_runner
 
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
-      results = await self._collect_stream(agent, query="bike to work")
+    results = await self._collect_stream(agent, query="bike to work")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -639,8 +643,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
 
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_directions_template",
         args={
+            "heading": "Directions to work",
             "summary": "Typical commute is 45 mins.",
             "center_lat": 37.5,
             "center_lng": 127.0,
@@ -680,13 +685,10 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         template_model="gemini/template-model",
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._extractor_runners["0.9"] = mock_extractor_runner
+    agent._fallback_text_runner = mock_fallback_runner
 
-    with mock.patch.object(
-        agent,
-        "_build_runner",
-        side_effect=[mock_extractor_runner, mock_fallback_runner],
-    ):
-      results = await self._collect_stream(agent, query="directions to work")
+    results = await self._collect_stream(agent, query="directions to work")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -721,8 +723,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     mock_runner = mock.MagicMock()
 
     mock_fc = MockFunctionCall(
-        name="set_model_response",
+        name="render_local_search_template",
         args={
+            "heading": "Top Sushi Places in Seattle",
             "summary": "Here are some sushi places.",
             "center_lat": 47.6062,
             "center_lng": -122.3321,
@@ -744,14 +747,13 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         template_model="gemini/template-model",
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._extractor_runners["0.9"] = mock_runner
 
-    # Patch _build_runner
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
-      results = []
-      async for item in agent.stream(
-          query="sushi Seattle", session_id="session_123", ui_version="v0.9"
-      ):
-        results.append(item)
+    results = []
+    async for item in agent.stream(
+        query="sushi Seattle", session_id="session_123", ui_version="v0.9"
+    ):
+      results.append(item)
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -762,6 +764,20 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self.assertTrue(
         create_surface["surfaceId"].startswith("local-search-surface-")
     )
+
+    update_components = parts[1].root.data["updateComponents"]
+    heading_comp = next(
+        comp
+        for comp in update_components["components"]
+        if comp["id"] == "heading-text"
+    )
+    self.assertEqual(heading_comp["text"], "### Top Sushi Places in Seattle")
+
+    map_comp = next(
+        comp for comp in update_components["components"] if comp["id"] == "map"
+    )
+    self.assertEqual(map_comp["tilt"], 0)
+    self.assertEqual(map_comp["mode"], "roadmap")
 
     update_data_model = parts[2].root.data["updateDataModel"]
     # Verify places array was successfully populated in data model
@@ -788,9 +804,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
 
-    # Mock invalid set_model_response arguments (missing required center_lat)
+    # Mock invalid render_local_search_template arguments (missing required center_lat)
     invalid_args = {"summary": "Invalid data", "places": []}
-    mock_fc = MockFunctionCall("set_model_response", invalid_args)
+    mock_fc = MockFunctionCall("render_local_search_template", invalid_args)
     mock_event_fc = MockEvent(function_calls=[mock_fc])
     mock_event_text = MockEvent(
         content=MockContent([MockPart("Fallback text here.")])
@@ -806,14 +822,14 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         template_model="gemini/template-model",
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._extractor_runners["0.9"] = mock_runner
+    agent._fallback_text_runner = mock_runner
 
-    # Patch _build_runner
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
-      results = []
-      async for item in agent.stream(
-          query="coffee", session_id="session_123", ui_version="v0.9"
-      ):
-        results.append(item)
+    results = []
+    async for item in agent.stream(
+        query="coffee", session_id="session_123", ui_version="v0.9"
+    ):
+      results.append(item)
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -843,8 +859,19 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
     mock_fc = MockFunctionCall(
-        "set_model_response",
-        {"summary": "Coffee", "places": [{"name": "Starbucks"}]},
+        "render_local_search_template",
+        {
+            "heading": "Coffee Shops",
+            "summary": "Coffee",
+            "center_lat": 47.6,
+            "center_lng": -122.3,
+            "places": [{
+                "placeId": "1",
+                "name": "Starbucks",
+                "lat": 47.6,
+                "lng": -122.3,
+            }],
+        },
     )
     mock_runner.run_async.return_value = MockAsyncIterator(
         [MockEvent(function_calls=[mock_fc])]
@@ -858,18 +885,22 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         "Mock validation error"
     )
     mock_schema_manager = mock.MagicMock()
-    mock_schema_manager.get_catalog.return_value = mock_catalog
-    agent._schema_managers = {"v0.9": mock_schema_manager}
+    mock_schema_manager.get_selected_catalog.return_value = mock_catalog
+    agent._schema_managers = {"0.9": mock_schema_manager}
+    for agent_inst in agent._extractor_agents.values():
+      for t in agent_inst.tools:
+        if hasattr(t, "schema_manager"):
+          t.schema_manager = mock_schema_manager
 
     mock_fallback_runner = mock.MagicMock()
     mock_fallback_runner.run_async.return_value = MockAsyncIterator(
         [MockEvent(content=MockContent([MockPart("Fallback text from LLM.")]))]
     )
 
-    with mock.patch.object(
-        agent, "_build_runner", side_effect=[mock_runner, mock_fallback_runner]
-    ):
-      results = await self._collect_stream(agent, "coffee")
+    agent._extractor_runners["0.9"] = mock_runner
+    agent._fallback_text_runner = mock_fallback_runner
+
+    results = await self._collect_stream(agent, "coffee")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -899,12 +930,10 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     ])
 
     agent = self._setup_agent(fallback_mode="TEXT")
-    with mock.patch.object(
-        agent,
-        "_build_runner",
-        side_effect=[mock_extractor_runner, mock_fallback_runner],
-    ):
-      results = await self._collect_stream(agent, "sushi Seattle")
+    agent._extractor_runners["0.9"] = mock_extractor_runner
+    agent._fallback_text_runner = mock_fallback_runner
+
+    results = await self._collect_stream(agent, "sushi Seattle")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -936,15 +965,13 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     ])
 
     agent = self._setup_agent(fallback_mode="DYNAMIC")
-    with mock.patch.object(
-        agent,
-        "_build_runner",
-        side_effect=[mock_extractor_runner, mock_fallback_runner],
-    ):
-      with mock.patch(
-          "agent.MAUIAgent.stream",
-      ) as mock_super_stream:
-        results = await self._collect_stream(agent, "sushi Seattle")
+    agent._extractor_runners["0.9"] = mock_extractor_runner
+    agent._fallback_text_runner = mock_fallback_runner
+
+    with mock.patch(
+        "agent.MAUIAgent.stream",
+    ) as mock_super_stream:
+      results = await self._collect_stream(agent, "sushi Seattle")
 
     mock_super_stream.assert_not_called()
     self.assertEqual(len(results), 1)
@@ -974,8 +1001,9 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         )
     ])
     agent = self._setup_agent(fallback_mode="TEXT")
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
-      results = await self._collect_stream(agent, "weather Yosemite")
+    agent._fallback_text_runner = mock_runner
+
+    results = await self._collect_stream(agent, "weather Yosemite")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -1046,9 +1074,10 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         template_model="gemini/template-model",
     )
     agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._extractor_runners["0.9"] = mock_runner
+    agent._fallback_text_runner = mock_runner
 
-    with mock.patch.object(agent, "_build_runner", return_value=mock_runner):
-      results = await self._collect_stream(agent, "sushi")
+    results = await self._collect_stream(agent, "sushi")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -1056,51 +1085,193 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     text_comp = self._get_component_by_id(parts, "text-content")
     self.assertEqual(text_comp["text"], "I'm sorry")
 
+  def test_persistent_extractor_runner_initialized_at_startup(self):
+    """Verifies persistent extractor agents and runners are pre-built during __init__."""
+    agent = MAUIAgentWithTemplates(base_url="http://test-url")
+    self.assertIn("0.9", agent._extractor_agents)
+    self.assertIn("0.9", agent._extractor_runners)
+    self.assertNotIn("v0.9", agent._extractor_agents)
+    self.assertNotIn("v0.9", agent._extractor_runners)
+    self.assertIsNotNone(agent._grounded_text_agent)
+    self.assertIsNotNone(agent._grounded_text_runner)
+    self.assertIsNotNone(agent._fallback_text_agent)
+    self.assertIsNotNone(agent._fallback_text_runner)
+
+    # Check tools in unified extractor
+    unified_agent = agent._extractor_agents["0.9"]
+    tool_names = [getattr(t, "name", str(t)) for t in unified_agent.tools]
+    self.assertIn("render_local_search_template", tool_names)
+    self.assertIn("render_directions_template", tool_names)
+    self.assertIn("render_text_only_template", tool_names)
+
+  @mock.patch(_LITELLM_PATH)
+  async def test_persistent_extractor_runner_reused_across_queries(
+      self, mock_lite_llm_class
+  ):
+    """Verifies that the same persistent runner instance is reused across multiple queries."""
+    self._setup_mock_llm(mock_lite_llm_class)
+
+    self.mock_router.generate_content_async.return_value = (
+        self._mock_llm_stream('{"intent": "TEXT_ONLY", "query": "test"}')
+    )
+    mock_runner = mock.MagicMock()
+    mock_runner.run_async.return_value = MockAsyncIterator(
+        [MockEvent(content=MockContent([MockPart("Answer")]))]
+    )
+
+    agent = MAUIAgentWithTemplates(base_url="http://test-url")
+    agent._grounded_text_runner = mock_runner
+
+    # Query 1
+    await self._collect_stream(agent, "test 1", session_id="sess_1")
+    # Query 2
+    self.mock_router.generate_content_async.return_value = (
+        self._mock_llm_stream('{"intent": "TEXT_ONLY", "query": "test"}')
+    )
+    mock_runner.run_async.return_value = MockAsyncIterator(
+        [MockEvent(content=MockContent([MockPart("Answer")]))]
+    )
+    await self._collect_stream(agent, "test 2", session_id="sess_2")
+
+    self.assertEqual(mock_runner.run_async.call_count, 2)
+    # Check that session_id was passed distinctly
+    call1_kwargs = mock_runner.run_async.call_args_list[0].kwargs
+    call2_kwargs = mock_runner.run_async.call_args_list[1].kwargs
+    self.assertEqual(call1_kwargs["session_id"], "sess_1")
+    self.assertEqual(call2_kwargs["session_id"], "sess_2")
+
   def test_build_runner_sets_auto_create_session(self):
     agent = MAUIAgentWithTemplates(base_url="http://test-url")
     mock_agent = mock.MagicMock(spec=LlmAgent)
     runner = agent._build_runner(mock_agent)  # pylint: disable=protected-access
     self.assertTrue(runner.auto_create_session)
 
-  def test_build_dynamic_extractor_agent_appends_shared_guidelines(self):
+  def test_build_unified_extractor_agent_appends_shared_guidelines(self):
     """Verifies that shared guidelines are appended to skill instructions."""
     agent = MAUIAgentWithTemplates(base_url="http://test-url")
     with mock.patch(
         "builtins.open", mock.mock_open(read_data="Shared guidelines content")
     ) as mock_file:
-      with mock.patch(
-          "google.adk.skills.load_skill_from_dir"
-      ) as mock_load_skill:
-        mock_skill = mock.MagicMock()
-        mock_skill.instructions = "Base skill instructions"
-        mock_load_skill.return_value = mock_skill
+      extractor_agent = (
+          agent._build_unified_extractor_agent()  # pylint: disable=protected-access
+      )
+      self.assertIn("Shared guidelines content", extractor_agent.instruction)
+      self.assertIn("Directions Guidelines", extractor_agent.instruction)
+      mock_file.assert_called_once()
 
-        extractor_agent = agent._build_dynamic_extractor_agent(  # pylint: disable=protected-access
-            "local-search-template-response"
-        )
-        self.assertIn("Shared guidelines content", extractor_agent.instruction)
-        self.assertIn("Base skill instructions", extractor_agent.instruction)
-        mock_file.assert_called_once()
-
-  def test_build_dynamic_extractor_agent_handles_file_read_error(self):
+  def test_build_unified_extractor_agent_handles_file_read_error(self):
     """Verifies that file read errors are handled gracefully when loading guidelines."""
     agent = MAUIAgentWithTemplates(base_url="http://test-url")
     with mock.patch("builtins.open", side_effect=OSError("Read error")):
-      with mock.patch(
-          "google.adk.skills.load_skill_from_dir"
-      ) as mock_load_skill:
-        mock_skill = mock.MagicMock()
-        mock_skill.instructions = "Base skill instructions"
-        mock_load_skill.return_value = mock_skill
+      # Check that it handles OSError gracefully and proceeds
+      extractor_agent = (
+          agent._build_unified_extractor_agent()  # pylint: disable=protected-access
+      )
+      self.assertIsNotNone(extractor_agent)
 
-        # Check that it handles OSError gracefully and proceeds
-        extractor_agent = agent._build_dynamic_extractor_agent(  # pylint: disable=protected-access
-            "local-search-template-response"
-        )
-        self.assertNotIn(
-            "Shared guidelines content", extractor_agent.instruction
-        )
-        self.assertIn("Base skill instructions", extractor_agent.instruction)
+  def test_build_unified_extractor_agent_directions_loads_skill_instructions(
+      self,
+  ):
+    """Verifies that directions skill instructions from disk are loaded into the extractor agent."""
+    agent = MAUIAgentWithTemplates(base_url="http://test-url")
+    extractor_agent = (
+        agent._build_unified_extractor_agent()  # pylint: disable=protected-access
+    )
+    self.assertIn("less than a minute", extractor_agent.instruction)
+    self.assertIn(
+        "Always round seconds to the nearest minute",
+        extractor_agent.instruction,
+    )
+    tool_names = [t.name for t in extractor_agent.tools if hasattr(t, "name")]
+    self.assertIn("render_directions_template", tool_names)
+
+  def test_build_unified_extractor_instruction_target_intent_rules(self):
+    """Verifies that unified instruction defines target intent rules."""
+    maui_agent = MAUIAgentWithTemplates(base_url="http://test-url")
+    # pylint: disable=protected-access
+    instruction = maui_agent._build_unified_extractor_instruction()
+    intent_tool_classes = agent_with_templates._INTENT_TOOL_CLASSES
+    # pylint: enable=protected-access
+    for intent, tool_class in intent_tool_classes.items():
+      expected_rule = (
+          f"- `[TARGET_INTENT: {intent}]`: Invoke `{tool_class.name}`."
+      )
+      self.assertIn(expected_rule, instruction)
+    self.assertIn(
+        "Do NOT emit raw JSON or `<a2ui-json>` blocks",
+        instruction,
+    )
+
+  def test_build_unified_extractor_agent_bypasses_schema_wrapping(self):
+    """Verifies schema wrapping is bypassed and tools receive schema_manager."""
+    maui_agent = MAUIAgentWithTemplates(base_url="http://test-url")
+    mock_schema_manager = mock.MagicMock(
+        spec=agent_with_templates.A2uiSchemaManager
+    )
+    mock_schema_manager.generate_system_prompt.return_value = (
+        "Each A2UI JSON block MUST be wrapped in <a2ui-json> and </a2ui-json>"
+        " tags."
+    )
+    # pylint: disable=protected-access
+    extractor_agent = maui_agent._build_unified_extractor_agent(
+        schema_manager=mock_schema_manager
+    )
+    expected_instruction = maui_agent._build_unified_extractor_instruction()
+    # pylint: enable=protected-access
+    mock_schema_manager.generate_system_prompt.assert_not_called()
+    self.assertNotIn(
+        "Each A2UI JSON block MUST be wrapped",
+        extractor_agent.instruction,
+    )
+    self.assertEqual(
+        extractor_agent.instruction,
+        expected_instruction,
+    )
+    template_tools = [
+        tool
+        for tool in extractor_agent.tools
+        if isinstance(tool, agent_with_templates.BaseTemplateTool)
+    ]
+    self.assertTrue(template_tools)
+    for tool in template_tools:
+      self.assertEqual(tool.schema_manager, mock_schema_manager)
+
+  def test_template_registry_definitions(self):
+    """Verifies that template_registry entries are consistent and valid."""
+    agent = MAUIAgentWithTemplates(base_url="http://test-url")
+    self.assertIn("LOCAL_SEARCH", agent.template_registry.supported_intents)
+    self.assertIn("DIRECTIONS", agent.template_registry.supported_intents)
+    self.assertEqual(
+        agent_with_templates._SUPPORTED_INTENTS,  # pylint: disable=protected-access
+        set(agent_with_templates._INTENT_TOOL_CLASSES.keys()),  # pylint: disable=protected-access
+    )
+    for intent, tool_class in agent_with_templates._INTENT_TOOL_CLASSES.items():  # pylint: disable=protected-access
+      bundle = agent.template_registry.get_bundle_by_intent(intent)
+      self.assertIsNotNone(bundle)
+      self.assertTrue(bundle.name)
+      self.assertTrue(bundle.surface_prefix)
+      self.assertTrue(
+          issubclass(tool_class, agent_with_templates.BaseTemplateTool)
+      )
+      self.assertTrue(tool_class.name)
+      self.assertIn(
+          tool_class.name,
+          agent_with_templates._TEMPLATE_TOOL_NAMES,  # pylint: disable=protected-access
+      )
+      self.assertTrue(
+          bundle.skill_dir.is_dir(),
+          f"Skill directory {bundle.skill_dir} does not exist",
+      )
+
+  def test_normalize_version(self):
+    """Verifies version strings collapse to the unprefixed schema key."""
+    normalize = agent_with_templates._normalize_version  # pylint: disable=protected-access
+    self.assertEqual(normalize("0.9"), "0.9")
+    self.assertEqual(normalize("v0.9"), "0.9")
+    self.assertEqual(normalize("v0.9.1"), "0.9.1")
+    self.assertEqual(normalize(None), agent_with_templates.VERSION_0_9)
+    self.assertEqual(normalize(""), agent_with_templates.VERSION_0_9)
+
 
 if __name__ == "__main__":
   unittest.main()
