@@ -14,6 +14,9 @@ AI Maps Grounding.
     `DIRECTIONS`) and structured parameter extraction for low latency.
 *   `agent_with_grounding.py`: Contains `MAUIAgentWithGrounding`, extending the
     base agent with Vertex AI Grounding capabilities.
+*   `template_tool.py`: Contains standard ADK `BaseTool` implementations
+    (`RenderLocalSearchTemplateTool`, `RenderDirectionsTemplateTool`,
+    `RenderTextOnlyTemplateTool`, and `TemplateToolset`) for template rendering.
 *   `agent_config.py`: Contains `AgentConfig` and `FallbackMode` configurations
     (`TEXT` vs `DYNAMIC`).
 *   `extractor.py` & `merger.py`: Parameter extraction schemas and template
@@ -131,6 +134,25 @@ class MAUIAgentExecutor(AgentExecutor):
       self, request: RequestContext, event_queue: EventQueue
   ) -> Task | None:
     raise ServerError(error=UnsupportedOperationError())
+```
+
+### 3. Enabling Real-Time SSE Streaming (`StreamingRequestHandler`)
+
+To serve both real-time Server-Sent Events (`message/stream`) and standard single-response requests (`message/send`) from your `A2AStarletteApplication`, pass `StreamingRequestHandler` as the `http_handler`:
+
+```python
+from a2a.server.apps import A2AStarletteApplication
+from a2a.server.tasks import InMemoryTaskStore
+from streaming_request_handler import StreamingRequestHandler
+
+request_handler = StreamingRequestHandler(
+    agent_executor=agent_executor,
+    task_store=InMemoryTaskStore(),
+)
+server = A2AStarletteApplication(
+    agent_card=default_agent.agent_card,
+    http_handler=request_handler,
+)
 ```
 
 ## Google API Keys
