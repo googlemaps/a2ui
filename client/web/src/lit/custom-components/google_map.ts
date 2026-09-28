@@ -1,4 +1,3 @@
-/// <reference types="google.maps" />
 /*
  Copyright 2026 Google LLC
 
@@ -23,31 +22,70 @@ import {customElement} from 'lit/decorators.js';
 import {styleMap} from 'lit/directives/style-map.js';
 import {z} from 'zod';
 
+import {Marker3DElementOptions, ThreeDMarker} from './3d_marker';
+import {AnchorMarker} from './anchor_marker';
+import {MarkerElementOptions, PLACE_PIN_MARKER_STYLES, PlacePinMarker} from './place_pin_marker';
+
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(structuralStyles);
+
+enum UIStrings {
+  MAP_VIEW = 'Map View',
+}
 
 let nextMarkerId = 0;
 
 const LatLngSchema = z.object({
-  lat: DynamicNumberSchema,
-  lng: DynamicNumberSchema,
-}).strict();
+                        lat: DynamicNumberSchema,
+                        lng: DynamicNumberSchema,
+                      }).strict();
 
 const DynamicLatLngSchema = z.union([
   LatLngSchema,
-  z.object({ path: z.string() }).strict(),
+  z.object({path: z.string()}).strict(),
 ]);
 
 const MapPinSchema = z.object({
-  lat: DynamicNumberSchema,
-  lng: DynamicNumberSchema,
-  label: DynamicStringSchema,
-  placeId: DynamicStringSchema.optional(),
-}).strict();
+                        lat: DynamicNumberSchema,
+                        lng: DynamicNumberSchema,
+                        label: DynamicStringSchema,
+                        placeId: DynamicStringSchema.optional(),
+                        placePrimaryType: DynamicStringSchema.optional(),
+                      }).strict();
+
+const AnchorMarkerSchema = z.union([
+  MapPinSchema.extend({
+    label: DynamicStringSchema.optional(),
+  }),
+  z.object({path: z.string()}).strict(),
+]);
+
+/** Declared so Closure Compiler does not rename MapPin schema keys. */
+export declare interface MapPinProps {
+  lat: number;
+  lng: number;
+  label?: string;
+  placeId?: string;
+  placePrimaryType?: string;
+}
+
+/** Declared so Closure Compiler does not rename GoogleMap schema keys. */
+export declare interface GoogleMapProps {
+  center: {lat: number; lng: number};
+  zoom: number;
+  tilt?: number;
+  heading?: number;
+  mode?: 'roadmap'|'satellite';
+  anchorMarker?: MapPinProps;
+  markers?: MapPinProps[];
+  origin?: {lat: number; lng: number};
+  destination?: {lat: number; lng: number};
+  travelMode?: 'driving'|'walking'|'bicycling'|'transit';
+  routes?: Array<{origin: MapPinProps; destination: MapPinProps}>;
+}
 
 interface MarkerInput {
   position?: google.maps.LatLngLiteral;
-  placeId?: string|null;
   label?: string|null;
   zIndex?: number|null;
   collisionBehavior?: google.maps.CollisionBehavior;
@@ -56,51 +94,58 @@ interface MarkerInput {
 /** A2UI GoogleMap interface. */
 export const GoogleMapApi = {
   name: 'GoogleMap',
-  schema: z
-    .object({
-      center: DynamicLatLngSchema.describe('The center point of the map.'),
-      zoom: DynamicNumberSchema.describe('The zoom level.'),
-      tilt: DynamicNumberSchema.describe('The tilt angle.').optional(),
-      heading: DynamicNumberSchema.describe('The heading angle.').optional(),
-      mode: z.enum(['roadmap', 'satellite']).default('roadmap').describe('The map mode.').optional(),
-      anchorMarker: MapPinSchema.describe('The anchor marker location.').optional(),
-      markers: z.array(MapPinSchema).describe('List of markers.').optional(),
-      origin: DynamicLatLngSchema.describe('Origin for routes.').optional(),
-      destination: DynamicLatLngSchema.describe('Destination for routes.').optional(),
-      travelMode: z.enum(['driving', 'walking', 'bicycling', 'transit']).describe('Travel mode for routes.').optional(),
-      routes: z.array(z.object({
-        origin: MapPinSchema,
-        destination: MapPinSchema,
-      })).describe('Array of routes.').optional(),
-    })
-    .strict(),
+  schema:
+      z.object({
+         center: DynamicLatLngSchema.describe('The center point of the map.'),
+         zoom: DynamicNumberSchema.describe('The zoom level.'),
+         tilt: DynamicNumberSchema.describe('The tilt angle.').optional(),
+         heading: DynamicNumberSchema.describe('The heading angle.').optional(),
+         mode: z.enum(['roadmap', 'satellite'])
+                   .default('roadmap')
+                   .describe('The map mode.')
+                   .optional(),
+         anchorMarker:
+             AnchorMarkerSchema.describe('The anchor marker location.')
+                 .optional(),
+         markers: z.array(MapPinSchema).describe('List of markers.').optional(),
+         origin: DynamicLatLngSchema.describe('Origin for routes.').optional(),
+         destination:
+             DynamicLatLngSchema.describe('Destination for routes.').optional(),
+         travelMode: z.enum(['driving', 'walking', 'bicycling', 'transit'])
+                         .describe('Travel mode for routes.')
+                         .optional(),
+         routes: z.array(z.object({
+                    origin: MapPinSchema,
+                    destination: MapPinSchema,
+                  }))
+                     .describe('Array of routes.')
+                     .optional(),
+       }).strict(),
 } satisfies ComponentApi;
 
 declare global {
-
   interface Map3DElement {
-    center: { lat: number, lng: number, altitude?: number };
+    center: {lat: number, lng: number, altitude?: number};
     range: number;
     tilt: number;
     heading: number;
     maxTilt: number;
     flyCameraTo(options: {
       endCamera: {
-        center: { lat: number; lng: number; altitude: number };
+        center: {lat: number; lng: number; altitude: number};
         tilt?: number;
-        heading?: number;
-        altitudeMode: string;
+        heading?: number; altitudeMode: string;
       };
     }): void;
   }
 
   interface HTMLElementTagNameMap {
-    "gmp-map-3d": HTMLElement & Map3DElement;
-    "gmp-advanced-marker": HTMLElement & {
-      position: google.maps.LatLng | google.maps.LatLngLiteral;
+    'gmp-map-3d': HTMLElement&Map3DElement;
+    'gmp-advanced-marker': HTMLElement&{
+      position: google.maps.LatLng|google.maps.LatLngLiteral;
     };
-    "gmp-marker-3d": HTMLElement & {
-      position: { lat: number, lng: number, altitude?: number };
+    'gmp-marker-3d': HTMLElement&{
+      position: {lat: number, lng: number, altitude?: number};
     };
   }
 }
@@ -109,12 +154,12 @@ interface ResolvedMarker {
   lat: number;
   lng: number;
   label: string;
-  placeId?: string;
+  placePrimaryType?: string;
   collisionBehavior?: google.maps.CollisionBehavior;
 }
 
 /** A2UI Custom Component for GoogleMap */
-@customElement("a2ui-googlemap")
+@customElement('a2ui-googlemap')
 export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
   static override shadowRootOptions: ShadowRootInit = {
     ...LitElement.shadowRootOptions,
@@ -126,21 +171,18 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
         Map3DElement;
   }
 
-  get routeElements(): NodeListOf<HTMLElement> {
-    return this.renderRoot.querySelectorAll('gmp-route-3d');
-  }
-
   protected override createController() {
     return new A2uiController(this, GoogleMapApi);
   }
 
   private markers: HTMLElement[] = [];
-  private prevCenter: { lat: number; lng: number } | null = null;
+  private prevCenter: {lat: number; lng: number}|null = null;
   private prevMarkers: unknown = null;
   private prevRoutes: unknown = null;
 
   static override styles = [
     sheet,
+    PLACE_PIN_MARKER_STYLES,
     css`
       :host {
         display: block;
@@ -151,18 +193,30 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
         display: block;
         width: 100%;
       }
+      /*
+       * Place pin markers theme themselves with light-dark(), which resolves
+       * against the CSS color-scheme inherited from the map. Mirror an explicit
+       * map-level color scheme onto that property; when the map is left at its
+       * default (FOLLOW_SYSTEM), the markers inherit the host page's scheme.
+       */
+      gmp-map-3d[color-scheme="DARK" i] {
+        color-scheme: dark;
+      }
+      gmp-map-3d[color-scheme="LIGHT" i] {
+        color-scheme: light;
+      }
     `,
   ];
 
   getCenter() {
     const props = this.controller.props;
-    if (!props) return { lat: 0, lng: 0 };
+    if (!props) return {lat: 0, lng: 0};
 
     const center = props.center;
 
     const lat = center.lat ?? (center as any).latitude ?? 0;
     const lng = center?.lng ?? (center as any).longitude ?? 0;
-    return { lat: lat as number, lng: lng as number };
+    return {lat: lat as number, lng: lng as number};
   }
 
   private resolveMarkers(): ResolvedMarker[] {
@@ -172,42 +226,26 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     const markers = props.markers;
 
     function filterMarkerFn(marker: any): boolean {
-      return !!marker.lat || !!marker.lng || !!marker.placeId || !!marker.label;
+      return !!marker.lat || !!marker.lng || !!marker.label;
     }
 
     if (Array.isArray(markers)) {
-      return markers.map((marker: any) => ({
-        lat: marker.lat ?? 0 as number,
-        lng: marker.lng ?? 0 as number,
-        label: marker.label as string,
-        placeId: marker.placeId as string,
-        collisionBehavior: marker.collisionBehavior as google.maps.CollisionBehavior | undefined,
-      })).filter(filterMarkerFn);
+      return markers
+          .map(
+              (marker: any) => ({
+                lat: marker.lat ?? 0 as number,
+                lng: marker.lng ?? 0 as number,
+                label: (marker.label ?? '') as string,
+                placePrimaryType: marker.placePrimaryType as string | undefined,
+                collisionBehavior: marker.collisionBehavior as
+                        google.maps.CollisionBehavior |
+                    undefined,
+              }))
+          .filter(filterMarkerFn)
+          .sort((a, b) => b.lat - a.lat);
     }
 
     return [];
-  }
-
-  private createMarkerAndLabel(
-      {position, placeId, label, zIndex, collisionBehavior}: MarkerInput):
-      {markerEl: HTMLElement, labelEl: HTMLElement} {
-    const markerId = `marker-${nextMarkerId++}`;
-    const markerEl = document.createElement('gmp-marker-3d') as any;
-    markerEl.autofitsCamera = true;
-    markerEl.id = markerId;
-    position && (markerEl.position = position);
-    placeId && (markerEl.placeId = placeId);
-    collisionBehavior && (markerEl.collisionBehavior = collisionBehavior);
-    (zIndex != null) && (markerEl.zIndex = zIndex);
-
-    const labelEl = document.createElement('gmp-label-3d') as any;
-    labelEl.id = `${markerId}-label`;
-    labelEl.for = markerId;
-    labelEl.collisionBehavior =
-        google.maps.CollisionBehavior.OPTIONAL_AND_HIDES_LOWER_PRIORITY;
-    labelEl.textContent = label;
-
-    return {markerEl, labelEl};
   }
 
   override updated(changedProperties: PropertyValues): void {
@@ -219,17 +257,20 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     const markers = props.markers;
     const routes = props.routes;
 
-    if (center && (!this.prevCenter || this.prevCenter.lat !== center.lat || this.prevCenter.lng !== center.lng)) {
+    if (center &&
+        (!this.prevCenter || this.prevCenter.lat !== center.lat ||
+         this.prevCenter.lng !== center.lng)) {
       console.log('updating camera');
       this.map3dElement.flyCameraTo({
         endCamera: {
-          center: { lat: center.lat, lng: center.lng, altitude: 2400 },
+          center: {lat: center.lat, lng: center.lng, altitude: 2400},
           tilt: this.map3dElement.tilt,
           heading: this.map3dElement.heading,
-          altitudeMode: (google as any).maps.maps3d.AltitudeMode.RELATIVE_TO_GROUND
-        }
+          altitudeMode:
+              (google as any).maps.maps3d.AltitudeMode.RELATIVE_TO_GROUND,
+        },
       });
-      this.prevCenter = { lat: center.lat, lng: center.lng };
+      this.prevCenter = {lat: center.lat, lng: center.lng};
     }
 
     if (markers !== this.prevMarkers || routes !== this.prevRoutes) {
@@ -244,7 +285,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     if (!props || !this.map3dElement) return;
 
     // Clear existing markers
-    this.markers.forEach(marker => marker.remove());
+    this.markers.forEach((marker) => marker.remove());
     this.markers = [];
 
     const markers = this.resolveMarkers();
@@ -253,82 +294,28 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     const routes = props.routes || [];
 
     // Add markers from props.markers
-    for (const { lat, lng, label, placeId } of markers) {
-      const {markerEl, labelEl} = this.createMarkerAndLabel({
-        position: {lat, lng},
-        placeId,
-        label,
-      });
-      this.map3dElement.appendChild(markerEl);
-      this.map3dElement.appendChild(labelEl);
-      this.markers.push(markerEl);
-    }
-
-    // Add destination marker if available
-    if (destination) {
-      const {markerEl, labelEl} = this.createMarkerAndLabel({
-        position:
-            {lat: destination.lat as number, lng: destination.lng as number},
-        label: 'Destination',
-      });
-      this.map3dElement.appendChild(markerEl);
-      this.map3dElement.appendChild(labelEl);
-      this.markers.push(markerEl);
+    for (const {lat, lng, label, placePrimaryType} of markers) {
+      const marker = new PlacePinMarker({
+                       position: {lat, lng},
+                       label,
+                       placePrimaryType,
+                     }).getElement();
+      this.map3dElement.appendChild(marker);
+      this.markers.push(marker);
     }
 
     // Add anchor marker if available and no routes
     if (anchorMarker && !routes.length) {
-      const {markerEl, labelEl} = this.createMarkerAndLabel({
-        position:
-            {lat: anchorMarker.lat as number, lng: anchorMarker.lng as number},
-        placeId: anchorMarker.placeId as string,
-        label: anchorMarker.label as string,
-        zIndex: 1,
-      });
-      if (typeof google !== "undefined" && google.maps && google.maps.marker && google.maps.marker.PinElement) {
-        const pin = new google.maps.marker.PinElement({
-          background: "#5b99f6ff",
-          borderColor: "#2f79e8ff",
-          glyphColor: "#ffffff"
-        });
-        markerEl.append(pin as any);
-      }
-      this.map3dElement.appendChild(markerEl);
-      this.map3dElement.appendChild(labelEl);
-      this.markers.push(markerEl);
-    }
-
-    // Add pins for each route origin and destination
-    for (const route of routes) {
-      const {
-        markerEl: originMarker,
-        labelEl: originLabel
-      } = this.createMarkerAndLabel({
-        position:
-            {lat: route.origin.lat as number, lng: route.origin.lng as number},
-        label: route.origin.label as string || 'Origin',
-        collisionBehavior:
-            google.maps.CollisionBehavior.OPTIONAL_AND_HIDES_LOWER_PRIORITY,
-        placeId: route.origin.placeId as string,
-      });
-      this.map3dElement.appendChild(originMarker);
-      this.map3dElement.appendChild(originLabel);
-      this.markers.push(originMarker);
-
-      const {markerEl: destMarker, labelEl: destLabel} =
-          this.createMarkerAndLabel({
-            position: {
-              lat: route.destination.lat as number,
-              lng: route.destination.lng as number
-            },
-            label: route.destination.label as string || 'Destination',
-            collisionBehavior:
-                google.maps.CollisionBehavior.OPTIONAL_AND_HIDES_LOWER_PRIORITY,
-            placeId: route.destination.placeId as string,
-          });
-      this.map3dElement.appendChild(destMarker);
-      this.map3dElement.appendChild(destLabel);
-      this.markers.push(destMarker);
+      const marker = new AnchorMarker({
+                       position: {
+                         lat: anchorMarker.lat as number,
+                         lng: anchorMarker.lng as number
+                       },
+                       label: anchorMarker.label as string,
+                       zIndex: 1,
+                     }).getElement();
+      this.map3dElement.appendChild(marker);
+      this.markers.push(marker);
     }
   }
 
@@ -345,7 +332,8 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
       zoom = 16;
     }
     const heading = props.heading ?? 0;
-    const mode = (props.mode ?? 'roadmap').toUpperCase() as google.maps.maps3d.MapModeString;
+    const mode = (props.mode ?? 'roadmap').toUpperCase() as
+        google.maps.maps3d.MapModeString;
 
     let tilt = props.tilt ?? 0;
     if (mode !== 'SATELLITE') {
@@ -355,16 +343,17 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     const routes = props.routes || [];
 
     const style = {
-      "width": "100%",
-      "aspect-ratio": "8 / 5",
-      "margin-bottom": "16px",
-      "border-radius": "16px",
-      "overflow": "hidden",
-      "border": "1px solid var(--gmp-mat-color-outline-decorative, light-dark(#ccc, #333))"
+      'width': '100%',
+      'aspect-ratio': '8 / 5',
+      'margin-bottom': '16px',
+      'border-radius': '16px',
+      'overflow': 'hidden',
+      'border':
+          '1px solid var(--gmp-mat-color-outline-decorative, light-dark(#ccc, #333))',
     };
 
     return html`
-      <section style=${styleMap(style)}>
+      <section aria-label="${UIStrings.MAP_VIEW}" style=${styleMap(style)}>
         <gmp-map-3d
           center="${lat},${lng},0"
           tilt="${tilt}"
@@ -395,5 +384,5 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
 /** A2UI Definition for GoogleMap component */
 export const A2uiGoogleMap = {
   ...GoogleMapApi,
-  tagName: "a2ui-googlemap",
+  tagName: 'a2ui-googlemap',
 };
