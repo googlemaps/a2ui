@@ -12,95 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pydantic schemas for structured data extraction from LLM responses."""
+"""Pydantic extraction schema for directions template bundle."""
 
 from typing import Any, Literal
+
 import pydantic
+
+from templates.common import Pin
 
 BaseModel = pydantic.BaseModel
 Field = pydantic.Field
-
-
-class Pin(BaseModel):
-  """Representation of a Map Pin."""
-
-  lat: float = Field(description="Latitude coordinate")
-  lng: float = Field(description="Longitude coordinate")
-  label: str = Field(
-      description=(
-          "Descriptive display label string (e.g. name of address, business, or"
-          " landmark)"
-      )
-  )
-  # Note: Using camelCase field name to match frontend A2UI requirements.
-  placeId: str | None = Field(  # pylint: disable=invalid-name
-      default=None, description="Optional Google Maps Place ID"
-  )
-
-  @pydantic.model_validator(mode="before")
-  @classmethod
-  def normalize_label(cls, data: Any) -> Any:
-    """Normalizes the pin label.
-
-    If 'label' is missing but 'name' is present, copies 'name' to 'label'.
-    If 'label' is still empty, defaults to 'Location' to ensure
-    the UI always has a valid string to render for the marker (avoiding raw
-    Place IDs).
-
-    Args:
-      data: The input dictionary before validation.
-
-    Returns:
-      The normalized dictionary.
-    """
-    if isinstance(data, dict):
-      if "label" not in data and "name" in data:
-        data["label"] = data["name"]
-      if not data.get("label"):
-        data["label"] = "Location"
-    return data
-
-
-class PlacePin(BaseModel):
-  """Simplified Map Pin representation for search results."""
-
-  # Note: Using camelCase field name to match frontend A2UI requirements.
-  # ADK's SetModelResponseTool serialization dumps using field names
-  # without aliases.
-  placeId: str = Field(  # pylint: disable=invalid-name
-      description="The unique Google Maps Place ID"
-  )
-  name: str = Field(description="Name of the place")
-  lat: float = Field(description="Latitude coordinates")
-  lng: float = Field(description="Longitude coordinates")
-
-
-class LocalSearchExtractorSchema(BaseModel):
-  """Structured parameters to render a local search UI update."""
-
-  summary: str = Field(
-      description=(
-          "A detailed response summarizing the search results that fully and"
-          " clearly answers all aspects of the user's prompt (including"
-          " qualitative criteria, preferences, and comparisons). Use markdown"
-          " formatting (bullet points, bolding, tables) and break into"
-          " paragraphs as needed. Bold place names."
-      )
-  )
-  center_lat: float = Field(description="Latitude of the center of results")
-  center_lng: float = Field(description="Longitude of the center of results")
-  zoom: int = Field(
-      default=13, description="Recommended map zoom level (typically 13)"
-  )
-  places: list[PlacePin] = Field(
-      description="A list of places found (limit to max list size, e.g. 3)"
-  )
-  anchor_marker: Pin | None = Field(
-      default=None,
-      description=(
-          "Optional starting or focus point marker (e.g. hotel location)"
-      ),
-  )
 
 
 class RouteSegment(BaseModel):
@@ -156,13 +77,19 @@ def normalize_travel_mode(mode: Any) -> str | None:
 class DirectionsExtractorSchema(BaseModel):
   """Structured parameters to render a directions UI update."""
 
+  heading: str = Field(
+      description=(
+          "A concise, constraint-confirming primary heading for the response."
+          " Plain text only (e.g., 'Walking route from Seattle Center to Pike"
+          " Place Market', 'Driving directions to JFK Airport')."
+      )
+  )
   summary: str = Field(
       description=(
-          "A detailed response summarizing the travel directions and route"
-          " options that fully answers all user questions, route comparisons,"
-          " and travel context requested in the prompt. Use markdown formatting"
-          " and break into paragraphs if helpful."
-      )
+          "A natural, direct resolution of the route prompt describing"
+          " approximate travel duration and distance (e.g. 'Driving from"
+          " [Origin] to [Destination] takes about 19 minutes (14 miles).')."
+      ),
   )
   center_lat: float = Field(
       description="Latitude of the center of the route map"
@@ -174,7 +101,7 @@ class DirectionsExtractorSchema(BaseModel):
       default=12, description="Recommended map zoom level (typically 12)"
   )
   routes: list[RouteSegment] = Field(
-      default_factory=list,
+      min_length=1,
       description=(
           "A list of route segments connecting the origin, intermediate"
           " waypoints, and the destination in order."
@@ -200,3 +127,15 @@ class DirectionsExtractorSchema(BaseModel):
         data["travel_mode"] = normalized
 
     return data
+
+
+ExtractorSchema = DirectionsExtractorSchema
+
+__all__ = [
+    "DirectionsExtractorSchema",
+    "ExtractorSchema",
+    "Pin",
+    "RouteSegment",
+    "TRAVEL_MODE_MAP",
+    "normalize_travel_mode",
+]

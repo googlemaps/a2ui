@@ -14,9 +14,16 @@
 
 """Tests for A2UI Layout Template Merger (`merger.py`)."""
 
+import importlib
+import importlib.resources
+import os
 import pathlib
 import re
+import shutil
+import sys
+import tempfile
 import unittest
+import zipfile
 
 import a2ui
 import agent
@@ -57,6 +64,79 @@ class TestMerger(unittest.TestCase):
     """Verifies that an unknown template raises FileNotFoundError."""
     with self.assertRaises(FileNotFoundError):
       merge_template("non_existent_template", {"text": "hello"})
+
+  def test_merge_defaults_to_maps_catalog_id(self):
+    """Verifies the surface binds to the Maps catalog when none is named."""
+    result = merge_template("text_only", {"text": "hello"})
+    self.assertEqual(
+        result[0]["createSurface"]["catalogId"],
+        "a2ui://maps-agentic-ui-catalog.json",
+    )
+    self.assertEqual(
+        result[0]["createSurface"]["catalogId"], merger.DEFAULT_CATALOG_ID
+    )
+
+  def test_merge_honors_custom_catalog_id(self):
+    """Verifies a host-supplied catalog id reaches every template's surface."""
+    host_catalog = "https://example.test/host_catalog.json"
+    local_search_data = {
+        "surface_id": "test-surface",
+        "summary": "Two places.",
+        "center_lat": 37.0,
+        "center_lng": -122.0,
+        "zoom": 12,
+        "places": [{"name": "A", "lat": 37.0, "lng": -122.0}],
+    }
+    directions_data = {
+        "surface_id": "test-surface",
+        "summary": "A route.",
+        "center_lat": 37.0,
+        "center_lng": -122.0,
+        "zoom": 12,
+        "routes": [{
+            "origin": {"lat": 37.0, "lng": -122.0, "label": "A"},
+            "destination": {"lat": 37.1, "lng": -122.1, "label": "B"},
+        }],
+    }
+    for template_name, data in (
+        ("text_only", {"text": "hello"}),
+        ("local_search", local_search_data),
+        ("directions", directions_data),
+    ):
+      with self.subTest(template=template_name):
+        result = merge_template(template_name, data, catalog_id=host_catalog)
+        self.assertEqual(result[0]["createSurface"]["catalogId"], host_catalog)
+
+  def test_text_only_fallback_keeps_custom_catalog_id(self):
+    """Verifies the catalog id survives the bail-out to `text_only`.
+
+    The prepare helpers discard the caller's dict and build a fresh one when
+    they fall back, so a catalog id applied before that point would be lost.
+    Losing it is silent: the placeholder resolves to None and the key is
+    stripped, leaving a surface bound to no catalog at all.
+    """
+    host_catalog = "https://example.test/host_catalog.json"
+    invalid_local_search = {
+        "surface_id": "test-surface",
+        "summary": "Short response.",
+        "center_lat": 37.0,
+        "center_lng": 127.0,
+        "zoom": 10,
+        "places": "NOT_A_LIST",
+    }
+    invalid_directions = {
+        "surface_id": "test-surface",
+        "summary": "Cannot compute directions.",
+    }
+    for template_name, data in (
+        ("local_search", invalid_local_search),
+        ("directions", invalid_directions),
+    ):
+      with self.subTest(template=template_name):
+        result = merge_template(template_name, data, catalog_id=host_catalog)
+        create_surface = result[0]["createSurface"]
+        self.assertIn("catalogId", create_surface)
+        self.assertEqual(create_surface["catalogId"], host_catalog)
 
   def test_merge_text_only_full_json(self):
     """Verifies that text-only response is merged correctly."""
@@ -143,6 +223,7 @@ class TestMerger(unittest.TestCase):
     """Verifies merging a complete local search payload."""
     data = {
         "surface_id": "local-search-surface-abc",
+        "heading": "Top Coffee Shops in Seattle",
         "summary": "Here are 3 highly-rated coffee shops in Seattle.",
         "center_lat": "47.6062",
         "center_lng": -122.3321,
@@ -185,7 +266,18 @@ class TestMerger(unittest.TestCase):
                     {
                         "id": "root",
                         "component": "Column",
-                        "children": ["summary-text", "map", "list"],
+                        "children": [
+                            "heading-text",
+                            "summary-text",
+                            "map",
+                            "list",
+                        ],
+                    },
+                    {
+                        "id": "heading-text",
+                        "component": "Text",
+                        "variant": "body",
+                        "text": "### Top Coffee Shops in Seattle",
                     },
                     {
                         "id": "summary-text",
@@ -200,6 +292,8 @@ class TestMerger(unittest.TestCase):
                         "component": "GoogleMap",
                         "center": {"lat": 47.6062, "lng": -122.3321},
                         "zoom": 14,
+                        "tilt": 0,
+                        "mode": "roadmap",
                         "markers": [
                             {
                                 "lat": 47.62,
@@ -308,7 +402,7 @@ class TestMerger(unittest.TestCase):
     result = merge_template("local_search", data, max_list_size=2)
     # Check that updateComponents has only 2 markers
     components = result[1]["updateComponents"]["components"]
-    map_comp = next(c for c in components if c["id"] == "map")
+    map_comp = next(comp for comp in components if comp["id"] == "map")
     self.assertEqual(len(map_comp["markers"]), 2)
 
     # Check that updateDataModel has only 2 places
@@ -317,10 +411,57 @@ class TestMerger(unittest.TestCase):
     self.assertEqual(places[0]["placeId"], "1")
     self.assertEqual(places[1]["placeId"], "2")
 
+  def test_merge_local_search_heading_normalization(self):
+    """Verifies that heading is cleaned of markdown headers or synthesized from anchor."""
+    # Case 1: Heading with leading markdown hashtags
+    data_with_hash = {
+        "surface_id": "test-surface",
+        "heading": "### Best Bakeries",
+        "summary": "Here are bakeries.",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 13,
+        "places": [{"placeId": "p1", "name": "B1", "lat": 47.6, "lng": -122.3}],
+    }
+    result = merge_template("local_search", data_with_hash)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(comp for comp in comps if comp["id"] == "heading-text")
+    self.assertEqual(heading_comp["text"], "### Best Bakeries")
+
+    # Case 2: Missing heading with anchor marker
+    data_with_anchor = {
+        "surface_id": "test-surface",
+        "summary": "Here are bakeries.",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 13,
+        "anchor_marker": {"lat": 47.6, "lng": -122.3, "label": "Space Needle"},
+        "places": [{"placeId": "p1", "name": "B1", "lat": 47.6, "lng": -122.3}],
+    }
+    result = merge_template("local_search", data_with_anchor)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(comp for comp in comps if comp["id"] == "heading-text")
+    self.assertEqual(heading_comp["text"], "### Places near Space Needle")
+
+    # Case 3: Missing heading and no anchor
+    data_no_heading = {
+        "surface_id": "test-surface",
+        "summary": "Here are bakeries.",
+        "center_lat": 47.6,
+        "center_lng": -122.3,
+        "zoom": 13,
+        "places": [{"placeId": "p1", "name": "B1", "lat": 47.6, "lng": -122.3}],
+    }
+    result = merge_template("local_search", data_no_heading)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(comp for comp in comps if comp["id"] == "heading-text")
+    self.assertEqual(heading_comp["text"], "### Nearby Places")
+
   def test_merge_directions_full_json(self):
     """Verifies complete end-to-end directions template merging, placeholder replacement, and travel mode normalization."""
     data = {
         "surface_id": "directions-surface-xyz",
+        "heading": "Walking Route from Dobong to Gangnam",
         "summary": "Typical commute is 1h 15m.",
         "center_lat": "37.5665",
         "center_lng": 126.9780,
@@ -352,13 +493,13 @@ class TestMerger(unittest.TestCase):
                     {
                         "id": "root",
                         "component": "Column",
-                        "children": ["summary-text", "map"],
+                        "children": ["heading-text", "map", "summary-text"],
                     },
                     {
-                        "id": "summary-text",
+                        "id": "heading-text",
                         "component": "Text",
                         "variant": "body",
-                        "text": "Typical commute is 1h 15m.",
+                        "text": "### Walking Route from Dobong to Gangnam",
                     },
                     {
                         "id": "map",
@@ -379,6 +520,12 @@ class TestMerger(unittest.TestCase):
                         }],
                         "travelMode": "walking",
                     },
+                    {
+                        "id": "summary-text",
+                        "component": "Text",
+                        "variant": "body",
+                        "text": "Typical commute is 1h 15m.",
+                    },
                 ],
             },
         },
@@ -394,6 +541,50 @@ class TestMerger(unittest.TestCase):
 
     result = merge_template("directions", data, max_list_size=3)
     self.assertEqual(result, expected)
+
+  def test_merge_directions_heading_fallback(self):
+    """Verifies that missing heading is synthesized from route endpoints."""
+    # Case 1: Heading with leading markdown hashtags
+    data_with_hash = {
+        "surface_id": "test-surface",
+        "heading": "### Driving Route",
+        "summary": "About 15 minutes.",
+        "center_lat": 37.5,
+        "center_lng": 127.0,
+        "zoom": 12,
+        "routes": [{
+            "origin": {"lat": 37.5, "lng": 127.0, "label": "Origin"},
+            "destination": {"lat": 37.6, "lng": 127.1, "label": "Dest"},
+        }],
+    }
+    result = merge_template("directions", data_with_hash)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(c for c in comps if c["id"] == "heading-text")
+    self.assertEqual(heading_comp["text"], "### Driving Route")
+
+    # Case 2: Missing heading with origin and destination labels
+    data_missing = {
+        "surface_id": "test-surface",
+        "summary": "About 15 minutes.",
+        "center_lat": 37.5,
+        "center_lng": 127.0,
+        "zoom": 12,
+        "routes": [{
+            "origin": {"lat": 37.5, "lng": 127.0, "label": "Seattle Center"},
+            "destination": {
+                "lat": 37.6,
+                "lng": 127.1,
+                "label": "Pike Place Market",
+            },
+        }],
+    }
+    result = merge_template("directions", data_missing)
+    comps = result[1]["updateComponents"]["components"]
+    heading_comp = next(c for c in comps if c["id"] == "heading-text")
+    self.assertEqual(
+        heading_comp["text"],
+        "### Route from Seattle Center to Pike Place Market",
+    )
 
   def test_validate_directions_output_with_schema(self):
     """Verifies merged directions output passes schema validation."""
@@ -584,7 +775,7 @@ class TestMergerEdgeCases(unittest.TestCase):
     result = merge_template("local_search", data, max_list_size=3)
     update_components = result[1]["updateComponents"]
     map_comp = next(
-        c for c in update_components["components"] if c["id"] == "map"
+        comp for comp in update_components["components"] if comp["id"] == "map"
     )
     # Verify anchorMarker key is NOT in map component (cleanly stripped)
     self.assertNotIn("anchorMarker", map_comp)
@@ -612,7 +803,7 @@ class TestMergerEdgeCases(unittest.TestCase):
     result = merge_template("local_search", data, max_list_size=3)
     update_components = result[1]["updateComponents"]
     map_comp = next(
-        c for c in update_components["components"] if c["id"] == "map"
+        comp for comp in update_components["components"] if comp["id"] == "map"
     )
     expected_markers = [
         {"lat": 47.63, "lng": -122.33, "label": "Custom 1"},
@@ -703,6 +894,130 @@ class TestMergerEdgeCases(unittest.TestCase):
         result[1]["updateComponents"]["components"][1]["text"],
         "Fallback text.",
     )
+
+
+class TestMergerZipImportedPackage(unittest.TestCase):
+  """Covers template loading when the agent is served from a zip archive.
+
+  The agent also ships as a zipped archive that Python imports without ever
+  unpacking it to disk. In that mode `__file__` names an entry inside the
+  archive, so resolving templates by filesystem path makes every merge fail at
+  serving time while a suite run from an ordinary source tree keeps passing.
+  These tests exercise the archive explicitly so that gap cannot reopen.
+  """
+
+  _PACKAGE = "a2ui_zipped_merger_probe"
+
+  def _pack_merger_into_zip(self) -> str:
+    """Copies `merger` and its templates into a zip and returns its path."""
+    source = importlib.resources.files(merger.__package__)
+    temp_dir = tempfile.mkdtemp()
+    self.addCleanup(shutil.rmtree, temp_dir, ignore_errors=True)
+    archive_path = os.path.join(temp_dir, "merger_probe.zip")
+    with zipfile.ZipFile(archive_path, "w") as archive:
+      archive.writestr(f"{self._PACKAGE}/__init__.py", "")
+      archive.writestr(
+          f"{self._PACKAGE}/merger.py",
+          source.joinpath("merger.py").read_text(encoding="utf-8"),
+      )
+      for entry in source.joinpath("templates").iterdir():
+        layout = entry.joinpath("layout.json")
+        if not layout.is_file():
+          continue
+        archive.writestr(
+            f"{self._PACKAGE}/templates/{entry.name}/layout.json",
+            layout.read_text(encoding="utf-8"),
+        )
+    return archive_path
+
+  def _import_merger_from_zip(self):
+    """Imports the packed `merger`, whose templates exist only in the zip."""
+    archive_path = self._pack_merger_into_zip()
+    sys.path.insert(0, archive_path)
+    self.addCleanup(sys.path.remove, archive_path)
+    for name in (f"{self._PACKAGE}.merger", self._PACKAGE):
+      self.addCleanup(sys.modules.pop, name, None)
+    importlib.invalidate_caches()
+    return importlib.import_module(f"{self._PACKAGE}.merger")
+
+  def test_probe_templates_are_reachable_only_inside_the_archive(self):
+    """Asserts the probe exercises the archive rather than a copy on disk.
+
+    Without this the remaining tests could pass against an unpacked directory
+    and prove nothing, because that is the mode that never broke.
+    """
+    zipped_merger = self._import_merger_from_zip()
+
+    on_disk_templates = os.path.join(
+        os.path.dirname(os.path.abspath(zipped_merger.__file__)), "templates"
+    )
+
+    self.assertNotEqual(zipped_merger.__file__, merger.__file__)
+    self.assertFalse(os.path.exists(on_disk_templates))
+
+  def test_merges_every_shipped_template_from_the_archive(self):
+    """Verifies each template resolves as package data inside the archive."""
+    zipped_merger = self._import_merger_from_zip()
+    cases = {
+        "text_only": {"text": "hello"},
+        "local_search": {
+            "summary": "Coffee near the market.",
+            "center_lat": 47.6097,
+            "center_lng": -122.3422,
+            "zoom": 14,
+            "places": [
+                {"name": "Storyville", "lat": 47.6092, "lng": -122.3418}
+            ],
+        },
+        "directions": {
+            "summary": "About 50 minutes via US-101 S.",
+            "center_lat": 37.55,
+            "center_lng": -122.15,
+            "zoom": 10,
+            "travel_mode": "driving",
+            "routes": [{
+                "origin": {"lat": 37.7749, "lng": -122.4194, "label": "SF"},
+                "destination": {
+                    "lat": 37.3382,
+                    "lng": -121.8863,
+                    "label": "SJ",
+                },
+            }],
+        },
+    }
+
+    for template_name, data in cases.items():
+      with self.subTest(template=template_name):
+        result = zipped_merger.merge_template(template_name, data)
+
+        self.assertTrue(result)
+        self.assertEqual(
+            result[0]["createSurface"]["catalogId"], merger.DEFAULT_CATALOG_ID
+        )
+
+  def test_unknown_template_still_raises_from_the_archive(self):
+    """A missing template must stay distinguishable from an unreadable one."""
+    zipped_merger = self._import_merger_from_zip()
+
+    with self.assertRaises(FileNotFoundError):
+      zipped_merger.merge_template("non_existent_template", {"text": "hello"})
+
+  def test_default_surface_id_is_uniquified_from_the_archive(self):
+    """Covers the template scan that decides whether a surface ID is generic.
+
+    The scan sat behind a filesystem probe that reported an empty directory
+    inside an archive instead of failing, so default surface IDs quietly
+    stopped being made unique per turn and no log line recorded it.
+    """
+    zipped_merger = self._import_merger_from_zip()
+
+    result = zipped_merger.merge_template(
+        "text_only", {"text": "hello", "surface_id": "text_only_surface"}
+    )
+
+    surface_id = result[0]["createSurface"]["surfaceId"]
+    self.assertNotEqual(surface_id, "text_only_surface")
+    self.assertTrue(surface_id.startswith("text_only_surface_"))
 
 
 if __name__ == "__main__":

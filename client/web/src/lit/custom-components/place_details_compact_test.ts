@@ -14,7 +14,7 @@
 
 import './place_details_compact';
 
-import type {PlaceDetailsCompact} from './place_details_compact';
+import {type PlaceDetailsCompact, PlaceDetailsCompactApi, type PlaceDetailsCompactProps} from './place_details_compact';
 
 describe('PlaceDetailsCompact Component', () => {
   it('uses a fallback attribution ID when the global one is missing',
@@ -23,8 +23,9 @@ describe('PlaceDetailsCompact Component', () => {
        delete (window as any).A2UI_ATTRIBUTION_ID;
 
        // 2. Render the component with a place ID
-       const element = document.createElement('a2ui-placedetailscompact') as PlaceDetailsCompact;
-       (element as any).controller = {
+       const element = document.createElement('a2ui-placedetailscompact') as
+           PlaceDetailsCompact;
+       (element as any)._controller = {
          props: {placeId: 'ChIJN1t_tDeuEmsRUsoyG83frY4'}
        };
        document.body.appendChild(element);
@@ -44,4 +45,19 @@ describe('PlaceDetailsCompact Component', () => {
        // Cleanup
        document.body.removeChild(element);
      });
+
+  it('declares every schema key in the Closure props interface', () => {
+    // Fails to compile if a schema key is added/removed without updating the
+    // `declare` interface, which would let Closure rename it again.
+    const keysMatch: SameKeys<
+        typeof PlaceDetailsCompactApi.schema.shape, PlaceDetailsCompactProps> =
+        true;
+    expect(keysMatch).toBeTrue();
+  });
 });
+
+/** `true` only if A and B have exactly the same keys. */
+type SameKeys<A, B> =
+    [Exclude<keyof A, keyof B>| Exclude<keyof B, keyof A>] extends [never] ?
+    true :
+    false;

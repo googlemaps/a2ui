@@ -12,44 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for extractor.py."""
+"""Unit tests for directions template bundle extraction schema."""
 
 import unittest
 import pydantic
-from extractor import (
+from templates.directions.schema import (
     DirectionsExtractorSchema,
-    LocalSearchExtractorSchema,
-    Pin,
-    PlacePin,
+    ExtractorSchema,
+    normalize_travel_mode,
 )
 
 
-class TestExtractor(unittest.TestCase):
-  """Unit tests for extractor schemas and data normalization."""
-
-  def test_pin_normalize_label_copies_name(self):
-    data = {"lat": 1.0, "lng": 2.0, "name": "My Place"}
-    pin = Pin(**data)
-    self.assertEqual(pin.label, "My Place")
-
-  def test_pin_normalize_label_defaults_to_location(self):
-    data = {"lat": 1.0, "lng": 2.0}
-    pin = Pin(**data)
-    self.assertEqual(pin.label, "Location")
-
-  def test_pin_normalize_label_preserves_existing(self):
-    data = {
-        "lat": 1.0,
-        "lng": 2.0,
-        "label": "Custom Label",
-        "name": "Ignored Name",
-    }
-    pin = Pin(**data)
-    self.assertEqual(pin.label, "Custom Label")
+class TestDirectionsSchema(unittest.TestCase):
+  """Unit tests for directions schema and data normalization."""
 
   def test_directions_extractor_schema_normalize_travel_mode(self):
     """Verifies that travel mode is normalized to lowercase."""
     data = {
+        "heading": "Commute Route",
         "summary": "Commute is 1h.",
         "center_lat": 37.5,
         "center_lng": 127.0,
@@ -65,6 +45,7 @@ class TestExtractor(unittest.TestCase):
   def test_directions_extractor_schema_with_routes(self):
     """Verifies that DirectionsExtractorSchema can be initialized with routes."""
     data = {
+        "heading": "Scenic Route",
         "summary": "Scenic route.",
         "center_lat": 37.5,
         "center_lng": 127.0,
@@ -91,6 +72,7 @@ class TestExtractor(unittest.TestCase):
   ):
     """Verifies that omitting travel_mode raises ValidationError."""
     data = {
+        "heading": "Directions Route",
         "summary": "Directions summary",
         "center_lat": 37.5,
         "center_lng": 127.0,
@@ -109,10 +91,14 @@ class TestExtractor(unittest.TestCase):
     for invalid_mode in ["flying", "", None, "scooter", 123]:
       with self.subTest(invalid_mode=invalid_mode):
         data = {
+            "heading": "Directions Route",
             "summary": "Directions summary",
             "center_lat": 37.5,
             "center_lng": 127.0,
-            "routes": [],
+            "routes": [{
+                "origin": {"lat": 37.4, "lng": 126.9, "label": "Start"},
+                "destination": {"lat": 37.6, "lng": 127.1, "label": "End"},
+            }],
             "travel_mode": invalid_mode,
         }
         with self.assertRaises(pydantic.ValidationError):
@@ -123,10 +109,14 @@ class TestExtractor(unittest.TestCase):
     for mode in ["driving", "walking", "transit", "bicycling"]:
       with self.subTest(mode=mode):
         data = {
+            "heading": f"Going via {mode}",
             "summary": f"Going via {mode}",
             "center_lat": 37.5,
             "center_lng": 127.0,
-            "routes": [],
+            "routes": [{
+                "origin": {"lat": 37.4, "lng": 126.9, "label": "Start"},
+                "destination": {"lat": 37.6, "lng": 127.1, "label": "End"},
+            }],
             "travel_mode": mode,
         }
         schema = DirectionsExtractorSchema(**data)
@@ -197,14 +187,101 @@ class TestExtractor(unittest.TestCase):
       for synonym in synonyms:
         with self.subTest(synonym=synonym, expected=expected_mode):
           data = {
+              "heading": "Commute",
               "summary": "Commute",
               "center_lat": 37.5,
               "center_lng": 127.0,
-              "routes": [],
+              "routes": [{
+                  "origin": {"lat": 37.4, "lng": 126.9, "label": "Start"},
+                  "destination": {"lat": 37.6, "lng": 127.1, "label": "End"},
+              }],
               "travel_mode": synonym,
           }
           schema = DirectionsExtractorSchema(**data)
           self.assertEqual(schema.travel_mode, expected_mode)
+
+  def test_directions_extractor_schema_with_heading(self):
+    """Verifies that DirectionsExtractorSchema validates with heading."""
+    data = {
+        "heading": "Walking route from Seattle Center to Pike Place Market",
+        "summary": "Walking takes about 25 minutes (1 mile).",
+        "center_lat": 47.6205,
+        "center_lng": -122.3493,
+        "travel_mode": "walking",
+        "routes": [{
+            "origin": {
+                "lat": 47.6205,
+                "lng": -122.3493,
+                "label": "Seattle Center",
+            },
+            "destination": {
+                "lat": 47.6097,
+                "lng": -122.3422,
+                "label": "Pike Place Market",
+            },
+        }],
+    }
+    schema = DirectionsExtractorSchema(**data)
+    self.assertEqual(
+        schema.heading, "Walking route from Seattle Center to Pike Place Market"
+    )
+
+  def test_directions_extractor_schema_missing_heading_fails_validation(self):
+    """Verifies that omitting heading raises ValidationError."""
+    data = {
+        "summary": "Walking takes about 25 minutes (1 mile).",
+        "center_lat": 47.6205,
+        "center_lng": -122.3493,
+        "travel_mode": "walking",
+        "routes": [{
+            "origin": {
+                "lat": 47.6205,
+                "lng": -122.3493,
+                "label": "Seattle Center",
+            },
+            "destination": {
+                "lat": 47.6097,
+                "lng": -122.3422,
+                "label": "Pike Place Market",
+            },
+        }],
+    }
+    with self.assertRaises(pydantic.ValidationError):
+      DirectionsExtractorSchema(**data)
+
+  def test_directions_extractor_schema_rejects_an_empty_route_list(self):
+    """Verifies that a directions card with nothing to draw fails validation.
+
+    The layout renders a route polyline, so an empty list produces a blank
+    map. Rejecting it here is what degrades the response to plain text.
+    """
+    with self.assertRaises(pydantic.ValidationError):
+      DirectionsExtractorSchema(
+          heading="Directions",
+          summary="No route available.",
+          center_lat=47.6205,
+          center_lng=-122.3493,
+          travel_mode="walking",
+          routes=[],
+      )
+
+  def test_directions_extractor_schema_missing_summary_fails_validation(self):
+    """Verifies that omitting summary raises ValidationError."""
+    with self.assertRaises(pydantic.ValidationError):
+      DirectionsExtractorSchema(
+          heading="Directions",
+          center_lat=47.6205,
+          center_lng=-122.3493,
+          travel_mode="walking",
+          routes=[{
+              "origin": {"lat": 37.4, "lng": 126.9, "label": "Start"},
+              "destination": {"lat": 37.6, "lng": 127.1, "label": "End"},
+          }],
+      )
+
+  def test_extractor_schema_alias(self):
+    """Verifies ExtractorSchema alias matches DirectionsExtractorSchema."""
+    self.assertIs(ExtractorSchema, DirectionsExtractorSchema)
 
 
 if __name__ == "__main__":
