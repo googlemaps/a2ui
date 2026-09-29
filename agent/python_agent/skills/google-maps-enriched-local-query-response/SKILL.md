@@ -58,6 +58,20 @@ You are an expert in resolving location-based queries using the **A2UI framework
 *   **Pins**:
     *   `anchorMarker`: Use for the "main" focus (e.g., a hotel).
     *   `markers`: Use for related results (e.g., surrounding restaurants).
+    *   **POI Types (`placePrimaryType`)**: Determine `placePrimaryType` using the descriptions or categories in the tool response. If insufficient, infer it from the user prompt and place title.
+        Supported categories:
+        - `food_and_drink`: Restaurants, cafes, bars, bakeries, coffee shops, dining.
+        - `outdoor`: Parks, trails, gardens, natural landmarks, beaches, scenic spots.
+        - `retail`: Stores, shops, boutiques, supermarkets, malls, markets.
+        - `gas_station`: Gas stations.
+        - `ev`: EV charging stations.
+        - `bank`: Banks, ATMs.
+        - `lodging`: Hotels, resorts, motels, hostels, B&Bs.
+        - `emergency`: Hospitals, urgent care, police, fire stations.
+        - `entertainment`: Theaters, museums, cinemas, stadiums, amusement parks, venues.
+        - `airport`: Airports.
+        - `parking`: Parking lots and garages.
+        - `generic`: Salons, repair, dry cleaners, post offices. Default fallback when ambiguous or not clearly matching above categories.
 *   **References**: Refer to items in the data model via `path` for dynamic content.
 *   **Child Components**: When using a Column or Row layout, ensure that each child component referenced in the `children` array is also included in the `surfaceUpdate` as its own component definition.
 
@@ -222,11 +236,9 @@ For the `PlaceDetailsCompact` component, you MUST include the following fields:
 
 * `placeId`
 
-You MAY also include:
-
-* `orientation`:
-    - You MUST use `"vertical"` when there is only ONE `PlaceDetailsCompact` in the response to emphasize the place image.
-    - You MUST use `"horizontal"` when there are MULTIPLE `PlaceDetailsCompact` components (e.g., in a list) to keep the layout compact and save vertical space.
+Always use `"horizontal"` for `orientation` on `PlaceDetailsCompact` (or omit
+`orientation` so it defaults to `"horizontal"`), unless the user explicitly asks
+for vertical place cards.
 
 **IMPORTANT:** ALWAYS follow the schema provided by the schema manager (passed
 in as part of the instruction prompt) as the source of truth for what fields are
