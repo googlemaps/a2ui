@@ -83,6 +83,7 @@ This package provides the core Python agent implementations for the Agentic UI T
 
 *   `agent.py`: Contains the `MAUIAgent` class, which handles session management, LLM interaction, and A2UI schema loading.
 *   `agent_with_grounding.py`: Contains `MAUIAgentWithGrounding`, extending the base agent with Vertex Grounding capabilities.
+*   `streaming_request_handler.py`: Contains `StreamingRequestHandler` (extending `DefaultRequestHandler`), enabling the A2A server to handle both incremental SSE streaming (`message/stream`) and non-streaming (`message/send`) JSON-RPC requests.
 *   `shared/`: Contains schema extensions (e.g., `maps_catalog_extension.json`).
 *   `skills/`: Contains specific skill definitions used by the agents.
 *   `pyproject.toml`: Configuration file for the package, using Hatchling as the build backend.
@@ -185,6 +186,25 @@ class MAUIAgentExecutor(AgentExecutor):
     raise ServerError(error=UnsupportedOperationError())
 ```
 
+#### 3. Enabling Real-Time SSE Streaming (`StreamingRequestHandler`)
+
+To serve both real-time Server-Sent Events (`message/stream`) and standard single-response requests (`message/send`) from your `A2AStarletteApplication`, pass `StreamingRequestHandler` as the `http_handler`:
+
+```python
+from a2a.server.apps import A2AStarletteApplication
+from a2a.server.tasks import InMemoryTaskStore
+from streaming_request_handler import StreamingRequestHandler
+
+request_handler = StreamingRequestHandler(
+    agent_executor=agent_executor,
+    task_store=InMemoryTaskStore(),
+)
+server = A2AStarletteApplication(
+    agent_card=default_agent.agent_card,
+    http_handler=request_handler,
+)
+```
+
 ## Agentic UI Toolkit Client Libraries
 
 This repository provides A2UI client libraries across multiple platforms (Web, Android, and iOS) to render interactive A2UI surfaces and communicate with an A2A agent server.
@@ -254,6 +274,28 @@ return (
 );
 ```
 
+#### 3. Streaming Responses (`sendStream`)
+`A2UIClient` also supports real-time incremental Server-Sent Events (SSE) streaming via `client.sendStream(messageText)` (`message/stream`). You can use a `useStreaming` boolean flag to switch between streaming (`client.sendStream`) and non-streaming (`client.send`):
+
+```tsx
+const useStreaming = true; // Set to false to use non-streaming client.send()
+
+async function handleSend(messageText: string) {
+  renderer.addUserMessage(messageText);
+
+  if (useStreaming) {
+    // Stream incremental text and A2UI component updates via SSE (message/stream)
+    for await (const chunk of client.sendStream(messageText)) {
+      renderer.processResponse([chunk]);
+    }
+  } else {
+    // Wait for the full response in a single payload (message/send)
+    const response = await client.send(messageText);
+    renderer.processResponse(response);
+  }
+}
+```
+
 #### Local Development
 
 To make changes to this package and test them in an application:
@@ -297,7 +339,6 @@ Agentic UI Toolkit requires an API Key to use Google Maps Platform products. To 
 
 Your API Key must have the following APIs enabled in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials):
 
-* Geocoding API
 * Maps JavaScript API
 * Places UI Kit
 * Routes API
