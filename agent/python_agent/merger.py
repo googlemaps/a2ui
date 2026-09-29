@@ -14,18 +14,41 @@
 
 """Server-Side A2UI Layout Template Merger (`merger.py`).
 
-This module loads declarative JSON layout skeletons (`templates/*.json`),
-populates them with extracted parameter dictionaries (`data`), and returns
-sanitized message structures ready for wire transmission.
+This module loads a declarative JSON layout skeleton, populates it with a
+dictionary of extracted parameters, and returns sanitized message structures
+ready for wire transmission.
+
+The merger is template agnostic. Everything specific to one template -- its
+schema, its layout, and what to say when it cannot render -- arrives as caller
+arguments. Derived and repaired fields belong in the bundle's Pydantic schema,
+never here.
 """
 
 import copy
+import importlib.resources
 import json
-import os
+import logging
+import re
 from typing import Any, Literal, TypedDict
 import uuid
 
-from extractor import normalize_travel_mode
+import pydantic
+
+import (
+    template_registry,
+)
+
+logger = logging.getLogger(__name__)
+
+# The bare text surface every template degrades to when it cannot render.
+_TEXT_ONLY_TEMPLATE = "text_only"
+
+# The catalog the templates bind their surface to when the host does not name
+# one. Hosts that register the Maps components in a catalog of their own (for
+# example Gemini Enterprise, whose composite catalog carries `GoogleMap` and
+# `PlaceDetailsCompact` alongside its Material and basic components) pass that
+# catalog's id instead, because a surface resolves against exactly one catalog.
+DEFAULT_CATALOG_ID = "a2ui://maps-agentic-ui-catalog.json"
 
 
 class TextOutputDict(TypedDict):
@@ -64,7 +87,15 @@ MergedMessage = TextOutputDict | SurfaceOutputDict
 
 
 def _replace_placeholders(obj: Any, data: dict[str, Any]) -> Any:
-  """Recursively replaces string placeholders in the template with values from data."""
+  """Recursively replaces string placeholders in the template with values.
+
+  Args:
+    obj: The JSON-serializable template object.
+    data: Key-value pairs used to substitute placeholders.
+
+  Returns:
+    The updated template object with resolved placeholder values.
+  """
   if isinstance(obj, str):
     # Exact match: "{{key}}"
     if obj.startswith("{{") and obj.endswith("}}") and obj.count("{{") == 1:
@@ -90,7 +121,7 @@ def _replace_placeholders(obj: Any, data: dict[str, Any]) -> Any:
 
 
 def _remove_none_values(val: Any) -> Any:
-  """Recursively removes None values from dicts and lists to satisfy JSON schemas."""
+  """Recursively removes None values from dicts/lists to satisfy schemas."""
   if isinstance(val, dict):
     return {k: _remove_none_values(v) for k, v in val.items() if v is not None}
   elif isinstance(val, list):
@@ -98,233 +129,133 @@ def _remove_none_values(val: Any) -> Any:
   return val
 
 
-def _prepare_local_search(
-    data: dict[str, Any], max_list_size: int
-) -> tuple[str, dict[str, Any]]:
-  """Validates and normalizes parameters for the local search template."""
-  data_copy = copy.deepcopy(data)
-  is_valid = True
-  places = data_copy.get("places")
+def _uniquify_surface_id(
+    data: dict[str, Any], template_name: str, surface_prefix: str | None
+) -> None:
+  """Appends a random suffix when the surface id is a shared default.
 
-  # 1. Validate that places is a non-empty list
-  if not isinstance(places, list) or not places:
-    is_valid = False
-  else:
-    # Slice and sanitize places list
-    sanitized_places = []
-    for p in places:
-      if isinstance(p, dict):
-        try:
-          p["lat"] = float(p["lat"])
-          p["lng"] = float(p["lng"])
-          sanitized_places.append(p)
-        except (KeyError, ValueError, TypeError):
-          pass
-    if not sanitized_places:
-      is_valid = False
-    else:
-      data_copy["places"] = sanitized_places[:max_list_size]
+  Surfaces keyed by a bundle's default id would collide across concurrent
+  turns, so only an id the caller chose itself survives untouched.
 
-  # 2. Validate mandatory map centering and zoom parameters
-  if is_valid:
-    try:
-      data_copy["center_lat"] = float(data_copy["center_lat"])
-      data_copy["center_lng"] = float(data_copy["center_lng"])
-      data_copy["zoom"] = int(data_copy["zoom"])
-    except (KeyError, ValueError, TypeError):
-      is_valid = False
+  Args:
+    data: Parameter dict, mutated in place.
+    template_name: Name of the bundle being rendered.
+    surface_prefix: The bundle's declared default surface id, if any.
+  """
+  default_ids = {
+      f"{template_name}_surface",
+      f"{template_name.replace('_', '-')}-surface",
+      "fallback-surface",
+  }
+  if surface_prefix:
+    default_ids.add(surface_prefix)
 
-  # 3. Sanitize optional anchor marker
-  if is_valid and "anchor_marker" in data_copy:
-    pin = data_copy["anchor_marker"]
-    if isinstance(pin, dict):
-      try:
-        pin["lat"] = float(pin["lat"])
-        pin["lng"] = float(pin["lng"])
-      except (KeyError, ValueError, TypeError):
-        data_copy["anchor_marker"] = None
-    else:
-      data_copy["anchor_marker"] = None
-
-  # 4. Unroll maps markers array
-  if is_valid:
-    if "markers" not in data_copy:
-      markers = []
-      for p in data_copy["places"]:
-        marker = {
-            "lat": p["lat"],
-            "lng": p["lng"],
-            "label": p.get("name") or p.get("label") or "",
-        }
-        if "placeId" in p:
-          marker["placeId"] = p["placeId"]
-        markers.append(marker)
-      data_copy["markers"] = markers
-    else:
-      markers = data_copy["markers"]
-      if isinstance(markers, list):
-        sanitized_markers = []
-        for m in markers:
-          if isinstance(m, dict):
-            try:
-              m["lat"] = float(m["lat"])
-              m["lng"] = float(m["lng"])
-              m["label"] = str(m.get("label") or "")
-              sanitized_markers.append(m)
-            except (KeyError, ValueError, TypeError):
-              pass
-        data_copy["markers"] = sanitized_markers
-      else:
-        data_copy["markers"] = None
-
-  # If validation failed, fallback to text_only
-  if not is_valid:
-    return "text_only", {
-        "text": (
-            data.get("summary")
-            or "No places matching your query could be found."
-        ),
-        "surface_id": data_copy.get("surface_id") or "fallback-surface",
-    }
-
-  return "local_search", data_copy
+  surface_id = data.get("surface_id")
+  if surface_id and surface_id not in default_ids:
+    return
+  base_id = surface_id or f"{template_name}_surface"
+  data["surface_id"] = f"{base_id}_{uuid.uuid4().hex[:6]}"
 
 
-def _prepare_directions(data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-  """Validates and normalizes parameters for the directions template."""
-  data_copy = copy.deepcopy(data)
-  is_valid = True
-
-  routes = data_copy.get("routes")
-
-  # 1. Validate that routes is a non-empty list of segment dicts
-  if not isinstance(routes, list) or not routes:
-    is_valid = False
-  else:
-    sanitized_routes = []
-    for segment in routes:
-      if not isinstance(segment, dict):
-        is_valid = False
-        break
-      origin = segment.get("origin")
-      destination = segment.get("destination")
-      if not isinstance(origin, dict) or not isinstance(destination, dict):
-        is_valid = False
-        break
-      try:
-        sanitized_origin = {
-            "lat": float(origin["lat"]),
-            "lng": float(origin["lng"]),
-            "label": str(origin.get("label") or ""),
-        }
-        if "placeId" in origin:
-          sanitized_origin["placeId"] = str(origin["placeId"])
-
-        sanitized_destination = {
-            "lat": float(destination["lat"]),
-            "lng": float(destination["lng"]),
-            "label": str(destination.get("label") or ""),
-        }
-        if "placeId" in destination:
-          sanitized_destination["placeId"] = str(destination["placeId"])
-
-        sanitized_routes.append({
-            "origin": sanitized_origin,
-            "destination": sanitized_destination,
-        })
-      except (KeyError, ValueError, TypeError):
-        is_valid = False
-        break
-    data_copy["routes"] = sanitized_routes
-
-  # 2. Validate mandatory map centering and zoom parameters
-  if is_valid:
-    try:
-      data_copy["center_lat"] = float(data_copy["center_lat"])
-      data_copy["center_lng"] = float(data_copy["center_lng"])
-      data_copy["zoom"] = int(data_copy["zoom"])
-    except (KeyError, ValueError, TypeError):
-      is_valid = False
-
-  # 3. Normalize travel_mode
-  if is_valid and "travel_mode" in data_copy:
-    normalized = normalize_travel_mode(data_copy["travel_mode"])
-    if normalized:
-      data_copy["travel_mode"] = normalized
-    else:
-      del data_copy["travel_mode"]
-
-  # If validation failed, fallback to text_only
-  if not is_valid:
-    return "text_only", {
-        "text": data.get("summary") or "Could not calculate travel directions.",
-        "surface_id": data_copy.get("surface_id") or "fallback-surface",
-    }
-
-  return "directions", data_copy
+def _merge_fallback(
+    data: dict[str, Any],
+    empty_fallback_text: str,
+    catalog_id: str = DEFAULT_CATALOG_ID,
+) -> list[MergedMessage]:
+  """Renders a template's fallback text on a bare text-only surface."""
+  return merge_template(
+      _TEXT_ONLY_TEMPLATE,
+      {
+          "text": data.get("summary") or empty_fallback_text,
+          "surface_id": data.get("surface_id") or "fallback-surface",
+      },
+      catalog_id=catalog_id,
+  )
 
 
 def merge_template(
-    template_name: str, data: dict[str, Any], max_list_size: int = 5
+    template_name: str,
+    data: dict[str, Any],
+    max_list_size: int = 5,
+    catalog_id: str = DEFAULT_CATALOG_ID,
 ) -> list[MergedMessage]:
-  """Loads static template skeleton JSON and returns merged wire response.
-
-  This function sanitizes extracted parameters and populates the layout
-  template skeleton.
+  """Populates a layout skeleton with extracted parameters.
 
   Args:
-      template_name: Target declarative layout skeleton (`local_search`,
-        `directions`, or `text_only`).
-      data: Raw dictionary of extracted parameters yielded by
-        `TemplateExtractor` (e.g. `places`, `summary`, `center_lat`).
-      max_list_size: Maximum allowable child elements in lists (`places`) to
-        bound payload rendering latency.
+      template_name: Name of the bundle whose layout to render, or 'text_only'.
+      data: Extracted parameters to populate the layout with.
+      max_list_size: Maximum number of elements retained in any top-level
+        collection, to bound payload size and render latency.
+      catalog_id: Catalog the created surface binds to. Defaults to the Maps
+        catalog; hosts that register the Maps components under a catalog of
+        their own pass that id.
 
   Returns:
-      A list of message dictionaries. For `text_only`, returns the 2-part A2UI
-      layout (`createSurface`, `updateComponents`).
-      For `local_search` and `directions`, returns the 3-part A2UI layout
-      (`createSurface`, `updateComponents`, `updateDataModel`) (`DataPart`).
+      A list of message dictionaries for A2UI transmission.
 
   Raises:
-      FileNotFoundError: If the template file cannot be found.
+      FileNotFoundError: If the template or its layout file cannot be found.
   """
+  # Templates ship as package data. They are resolved through
+  # `importlib.resources` rather than a `__file__`-relative filesystem path
+  # because the agent is also served from a zip-imported archive, where
+  # `__file__` names an entry inside the archive that never exists on disk and
+  # every `os.path` probe against it reports missing.
+  templates_dir = importlib.resources.files(__package__).joinpath("templates")
+  resource_path = f"templates/{template_name}/layout.json"
+  template_path = templates_dir.joinpath(template_name, "layout.json")
 
-  # Deep copy data to prevent unintended side-effects on caller dictionaries
-  # across turns
-  data_copy = copy.deepcopy(data)
-
-  if template_name == "local_search":
-    template_name, data_copy = _prepare_local_search(data_copy, max_list_size)
-  elif template_name == "directions":
-    template_name, data_copy = _prepare_directions(data_copy)
-  current_dir = os.path.dirname(os.path.abspath(__file__))
-  templates_dir = os.path.join(current_dir, "templates")
-  template_path = os.path.join(templates_dir, f"{template_name}.json")
-
-  if not os.path.exists(template_path):
-    raise FileNotFoundError(
-        f"Template '{template_name}' not found at {template_path}"
+  if template_name == _TEXT_ONLY_TEMPLATE:
+    schema_class = None
+    empty_fallback_text = ""
+    surface_prefix = "text-only-surface"
+  else:
+    bundle = template_registry.TemplateRegistry().get_bundle(template_name)
+    schema_class = bundle.schema_cls if bundle else None
+    empty_fallback_text = bundle.empty_fallback_text if bundle else ""
+    surface_prefix = (
+        bundle.surface_prefix if bundle else f"{template_name}-surface"
     )
 
-  with open(template_path, "r") as f:
-    template_json = json.load(f)
+  if template_path.is_file():
+    template_json = json.loads(template_path.read_text(encoding="utf-8"))
+  elif bundle is not None and bundle.layout_path.is_file():
+    template_json = json.loads(bundle.layout_path.read_text(encoding="utf-8"))
+  else:
+    raise FileNotFoundError(
+        f"Template '{template_name}' not found: package '{__package__}'"
+        f" has no '{resource_path}'"
+    )
 
-  # Smart Turn-Unique `surface_id` Scoping via Dynamic Template Discovery:
-  default_surface_ids = set()
-  if os.path.exists(templates_dir):
-    for fn in os.listdir(templates_dir):
-      if fn.endswith(".json"):
-        base_name = fn[:-5]
-        default_surface_ids.add(f"{base_name}_surface")
-        default_surface_ids.add(f"{base_name.replace('_', '-')}-surface")
+  data_copy = copy.deepcopy(data)
+  data_copy["catalog_id"] = catalog_id
 
-  if (
-      not data_copy.get("surface_id")
-      or data_copy.get("surface_id") in default_surface_ids
-  ):
-    base_id = data_copy.get("surface_id") or f"{template_name}_surface"
-    data_copy["surface_id"] = f"{base_id}_{uuid.uuid4().hex[:6]}"
+  # 1. Bound every top-level collection to keep payload size predictable.
+  for key, value in list(data_copy.items()):
+    if isinstance(value, list):
+      data_copy[key] = value[:max_list_size]
+
+  # 2. Validate through the bundle's schema. The schema owns every
+  #    normalization, derived field, and non-empty constraint, so a collection
+  #    the layout cannot render empty fails here and degrades to text. The
+  #    dumped model -- not the raw input -- is what feeds the layout.
+  if schema_class is not None:
+    try:
+      model_instance = schema_class.model_validate(data_copy)
+    except pydantic.ValidationError:
+      logger.warning(
+          "Data for template '%s' failed schema validation; degrading to a"
+          " text-only surface.",
+          template_name,
+          exc_info=True,
+      )
+      return _merge_fallback(data_copy, empty_fallback_text, catalog_id)
+    data_copy.update(model_instance.model_dump())
+
+  # 3. Scope the surface id to this turn so repeated renders do not collide.
+  _uniquify_surface_id(data_copy, template_name, surface_prefix)
 
   resolved_json = _replace_placeholders(template_json, data_copy)
+  # Prune keys whose optional placeholders (e.g. "{{anchorMarker}}") were
+  # absent from data_copy and evaluated to None, keeping wire JSON clean.
   return _remove_none_values(resolved_json)

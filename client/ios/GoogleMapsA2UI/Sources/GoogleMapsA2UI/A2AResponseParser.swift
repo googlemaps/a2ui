@@ -17,11 +17,17 @@
 import Foundation
 
 /// Errors that can occur during A2UI response parsing.
-public enum A2AParserError: Error {
+public enum A2AParserError: Error, Equatable {
   /// The raw JSON response lacks a recognized message parts structure.
   case invalidPayloadStructure
-  /// The provided dictionary cannot be serialized as valid JSON.
+  /// The input is not valid JSON text, or its top-level value is not a JSON object.
   case invalidJSONFormat
+  /// The server returned a JSON-RPC `error` object instead of a result.
+  ///
+  /// - Parameters:
+  ///   - code: The JSON-RPC error code, or `nil` if the server did not provide one.
+  ///   - message: The error message reported by the server.
+  case serverError(code: Int?, message: String)
 }
 
 /// Utility parser to process server JSON responses.
@@ -31,7 +37,20 @@ public enum A2AResponseParser {
   private static let a2uiJsonTagOpen = "<a2ui-json>"
   private static let a2uiJsonTagClose = "</a2ui-json>"
 
-  /// Parses a raw server response dictionary into a flat list of `ParsedA2AEvent`s.
+  /// A2A event kinds that may legitimately carry no message parts, e.g. a final status update.
+  private static let partlessEventKinds: Set<String> = ["task", "status-update", "artifact-update"]
+
+  /// A2A event kinds whose agent reply, if any, is carried in `status.message`.
+  private static let statusEventKinds: Set<String> = ["task", "status-update"]
+
+  /// Parses one A2A server response into a flat list of `ParsedA2AEvent`s.
+  ///
+  /// `rawJSON` is the JSON text of a single response: a JSON-RPC response (the body of a
+  /// `message/send` call, or the payload of one `message/stream` SSE `data:` line), or a bare A2A
+  /// `Message`, `Task`, or `TaskStatusUpdateEvent` object. A JSON-RPC `result` wrapper is unwrapped
+  /// automatically, and for `task` and `status-update` objects the agent reply in `status.message`
+  /// is parsed. Streaming events that carry no message parts, such as an initial `task` snapshot
+  /// or a final `status-update`, produce an empty list.
   ///
   /// The parser checks multiple possible JSON paths (`parts`, `content.parts`, `status.message.parts`)
   /// to support varying response structures from different server backends (e.g. standalone JSON-RPC vs. ADK Web Server).
@@ -39,14 +58,41 @@ public enum A2AResponseParser {
   /// Note: Any extracted A2UI JSON payloads (mime type `application/json+a2ui`) will always be batched
   /// and returned as an array (`[Any]`) inside `ParsedA2AEvent.data`, providing a consistent format.
   ///
-  /// - Parameter rawJSON: The raw JSON dictionary received from the server.
+  /// - Parameter rawJSON: The raw JSON text received from the server.
   /// - Returns: An array of `ParsedA2AEvent` objects extracted from the payload.
-  /// - Throws: `A2AParserError.invalidJSONFormat` if the input is not valid JSON, or `A2AParserError.invalidPayloadStructure` if the parts array cannot be found.
-  public static func parse(_ rawJSON: [String: Any]) throws -> [ParsedA2AEvent] {
-    guard JSONSerialization.isValidJSONObject(rawJSON) else {
+  /// - Throws: `A2AParserError.invalidJSONFormat` if the input is not a valid JSON object,
+  ///   `A2AParserError.serverError` if the response contains a JSON-RPC `error`, or
+  ///   `A2AParserError.invalidPayloadStructure` if the parts array cannot be found.
+  public static func parse(_ rawJSON: String) throws -> [ParsedA2AEvent] {
+    guard let data = rawJSON.data(using: .utf8),
+      let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
       throw A2AParserError.invalidJSONFormat
     }
+    try throwIfServerError(root)
+    var payload = (root["result"] as? [String: Any]) ?? root
+    try throwIfServerError(payload)
+    // For task snapshots and status updates, the agent's reply is the status message.
+    if let kind = payload["kind"] as? String, statusEventKinds.contains(kind),
+      let status = payload["status"] as? [String: Any],
+      let message = status["message"] as? [String: Any]
+    {
+      payload = message
+    }
+    return try parsePayload(payload)
+  }
 
+  /// Throws `A2AParserError.serverError` if `dict` contains a non-null JSON-RPC `error`.
+  private static func throwIfServerError(_ dict: [String: Any]) throws {
+    guard let error = dict["error"], !(error is NSNull) else { return }
+    let errorDict = error as? [String: Any]
+    let message =
+      (errorDict?["message"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+      ?? String(describing: error)
+    throw A2AParserError.serverError(code: errorDict?["code"] as? Int, message: message)
+  }
+
+  private static func parsePayload(_ rawJSON: [String: Any]) throws -> [ParsedA2AEvent] {
     let partsArray: [[String: Any]]?
     if let parts = rawJSON["parts"] as? [[String: Any]] {
       partsArray = parts
@@ -64,6 +110,9 @@ public enum A2AResponseParser {
     }
 
     guard let parts = partsArray else {
+      if let kind = rawJSON["kind"] as? String, partlessEventKinds.contains(kind) {
+        return []
+      }
       throw A2AParserError.invalidPayloadStructure
     }
 
@@ -113,8 +162,7 @@ public enum A2AResponseParser {
   }
 
   private static let a2uiKeys: Set<String> = [
-    "createSurface", "updateComponents", "updateDataModel",
-    "beginRendering", "surfaceUpdate", "dataModelUpdate",
+    "createSurface", "updateComponents", "updateDataModel", "deleteSurface",
   ]
 
   /// Checks if a given dictionary represents an A2UI payload.
@@ -143,29 +191,32 @@ public enum A2AResponseParser {
     if textPart.contains(a2uiJsonTagOpen) {
       var remainingText = textPart
       while let startRange = remainingText.range(of: a2uiJsonTagOpen) {
+        let rest = remainingText[startRange.upperBound...]
+        guard let endRange = rest.range(of: a2uiJsonTagClose) else {
+          break
+        }
+
         let intro = String(remainingText[..<startRange.lowerBound])
           .trimmingCharacters(in: .whitespacesAndNewlines)
         if !intro.isEmpty {
           parts.append(.text(intro))
         }
 
-        let rest = remainingText[startRange.upperBound...]
-        let jsonStr: String
-        if let endRange = rest.range(of: a2uiJsonTagClose) {
-          jsonStr = String(rest[..<endRange.lowerBound])
-          remainingText = String(rest[endRange.upperBound...])
-        } else {
-          jsonStr = String(rest)
-          remainingText = ""
-        }
+        let jsonStr = String(rest[..<endRange.lowerBound])
+        remainingText = String(rest[endRange.upperBound...])
 
         let trimmedJSON = jsonStr.trimmingCharacters(in: .whitespacesAndNewlines)
-        let dataValue = parseJSON(trimmedJSON) ?? trimmedJSON
-        let event = ParsedA2AEvent.data(
-          [dataValue],
-          metadata: ParsedA2AEventMetadata(mimeType: a2uiJsonMimeType)
-        )
-        parts.append(event)
+        if let dataValue = parseJSON(trimmedJSON) {
+          let arrayPayload: [Any] = (dataValue as? [Any]) ?? [dataValue]
+          let event = ParsedA2AEvent.data(
+            arrayPayload,
+            metadata: ParsedA2AEventMetadata(mimeType: a2uiJsonMimeType)
+          )
+          parts.append(event)
+        } else {
+          let rawTag = "\(a2uiJsonTagOpen)\(jsonStr)\(a2uiJsonTagClose)"
+          parts.append(.text(rawTag))
+        }
       }
       let remaining = remainingText.trimmingCharacters(in: .whitespacesAndNewlines)
       if !remaining.isEmpty {
