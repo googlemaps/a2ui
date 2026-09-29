@@ -45,13 +45,25 @@ A2UIServices.provideAPIKey("YOUR_GOOGLE_MAPS_API_KEY")
 ```
 
 ### 2. Parse the Server Response
-Use the `A2AResponseParser` to safely extract payloads from the raw backend JSON tree into an ordered list of `ParsedA2AEvent` objects. This preserves the sequential order of conversational text and rich UI. *(Note: The snippet below is simplified pseudocode. For the complete implementation handling streaming aggregation, refer to `MainActivity.kt` in the sample app).*
+Pass the raw response text to `A2AResponseParser.parse()` to get an ordered list of `ParsedA2AEvent` objects. This preserves the sequential order of conversational text and rich UI. The input is the JSON text of one server response: the body of a `message/send` call, or the payload of one `message/stream` SSE `data:` line. The parser unwraps the JSON-RPC `result` envelope and, for `task` and `status-update` events, the agent reply in `status.message`. Streaming events that carry no message parts produce an empty list. *(Note: The snippet below is simplified pseudocode. For the complete implementation handling streaming aggregation, refer to `MainActivity.kt` in the sample app).*
 
 ```kotlin
+import com.google.android.gms.maps.a2ui.A2AParserException
 import com.google.android.gms.maps.a2ui.A2AResponseParser
+import com.google.android.gms.maps.a2ui.ParsedA2AEvent
 
-// SDK parses the response into an ordered list of parts
-val parsedParts = A2AResponseParser.parse(rawJson)
+// SDK parses the raw response text into an ordered list of parts
+val parsedParts =
+    try {
+        A2AResponseParser.parse(responseBody)
+    } catch (e: A2AParserException.ServerError) {
+        showError("Server error ${e.code}: ${e.message}")
+        return
+    } catch (e: A2AParserException) {
+        // InvalidJsonFormat or InvalidPayloadStructure
+        Log.w(TAG, "Unparseable A2A response", e)
+        return
+    }
 
 for (part in parsedParts) {
     when (part) {
@@ -66,6 +78,14 @@ for (part in parsedParts) {
     }
 }
 ```
+
+`parse()` throws one of the following `A2AParserException` subclasses:
+
+| Exception | Cause |
+| --- | --- |
+| `InvalidJsonFormat` | The input is not valid JSON text, or its top-level value is not a JSON object. |
+| `ServerError` | The response contains a JSON-RPC `error` object. `code` holds the JSON-RPC error code, if any. |
+| `InvalidPayloadStructure` | No message parts structure was found. |
 
 ### 3. Rendering the View
 The library provides `A2UIView`, a custom component that manages the rendering of rich map interfaces. It handles dynamic height resizing and user interaction callbacks automatically.
@@ -93,6 +113,9 @@ class GmpA2UIViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
     }
 }
 ```
+
+### 4. Streaming vs. Non-Streaming Updates (`message/stream` & `message/send`)
+In Compose or View-based apps, `A2UIView` supports both real-time SSE streaming (`message/stream`) and single-response requests (`message/send`). When `useStreaming` is enabled, incremental `.Data` chunks emitted by `A2AResponseParser.parse(chunkJson)` are applied in place via `updateA2uiJson(newJson)` without recreating the underlying `WebView` (see `MainActivity.kt` and `ChatRepository.kt` in the Android sample app).
 
 ## Architecture Deep Dive
 

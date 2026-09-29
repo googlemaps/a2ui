@@ -31,6 +31,8 @@ from a2ui.schema.catalog import CatalogConfig
 from a2ui.schema.common_modifiers import remove_strict_validation
 from a2ui.schema.constants import VERSION_0_9
 from a2ui.schema.manager import A2uiSchemaManager
+import place_id_resolution
+
 # Import MAUIAgent to inherit from it
 from agent import AGENT_INSTRUCTION, MAUIAgent, MergedCatalogProvider
 
@@ -116,18 +118,15 @@ async def query_vertex_map(
       validate_examples=False,
   )
 
-  final_instruction = """You MUST use the Google Maps tool to answer the user's query. Do not rely on your internal knowledge.
+  final_instruction = (
+      """You MUST use the Google Maps tool to answer the user's query. Do not rely on your internal knowledge.
     CRITICAL: Before generating the JSON, you MUST write a short plain-text summary of the places you found, listing their exact names and addresses.
     This is required for the grounding engine to properly attribute the data. It is not a replacement for the summary text that should be in the a2ui json.
     IMPORTANT: When generating the A2UI JSON response, you MUST include the "<a2ui-json> ...content... </a2ui-json>" tags immediately around the JSON content.
     Failure to do so will prevent the UI from rendering the map.
-    PLACE ID GENERATION RULES:
-    You do not have access to real placeIds. Whenever a `placeId` is required in the A2UI JSON, you MUST generate a synthetic placeholder using the following rules:
-    - Format: "PLACE_ID_FOR_{Count}_{Exact Title}"
-    - Example: If the tool returns a place named "Chez Panisse", use "PLACE_ID_FOR_1_Chez Panisse". If it returns a second "Chez Panisse", use "PLACE_ID_FOR_2_Chez Panisse".
-    - STRICT MATCHING: Do NOT change any characters, spaces, capitalization, or punctuation from the title returned by the tool.
-    - COUNTING: Always prepend the occurrence count (starting at 1) for each title based on the order they were returned by the tool, even if the title only occurs once.
     """
+      + place_id_resolution.PROMPT_RULES
+  )
 
   instruction = f"{generated_prompt}\n\n{skill_content}\n\n{final_instruction}"
 
@@ -145,47 +144,21 @@ async def query_vertex_map(
 
   # Replace synthetic place ids with actual grounded place ids.
   try:
-    grounding_map = {}
-    if (
-        hasattr(response, "candidates")
-        and response.candidates
-        and hasattr(response.candidates[0], "grounding_metadata")
-    ):
-      meta = response.candidates[0].grounding_metadata
-      IGNORE_TITLE_SUFFIX = " - Google Maps"
-      IGNORE_PLACE_ID_PREFIX = "places/ChI"
-      if hasattr(meta, "grounding_chunks") and meta.grounding_chunks:
-        title_counts = {}
-        for chunk in meta.grounding_chunks:
-          if hasattr(chunk, "maps") and chunk.maps:
-            title = getattr(chunk.maps, "title", None)
-            place_id = getattr(chunk.maps, "place_id", None)
-            if title and place_id:
-              if place_id.startswith(IGNORE_PLACE_ID_PREFIX):
-                place_id = place_id[len(IGNORE_PLACE_ID_PREFIX) - 3:]
-              if title.endswith(IGNORE_TITLE_SUFFIX):
-                title = title[:-len(IGNORE_TITLE_SUFFIX)]
-
-              # Track how many times this title has appeared
-              title_counts[title] = title_counts.get(title, 0) + 1
-              count = title_counts[title]
-              grounding_map[f"PLACE_ID_FOR_{count}_{title}"] = place_id
-      else:
-        logger.warning("No grounding chunks found")
-    else:
-      logger.warning("No grounding metadata found")
-
-    if grounding_map:
-      for key, value in grounding_map.items():
-        final_response_content = final_response_content.replace(key, value)
-    else:
-      logger.warning("No grounding map found")
-
+    attribution_sources = place_id_resolution.extract_attribution_sources(
+        response
+    )
+    final_response_content, unresolved_placeholders = (
+        place_id_resolution.resolve_place_ids(
+            final_response_content, attribution_sources
+        )
+    )
+    if unresolved_placeholders:
+      logger.warning(
+          "%d Place ID placeholder(s) remain in the response.",
+          unresolved_placeholders,
+      )
   except Exception as e:  # pylint: disable=broad-exception-caught
     logger.error("Error during Place ID cleanup: %s", e)
-
-  if "PLACE_ID_FOR_" in final_response_content:
-    logger.warning("Place ID placeholder found in response.")
 
   # Final safety check: Extract JSON array if marker is present
   if "<a2ui-json>" in final_response_content:
@@ -276,4 +249,5 @@ class MAUIAgentWithGrounding(MAUIAgent):
         ),
         instruction=instruction,
         tools=[grounding_tool, skill_manager_tool],
+        after_tool_callback=self._after_tool_callback,
     )

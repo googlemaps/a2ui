@@ -81,20 +81,27 @@ struct MyApp: App {
 ```
 
 #### 2. Parse the Response
-Use the `A2AResponseParser` to safely extract payloads from the raw backend JSON tree into an array of strictly typed events.
+Pass the raw response text to `A2AResponseParser.parse(_:)` to get an array of strictly typed events. The input is the JSON text of one server response: the body of a `message/send` call, or the payload of one `message/stream` SSE `data:` line (with the `data: ` prefix removed).
 
-The parser searches for the message parts array at the following paths within the dictionary you provide:
-* `rawJSON["parts"]`
-* `rawJSON["content"]["parts"]`
-* `rawJSON["status"]["message"]["parts"]`
+The parser unwraps the JSON-RPC `result` envelope and, for `task` and `status-update` events, the agent reply in `status.message`. It then searches for the message parts array at the following paths:
+* `parts`
+* `content.parts`
+* `status.message.parts`
 
-> **Note:** If your server wraps the A2A response inside a custom envelope or protocol, ensure to strip the outer wrapper and pass only the inner A2A payload to the parser so it can find the `parts` array at one of the paths above.
+Streaming events that carry no message parts, such as an initial `task` snapshot or a final `status-update`, produce an empty array.
 
 ```swift
 import GoogleMapsA2UI
 
-// Extract standard JSON into A2A events
-let parsedParts = (try? A2AResponseParser.parse(rawServerJson)) ?? []
+do {
+    let parsedParts = try A2AResponseParser.parse(responseText)
+    // Render parsedParts
+} catch A2AParserError.serverError(let code, let message) {
+    // The server returned a JSON-RPC error object.
+    showError("Server error \(code.map(String.init) ?? "-"): \(message)")
+} catch {
+    // A2AParserError.invalidJSONFormat or .invalidPayloadStructure
+}
 ```
 
 #### 3. Render the UI
@@ -135,3 +142,6 @@ struct ChatMessageView: View {
     }
 }
 ```
+
+#### 4. Streaming Updates (`message/stream`)
+When consuming real-time Server-Sent Events (`message/stream`), pass a stable `id` (such as `"\(message.id)-\(index)"`) to `A2UIView`. Whenever `part` updates with incremental A2UI payload data, `A2UIView` automatically pushes the update to the mounted web component via its JavaScript bridge (`updateA2UIData`) without reloading the underlying `WKWebView`. You can switch between `message/stream` and `message/send` in your networking service using a `useStreaming` boolean flag (see `ChatService.swift` in the iOS sample app).
