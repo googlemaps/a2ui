@@ -56,6 +56,8 @@ export class A2UIRenderer {
     },
   );
   private timelineItems: TimelineItem[] = [];
+  private readonly surfaceIdAliases = new Map<string, string>();
+  private surfaceCollisionCounter = 0;
 
   /**
    * Returns the current timeline of messages and surfaces.
@@ -96,10 +98,46 @@ export class A2UIRenderer {
 
     for (const part of orderedParts) {
       if (part.type === "text") {
-        newItems.push({ type: "text", text: part.text });
+        const lastNewItem = newItems.length > 0 ? newItems[newItems.length - 1] : null;
+
+        let lastTimelineTextIndex = -1;
+        for (let j = this.timelineItems.length - 1; j >= 0; j--) {
+          if (this.timelineItems[j].type === "text") {
+            lastTimelineTextIndex = j;
+            break;
+          }
+        }
+
+        if (lastNewItem && lastNewItem.type === "text") {
+          lastNewItem.text += part.text;
+        } else if (lastTimelineTextIndex !== -1) {
+          const lastTimelineTextItem = this.timelineItems[lastTimelineTextIndex] as { type: "text", text: string };
+          const updatedItem = { ...lastTimelineTextItem, text: lastTimelineTextItem.text + part.text };
+          this.timelineItems = [
+            ...this.timelineItems.slice(0, lastTimelineTextIndex),
+            updatedItem,
+            ...this.timelineItems.slice(lastTimelineTextIndex + 1)
+          ];
+        } else {
+          newItems.push({ type: "text", text: part.text });
+        }
       } else if (part.type === "a2ui") {
-        uiMessages.push(part.message);
-        const surfaceId = this.getSurfaceId(part.message);
+        const msg = part.message;
+        const rawSurfaceId = this.getSurfaceId(msg);
+        if (msg.createSurface && this.getSurface(rawSurfaceId)) {
+          this.surfaceIdAliases.set(
+              rawSurfaceId,
+              `${rawSurfaceId}_${++this.surfaceCollisionCounter}`,
+          );
+        }
+        const surfaceId =
+            this.surfaceIdAliases.get(rawSurfaceId) ?? rawSurfaceId;
+        for (const kind of A2UI_TOP_LEVEL_KEYS) {
+          if (msg[kind]?.surfaceId) {
+            msg[kind].surfaceId = surfaceId;
+          }
+        }
+        uiMessages.push(msg);
 
         // Record the surface in the timeline if it's new
         if (!this.timelineItems.find(t => t.type === "surface" && t.surfaceId === surfaceId) &&
