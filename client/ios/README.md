@@ -135,3 +135,6 @@ struct ChatMessageView: View {
     }
 }
 ```
+
+#### 4. Streaming Updates (`message/stream`)
+When consuming real-time Server-Sent Events (`message/stream`), pass a stable `id` (such as `"\(message.id)-\(index)"`) to `A2UIView`. Whenever `part` updates with incremental A2UI payload data, `A2UIView` automatically pushes the update to the mounted web component via its JavaScript bridge (`updateA2UIData`) without reloading the underlying `WKWebView`. You can switch between `message/stream` and `message/send` in your networking service using a `useStreaming` boolean flag (see `ChatService.swift` in the iOS sample app).
