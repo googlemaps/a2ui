@@ -15,35 +15,45 @@
  */
 
 import {A2uiController, A2uiLitElement} from '@a2ui/lit/v0_9';
-import {structuralStyles} from '@a2ui/web_core';
+import {structuralStyles} from '@a2ui/web_core/v0_8';
 import {ComponentApi, DynamicStringSchema} from '@a2ui/web_core/v0_9';
 import {css, html, LitElement, nothing} from 'lit';
 import {customElement} from 'lit/decorators.js';
 import {styleMap} from 'lit/directives/style-map.js';
-import {z} from 'zod'
+import {z} from 'zod';
+
+import {loadMapsLibrary} from './maps_api_loader';
 
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(structuralStyles);
 
+enum UIStrings {
+  PLACE_DETAILS = 'Place Details',
+}
+
 export const PlaceDetailsCompactApi = {
   name: 'PlaceDetailsCompact',
-  schema: z
-    .object({
-      placeId: DynamicStringSchema.describe('The ID of the place to display.'),
-      orientation: z
-        .enum(['horizontal', 'vertical'])
-        .optional()
-        .default('horizontal')
-        .describe('The orientation of the place card.'),
-    })
-    .strict(),
+  schema: z.object({
+             placeId: DynamicStringSchema.describe(
+                 'The ID of the place to display.'),
+             orientation: z.enum(['horizontal', 'vertical'])
+                              .optional()
+                              .default('horizontal')
+                              .describe('The orientation of the place card.'),
+           }).strict(),
 } satisfies ComponentApi;
+
+/** Declared so Closure Compiler does not rename these schema keys. */
+export declare interface PlaceDetailsCompactProps {
+  placeId: string;
+  orientation?: 'horizontal'|'vertical';
+}
 
 declare global {
   interface HTMLElementTagNameMap {
-    "gmpx-place-details-compact": HTMLElement & {
-      place: string | object | null;
-      orientation: "horizontal" | "vertical";
+    'gmpx-place-details-compact': HTMLElement&{
+      place: string|object|null;
+      orientation: 'horizontal'|'vertical';
     };
   }
 }
@@ -61,6 +71,13 @@ export class PlaceDetailsCompact extends
     return new A2uiController(this, PlaceDetailsCompactApi);
   }
 
+  override connectedCallback(): void {
+    super.connectedCallback();
+    void loadMapsLibrary('places').catch((err) => {
+      console.error('Failed to load Google Maps Places library:', err);
+    });
+  }
+
   static override styles = [
     sheet,
     css`
@@ -71,6 +88,12 @@ export class PlaceDetailsCompact extends
       gmp-place-details-compact {
         color-scheme: var(--color-scheme);
         --gmpx-color-scheme: var(--color-scheme);
+        border: var(
+          --gmp-card-border,
+          1px solid var(--gmp-mat-color-outline-decorative, light-dark(#e3e3e3, #474747))
+        );
+        border-radius: var(--gmp-card-border-radius, 16px);
+        box-shadow: var(--gmp-card-box-shadow, none);
       }
     `,
   ];
@@ -81,13 +104,9 @@ export class PlaceDetailsCompact extends
 
     const placeId = props.placeId;
 
-    // Default to 'vertical' if this is the only a2ui-placedetailscompact component among its siblings,
-    // otherwise default to 'horizontal'. AI can still override this.
-    const siblingCards = Array.from(this.parentElement?.children || [])
-      .filter(c => c.tagName.toLowerCase() === 'a2ui-placedetailscompact');
-    const autoOrientation = siblingCards.length === 1 ? 'vertical' : 'horizontal';
-
-    const orientation = (props.orientation ?? autoOrientation).toUpperCase() as google.maps.places.PlaceDetailsOrientationString;
+    // Default deterministically to 'HORIZONTAL'
+    const orientation = (props.orientation ?? 'horizontal').toUpperCase() as
+        google.maps.places.PlaceDetailsOrientationString;
 
     const style = {
       'width': '100%',
@@ -98,11 +117,11 @@ export class PlaceDetailsCompact extends
     }
 
     return html`
-      <section style=${styleMap(style)}>
+      <section aria-label="${UIStrings.PLACE_DETAILS}" style=${styleMap(style)}>
         <gmp-place-details-compact orientation="${orientation}"
             place="${placeId}"
             internal-usage-attribution-ids="${
-        (window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.8_atoui'}">
+        (window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.9_atoui'}">
           <gmp-place-details-place-request place="${placeId}">
           </gmp-place-details-place-request>
             <gmp-place-content-config>
