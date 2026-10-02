@@ -39,7 +39,9 @@ let package = Package(
     ),
     .testTarget(
       name: "GoogleMapsA2UITests",
-      dependencies: ["GoogleMapsA2UI"]
+      dependencies: ["GoogleMapsA2UI"],
+      // Test sources live directly under Tests/ rather than Tests/GoogleMapsA2UITests/.
+      path: "Tests"
     ),
   ]
 )
