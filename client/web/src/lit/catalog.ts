@@ -19,13 +19,16 @@ import { Catalog } from "@a2ui/web_core/v0_9";
 // import { css } from "lit";
 
 const mapsAgenticUICatalog = new Catalog(
-  'a2ui://maps-agentic-ui-catalog.json',
-  [
-    A2uiGoogleMap,
-    A2uiPlaceDetailsCompact,
-    ...basicCatalog.components.values(),
-  ],
-  Array.from(basicCatalog.functions.values())
-)
+    'a2ui://maps-agentic-ui-catalog.json',
+    [
+      A2uiGoogleMap,
+      A2uiPlaceDetailsCompact,
+      ...basicCatalog.components.values(),
+    ].map((c) => ({
+            ...c,
+            schema: 'passthrough' in c.schema ? c.schema.passthrough() :
+                                                c.schema,
+          })),
+    Array.from(basicCatalog.functions.values()))
 
 export { mapsAgenticUICatalog };

@@ -3,7 +3,7 @@
     "version": "v0.9",
     "createSurface": {
       "surfaceId": "{{surface_id}}",
-      "catalogId": "a2ui://maps-agentic-ui-catalog.json"
+      "catalogId": "{{catalog_id}}"
     }
   },
   {
