@@ -94,6 +94,9 @@ class GmpA2UIViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
 }
 ```
 
+### 4. Streaming vs. Non-Streaming Updates (`message/stream` & `message/send`)
+In Compose or View-based apps, `A2UIView` supports both real-time SSE streaming (`message/stream`) and single-response requests (`message/send`). When `useStreaming` is enabled, incremental `.Data` chunks emitted by `A2AResponseParser.parse(chunkJson)` are applied in place via `updateA2uiJson(newJson)` without recreating the underlying `WebView` (see `MainActivity.kt` and `ChatRepository.kt` in the Android sample app).
+
 ## Architecture Deep Dive
 
 The SDK encapsulates all complex parsing and rendering logic into four core components:
