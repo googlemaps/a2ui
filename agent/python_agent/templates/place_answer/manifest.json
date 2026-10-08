@@ -1,0 +1,29 @@
+{
+  "intent": "PLACE_ANSWER",
+  "surface_prefix": "place-answer-surface",
+  "archetype": "Single place Q&A, venue overview, or specific factual inquiries about a single named landmark or business (e.g., 'does the Space Needle have parking?', 'is Pike Place Market dog-friendly?', 'tell me about the Ferry Building').",
+  "empty_fallback_text": "Could not retrieve information for the requested place.",
+  "tool_description": "Renders an interactive Google Maps single-place answer UI component with a direct answer summary, focused map, marker, and place card.",
+  "conformance_example": {
+    "surface_id": "test-surface",
+    "heading": "Space Needle",
+    "summary": "Valet parking is available at the Space Needle entrance, with paid public garages located nearby around Seattle Center.",
+    "name": "Space Needle",
+    "place_id": "ChIJ-bfVTh8VkFQR6yFmQ34e2mo",
+    "lat": 47.6205,
+    "lng": -122.3493,
+    "zoom": 16
+  },
+  "few_shot_examples": [
+    {
+      "user_query": "Does the Space Needle have parking?",
+      "intent": "PLACE_ANSWER",
+      "query": "Space Needle parking Seattle"
+    },
+    {
+      "user_query": "Is Pike Place Market dog-friendly?",
+      "intent": "PLACE_ANSWER",
+      "query": "Pike Place Market Seattle"
+    }
+  ]
+}
