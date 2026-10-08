@@ -75,6 +75,28 @@ return (
 );
 ```
 
+### 3. Streaming Responses (`sendStream`)
+`A2UIClient` also supports real-time incremental Server-Sent Events (SSE) streaming via `client.sendStream(messageText)` (`message/stream`). You can use a `useStreaming` boolean flag to switch between streaming (`client.sendStream`) and non-streaming (`client.send`):
+
+```tsx
+const useStreaming = true; // Set to false to use non-streaming client.send()
+
+async function handleSend(messageText: string) {
+  renderer.addUserMessage(messageText);
+
+  if (useStreaming) {
+    // Stream incremental text and A2UI component updates via SSE (message/stream)
+    for await (const chunk of client.sendStream(messageText)) {
+      renderer.processResponse([chunk]);
+    }
+  } else {
+    // Wait for the full response in a single payload (message/send)
+    const response = await client.send(messageText);
+    renderer.processResponse(response);
+  }
+}
+```
+
 ## Local Development
 
 To make changes to this package and test them in an application:
@@ -96,3 +118,29 @@ You can consume the package via npm linking for local development:
 # In your application directory
 npm link @googlemaps/a2ui
 ```
+
+## Google API Keys
+
+### Google Maps API Key
+
+Agentic UI Toolkit requires an API Key to use Google Maps Platform products. To create a Google Maps API Key, follow the instructions in the [Google Maps Platform documentation](https://developers.google.com/maps/documentation/javascript/get-api-key).
+
+Your API Key must have the following APIs enabled in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials):
+
+* Maps JavaScript API
+* Places UI Kit
+* Routes API
+
+**Loading the Google Maps JavaScript API**
+
+Your API Key must also be included when loading the Google Maps JavaScript API code. See the [Google Maps Platform Documentation](https://developers.google.com/maps/documentation/javascript/load-maps-js-api) for instructions on how to load the API, including configuring the API Key.
+
+Agentic UI Toolkit requires features available in the Alpha channel. You must use `v=alpha` when loading the Maps JavaScript API. Learn more about versions in the [Google Maps Platform Documentation](https://developers.google.com/maps/documentation/javascript/versions).
+
+Use of Agentic UI Toolkit requires several [Maps JavaScript API libraries](https://developers.google.com/maps/documentation/javascript/libraries). When loading the Google Maps JavaScript API, you must include the following libraries:
+
+* maps
+* maps3d
+* marker
+* places
+* routes
