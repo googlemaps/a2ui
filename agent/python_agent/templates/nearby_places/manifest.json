@@ -1,0 +1,42 @@
+{
+  "intent": "NEARBY_PLACES",
+  "surface_prefix": "nearby-places-surface",
+  "archetype": "Specified small counts (2 to 4 places) or qualitative constraints benefiting from deep reasoning and individualized recommendations near a location (e.g., '3 hidden gem activities', 'parks for my labradoodle', 'quiet romantic dinner spots near the hotel').",
+  "empty_fallback_text": "No places matching your criteria could be found.",
+  "tool_description": "Renders an interactive Google Maps nearby places depth UI component (2 to 4 places) with a map, place cards, and individualized markdown descriptions.",
+  "conformance_example": {
+    "surface_id": "test-surface",
+    "heading": "Quiet romantic dinner spots near The Plaza Hotel",
+    "center_lat": 40.7644,
+    "center_lng": -73.9745,
+    "zoom": 14,
+    "places": [
+      {
+        "placeId": "ChIJ1",
+        "name": "Bistro One",
+        "lat": 40.765,
+        "lng": -73.975,
+        "description": "An intimate candlelit French bistro tucked away on a quiet side street.\n\n* **The Vibe**: Hushed banquette seating ideal for unhurried conversation.\n* **Logistics**: Reservations recommended; a 5-minute walk from The Plaza Hotel."
+      },
+      {
+        "placeId": "ChIJ2",
+        "name": "Trattoria Two",
+        "lat": 40.763,
+        "lng": -73.974,
+        "description": "A warm neighborhood trattoria celebrated for handmade pasta and curated regional wines.\n\n* **Standout Feature**: Private garden courtyard seating away from street traffic.\n* **Logistics**: Open nightly until 11 PM; just steps away from Fifth Avenue."
+      }
+    ]
+  },
+  "few_shot_examples": [
+    {
+      "user_query": "3 hidden gem activities near Seattle Center",
+      "intent": "NEARBY_PLACES",
+      "query": "hidden gem activities near Seattle Center"
+    },
+    {
+      "user_query": "Quiet romantic dinner spots near The Plaza Hotel",
+      "intent": "NEARBY_PLACES",
+      "query": "quiet romantic dinner restaurants near The Plaza Hotel"
+    }
+  ]
+}
