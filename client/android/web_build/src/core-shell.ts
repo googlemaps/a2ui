@@ -237,7 +237,7 @@ export abstract class A2UICoreShell extends LitElement {
                 if (m.updateDataModel) surfaceId = m.updateDataModel.surfaceId;
                 if (surfaceId) break;
             }
-            if (surfaceId) {
+            if (surfaceId && !this.rendererRef.getSurface(surfaceId)) {
                 messages.unshift({
                     createSurface: {
                         surfaceId,
