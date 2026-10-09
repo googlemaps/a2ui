@@ -55,35 +55,36 @@ export class A2UIClient {
     return this.client;
   }
 
-  async send(
-    message: any | string
-  ): Promise<Array<{ type: "text", text: string } | { type: "a2ui", message: any }>> {
-    const client = await this.getClient();
-    let parts: Part[] = [];
-
-    if (typeof message === 'string') {
-      // Try to parse as JSON first, just in case
-      try {
-        const parsed = JSON.parse(message);
-        if (typeof parsed === 'object' && parsed !== null) {
-          parts = [{
-            kind: "data",
-            data: parsed as unknown as Record<string, unknown>,
-            mimeType: A2UI_MIME_TYPE,
-          } as Part];
-        } else {
-          parts = [{ kind: "text", text: message }];
-        }
-      } catch {
-        parts = [{ kind: "text", text: message }];
-      }
-    } else {
-      parts = [{
+  private _buildMessageParts(message: any | string): Part[] {
+    if (typeof message !== 'string') {
+      return [{
         kind: "data",
         data: message as unknown as Record<string, unknown>,
         mimeType: A2UI_MIME_TYPE,
       } as Part];
     }
+
+    try {
+      const parsed = JSON.parse(message);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return [{
+          kind: "data",
+          data: parsed as unknown as Record<string, unknown>,
+          mimeType: A2UI_MIME_TYPE,
+        } as Part];
+      }
+    } catch {
+      // Ignore JSON parse error, fall through to text
+    }
+
+    return [{ kind: "text", text: message }];
+  }
+
+  async send(
+    message: any | string
+  ): Promise<Array<{ type: "text", text: string } | { type: "a2ui", message: any }>> {
+    const client = await this.getClient();
+    const parts = this._buildMessageParts(message);
 
     const response = await client.sendMessage({
       message: {
@@ -112,5 +113,117 @@ export class A2UIClient {
     }
 
     return [];
+  }
+
+  private isAlreadyYieldedText(
+      trimmedNew: string,
+      priorSegments: string[],
+      priorYieldedTrimmed: string,
+      priorCompletedCount: number,
+      isTerminalEvent: boolean,
+      state: string|undefined,
+      partsCount: number,
+      ): boolean {
+    if (!trimmedNew || priorSegments.length === 0) return false;
+    const matchesPriorSegment = priorSegments.some(
+        (seg) => seg.trim() === trimmedNew,
+    );
+    if (isTerminalEvent) {
+      return matchesPriorSegment || priorYieldedTrimmed.includes(trimmedNew);
+    }
+    if (!state) {
+      return (
+          matchesPriorSegment && (partsCount > 1 || priorCompletedCount > 0));
+    }
+    return false;
+  }
+
+  async *sendStream(
+    message: any | string
+  ): AsyncGenerator<{ type: "text"; text: string } | { type: "a2ui"; message: any }> {
+    const client = await this.getClient();
+    const parts = this._buildMessageParts(message);
+
+    const stream = client.sendMessageStream({
+      message: {
+        messageId: crypto.randomUUID(),
+        role: "user",
+        parts: parts,
+        kind: "message",
+      },
+    });
+
+    const yieldedDataPayloads = new Set<string>();
+    const completedTextSegments: string[] = [];
+    let currentSegmentText = '';
+
+    for await (const event of stream) {
+      if (event.kind !== 'status-update' || !event.status) continue;
+      const parts = event.status.message?.parts;
+      if (!parts) continue;
+
+      const state = event.status.state;
+      const isTerminalEvent =
+          Boolean(state && state !== 'working') || Boolean(event.final);
+
+      // Snapshot text segments yielded in prior events so terminal summary
+      // deduplication only compares against prior events, never against earlier
+      // parts within the same status-update event.
+      const priorCompletedCount = completedTextSegments.length;
+      const priorSegments = currentSegmentText ?
+          [...completedTextSegments, currentSegmentText] :
+          [...completedTextSegments];
+      let priorYieldedTrimmed = priorSegments.join('').trim();
+
+      for (const part of parts) {
+        if (part.kind === 'text' && part.text) {
+          const newText = part.text;
+          const trimmedNew = newText.trim();
+
+          let deltaText = '';
+          if (currentSegmentText.trim() &&
+              newText.startsWith(currentSegmentText)) {
+            deltaText = newText.substring(currentSegmentText.length);
+          } else if (
+              this.isAlreadyYieldedText(
+                  trimmedNew,
+                  priorSegments,
+                  priorYieldedTrimmed,
+                  priorCompletedCount,
+                  isTerminalEvent,
+                  state,
+                  parts.length,
+                  )) {
+            // Final task completion events re-send the full parsed text parts
+            // with leading/trailing whitespace stripped; skip already-yielded
+            // text segments so they are not duplicated.
+            deltaText = '';
+          } else {
+            deltaText = newText;
+          }
+          if (deltaText) {
+            yield { type: "text", text: deltaText };
+            currentSegmentText += deltaText;
+          }
+        } else if (part.kind === 'data' && part.data) {
+          if (currentSegmentText) {
+            completedTextSegments.push(currentSegmentText);
+            currentSegmentText = '';
+          }
+          if ('deleteSurface' in part.data) {
+            yieldedDataPayloads.clear();
+            completedTextSegments.length = 0;
+            currentSegmentText = '';
+            priorSegments.length = 0;
+            priorYieldedTrimmed = '';
+          }
+          const payloadStr = JSON.stringify(part.data);
+          if (!yieldedDataPayloads.has(payloadStr)) {
+            yield { type: "a2ui", message: part.data };
+            yieldedDataPayloads.add(payloadStr);
+          }
+        }
+      }
+    }
   }
 }
