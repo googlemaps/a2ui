@@ -96,7 +96,9 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
           request: WebResourceRequest?,
           error: WebResourceError?,
         ) {
-          super.onReceivedError(view, request, error)
+          if (request != null && error != null) {
+            super.onReceivedError(view, request, error)
+          }
           Log.e(
             A2UI_ERROR_TAG,
             "Error loading WebView: ${error?.description}, URL: ${request?.url}",
