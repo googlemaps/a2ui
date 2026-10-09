@@ -1,0 +1,103 @@
+[
+  {
+    "version": "v0.9",
+    "createSurface": {
+      "surfaceId": "test-surface",
+      "catalogId": "a2ui://maps-agentic-ui-catalog.json"
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateComponents": {
+      "surfaceId": "test-surface",
+      "components": [
+        {
+          "id": "root",
+          "component": "Column",
+          "children": ["heading-text", "map", "list"]
+        },
+        {
+          "id": "heading-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "### Quiet romantic dinner spots near The Plaza Hotel"
+        },
+        {
+          "id": "map",
+          "component": "GoogleMap",
+          "center": {
+            "lat": 40.7644,
+            "lng": -73.9745
+          },
+          "zoom": 14,
+          "tilt": 0,
+          "mode": "roadmap",
+          "markers": [
+            {
+              "lat": 40.765,
+              "lng": -73.975,
+              "label": "Bistro One",
+              "placeId": "ChIJ1"
+            },
+            {
+              "lat": 40.763,
+              "lng": -73.974,
+              "label": "Trattoria Two",
+              "placeId": "ChIJ2"
+            }
+          ]
+        },
+        {
+          "id": "list",
+          "component": "List",
+          "direction": "vertical",
+          "children": {
+            "componentId": "place-item",
+            "path": "/places"
+          }
+        },
+        {
+          "id": "place-item",
+          "component": "Column",
+          "children": ["place-card", "place-description"]
+        },
+        {
+          "id": "place-card",
+          "component": "PlaceDetailsCompact",
+          "placeId": { "path": "placeId" }
+        },
+        {
+          "id": "place-description",
+          "component": "Text",
+          "variant": "body",
+          "text": { "path": "description" }
+        }
+      ]
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateDataModel": {
+      "surfaceId": "test-surface",
+      "path": "/",
+      "value": {
+        "places": [
+          {
+            "placeId": "ChIJ1",
+            "name": "Bistro One",
+            "lat": 40.765,
+            "lng": -73.975,
+            "description": "An intimate candlelit French bistro tucked away on a quiet side street.\n\n* **The Vibe**: Hushed banquette seating ideal for unhurried conversation.\n* **Logistics**: Reservations recommended; a 5-minute walk from The Plaza Hotel."
+          },
+          {
+            "placeId": "ChIJ2",
+            "name": "Trattoria Two",
+            "lat": 40.763,
+            "lng": -73.974,
+            "description": "A warm neighborhood trattoria celebrated for handmade pasta and curated regional wines.\n\n* **Standout Feature**: Private garden courtyard seating away from street traffic.\n* **Logistics**: Open nightly until 11 PM; just steps away from Fifth Avenue."
+          }
+        ]
+      }
+    }
+  }
+]

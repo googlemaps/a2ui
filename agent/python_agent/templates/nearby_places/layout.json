@@ -1,0 +1,76 @@
+[
+  {
+    "version": "v0.9",
+    "createSurface": {
+      "surfaceId": "{{surface_id}}",
+      "catalogId": "{{catalog_id}}"
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateComponents": {
+      "surfaceId": "{{surface_id}}",
+      "components": [
+        {
+          "id": "root",
+          "component": "Column",
+          "children": ["heading-text", "map", "list"]
+        },
+        {
+          "id": "heading-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "### {{heading}}"
+        },
+        {
+          "id": "map",
+          "component": "GoogleMap",
+          "center": {
+            "lat": "{{center_lat}}",
+            "lng": "{{center_lng}}"
+          },
+          "zoom": "{{zoom}}",
+          "tilt": 0,
+          "mode": "roadmap",
+          "anchorMarker": "{{anchor_marker}}",
+          "markers": "{{markers}}"
+        },
+        {
+          "id": "list",
+          "component": "List",
+          "direction": "vertical",
+          "children": {
+            "componentId": "place-item",
+            "path": "/places"
+          }
+        },
+        {
+          "id": "place-item",
+          "component": "Column",
+          "children": ["place-card", "place-description"]
+        },
+        {
+          "id": "place-card",
+          "component": "PlaceDetailsCompact",
+          "placeId": { "path": "placeId" }
+        },
+        {
+          "id": "place-description",
+          "component": "Text",
+          "variant": "body",
+          "text": { "path": "description" }
+        }
+      ]
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateDataModel": {
+      "surfaceId": "{{surface_id}}",
+      "path": "/",
+      "value": {
+        "places": "{{places}}"
+      }
+    }
+  }
+]
