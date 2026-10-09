@@ -1,0 +1,63 @@
+[
+  {
+    "version": "v0.9",
+    "createSurface": {
+      "surfaceId": "test-surface",
+      "catalogId": "a2ui://maps-agentic-ui-catalog.json"
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateComponents": {
+      "surfaceId": "test-surface",
+      "components": [
+        {
+          "id": "root",
+          "component": "Column",
+          "children": [
+            "heading-text",
+            "summary-text",
+            "map",
+            "place-card"
+          ]
+        },
+        {
+          "id": "heading-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "### Space Needle"
+        },
+        {
+          "id": "summary-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "Valet parking is available at the Space Needle entrance, with paid public garages located nearby around Seattle Center."
+        },
+        {
+          "id": "map",
+          "component": "GoogleMap",
+          "center": {
+            "lat": 47.6205,
+            "lng": -122.3493
+          },
+          "zoom": 16,
+          "tilt": 0,
+          "mode": "roadmap",
+          "markers": [
+            {
+              "lat": 47.6205,
+              "lng": -122.3493,
+              "label": "Space Needle",
+              "placeId": "ChIJ-bfVTh8VkFQR6yFmQ34e2mo"
+            }
+          ]
+        },
+        {
+          "id": "place-card",
+          "component": "PlaceDetailsCompact",
+          "placeId": "ChIJ-bfVTh8VkFQR6yFmQ34e2mo"
+        }
+      ]
+    }
+  }
+]
