@@ -19,6 +19,22 @@ import {state} from 'lit/decorators.js';
 
 import {A2UIRenderer, type TimelineItem, themeStyleSheet} from '@googlemaps/a2ui/lit';
 
+// In single-file Closure bundles where all modules are already inlined,
+// register resolved import handlers so dynamic import() calls succeed.
+interface GoogDynamicImport {
+  setImportHandlerInternalDoNotCallOrElse?:
+      (handler: (chunkId: string) => Promise<unknown>) => void;
+  setUncompiledChunkIdHandlerInternalDoNotCallOrElse?:
+      (handler: (name: string) => string) => void;
+}
+declare const goog: unknown;
+const googDynamicImport =
+    typeof goog === 'undefined' ? null : (goog as GoogDynamicImport);
+googDynamicImport?.setImportHandlerInternalDoNotCallOrElse?.(
+    () => Promise.resolve(null));
+googDynamicImport?.setUncompiledChunkIdHandlerInternalDoNotCallOrElse?.(
+    (name) => name);
+
 export interface A2UIComponentNode {
   id?: string;
   component: string;
@@ -237,7 +253,7 @@ export abstract class A2UICoreShell extends LitElement {
                 if (m.updateDataModel) surfaceId = m.updateDataModel.surfaceId;
                 if (surfaceId) break;
             }
-            if (surfaceId) {
+            if (surfaceId && !this.rendererRef.getSurface(surfaceId)) {
                 messages.unshift({
                     createSurface: {
                         surfaceId,

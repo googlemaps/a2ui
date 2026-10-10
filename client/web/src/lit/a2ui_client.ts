@@ -55,35 +55,36 @@ export class A2UIClient {
     return this.client;
   }
 
-  async send(
-    message: any | string
-  ): Promise<Array<{ type: "text", text: string } | { type: "a2ui", message: any }>> {
-    const client = await this.getClient();
-    let parts: Part[] = [];
-
-    if (typeof message === 'string') {
-      // Try to parse as JSON first, just in case
-      try {
-        const parsed = JSON.parse(message);
-        if (typeof parsed === 'object' && parsed !== null) {
-          parts = [{
-            kind: "data",
-            data: parsed as unknown as Record<string, unknown>,
-            mimeType: A2UI_MIME_TYPE,
-          } as Part];
-        } else {
-          parts = [{ kind: "text", text: message }];
-        }
-      } catch {
-        parts = [{ kind: "text", text: message }];
-      }
-    } else {
-      parts = [{
+  private _buildMessageParts(message: any | string): Part[] {
+    if (typeof message !== 'string') {
+      return [{
         kind: "data",
         data: message as unknown as Record<string, unknown>,
         mimeType: A2UI_MIME_TYPE,
       } as Part];
     }
+
+    try {
+      const parsed = JSON.parse(message);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return [{
+          kind: "data",
+          data: parsed as unknown as Record<string, unknown>,
+          mimeType: A2UI_MIME_TYPE,
+        } as Part];
+      }
+    } catch {
+      // Ignore JSON parse error, fall through to text
+    }
+
+    return [{ kind: "text", text: message }];
+  }
+
+  async send(
+    message: any | string
+  ): Promise<Array<{ type: "text", text: string } | { type: "a2ui", message: any }>> {
+    const client = await this.getClient();
+    const parts = this._buildMessageParts(message);
 
     const response = await client.sendMessage({
       message: {
@@ -112,5 +113,46 @@ export class A2UIClient {
     }
 
     return [];
+  }
+
+  async *sendStream(
+    message: any | string
+  ): AsyncGenerator<{ type: "text"; text: string } | { type: "a2ui"; message: any }> {
+    const client = await this.getClient();
+    const parts = this._buildMessageParts(message);
+
+    const stream = client.sendMessageStream({
+      message: {
+        messageId: crypto.randomUUID(),
+        role: "user",
+        parts: parts,
+        kind: "message",
+      },
+    });
+
+    const yieldedDataPayloads = new Set<string>();
+    let yieldedText = "";
+
+    for await (const event of stream) {
+      if (event.kind !== 'status-update' || !event.status) continue;
+      if (!event.status.message?.parts) continue;
+
+      for (const part of event.status.message.parts) {
+        if (part.kind === 'text' && (part as any).text) {
+          const newText = (part as any).text;
+          const deltaText = newText.startsWith(yieldedText) ? newText.substring(yieldedText.length) : newText;
+          if (deltaText) {
+            yield { type: "text", text: deltaText };
+            yieldedText += deltaText;
+          }
+        } else if (part.kind === 'data' && part.data) {
+          const payloadStr = JSON.stringify(part.data);
+          if (!yieldedDataPayloads.has(payloadStr)) {
+            yield { type: "a2ui", message: part.data };
+            yieldedDataPayloads.add(payloadStr);
+          }
+        }
+      }
+    }
   }
 }
