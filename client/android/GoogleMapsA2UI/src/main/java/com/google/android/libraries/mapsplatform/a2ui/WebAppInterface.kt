@@ -63,19 +63,21 @@ class WebAppInterface(private val webView: WebView, private val a2uiView: A2UIVi
   @JavascriptInterface
   fun onWebpageResized(height: Int) {
     Log.d(TAG, "onWebpageResized: $height")
-    if (!resized) {
-      webView.post {
-        val layoutParams = webView.layoutParams
-        if (layoutParams != null) {
-          val newHeight = (height * webView.resources.displayMetrics.density).toInt()
+    webView.post {
+      val layoutParams = webView.layoutParams
+      if (layoutParams != null) {
+        val newHeight = (height * webView.resources.displayMetrics.density).toInt()
+        if (layoutParams.height != newHeight) {
           layoutParams.height = newHeight
           webView.layoutParams = layoutParams
-          resized = true
           Log.d("A2UIViewDebug", "WebView height updated to: $newHeight")
-          a2uiView.onRenderCompleteInternal()
-        } else {
-          Log.e("A2UIViewDebug", "WebView LayoutParams is null.")
         }
+        if (!resized) {
+          resized = true
+          a2uiView.onRenderCompleteInternal()
+        }
+      } else {
+        Log.e("A2UIViewDebug", "WebView LayoutParams is null.")
       }
     }
   }
