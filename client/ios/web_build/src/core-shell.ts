@@ -19,6 +19,11 @@ import {state} from 'lit/decorators.js';
 
 import {A2UIRenderer, type TimelineItem, themeStyleSheet} from '@googlemaps/a2ui/lit';
 
+const googGlobal = (globalThis as Record<string, unknown>)['goog'] as |
+    Record<string, (fn: () => Promise<null>) => void>| undefined;
+googGlobal?.['setImportHandlerInternalDoNotCallOrElse']?.(
+    () => Promise.resolve(null));
+
 export interface A2UIComponentNode {
   id?: string;
   component: string;
@@ -237,7 +242,7 @@ export abstract class A2UICoreShell extends LitElement {
                 if (m.updateDataModel) surfaceId = m.updateDataModel.surfaceId;
                 if (surfaceId) break;
             }
-            if (surfaceId) {
+            if (surfaceId && !this.rendererRef.getSurface(surfaceId)) {
                 messages.unshift({
                     createSurface: {
                         surfaceId,
