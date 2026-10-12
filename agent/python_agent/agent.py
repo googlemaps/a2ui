@@ -14,13 +14,14 @@
 
 """MAUI Agent definition and implementation."""
 
-from collections import OrderedDict
 from collections.abc import AsyncIterable
+import importlib.resources
 import json
 import logging
 import os
 import pathlib
 from typing import Any
+import uuid
 
 from a2a.types import (
     AgentCapabilities,
@@ -44,15 +45,29 @@ from google.genai import types
 import jsonschema
 
 import a2ui.a2a.extension as a2ui_extension
-from a2ui.a2a.parts import parse_response_to_parts, stream_response_to_parts
+from a2ui.a2a.parts import create_a2ui_part, parse_response_to_parts, stream_response_to_parts
 from a2ui.basic_catalog.provider import BundledCatalogProvider
+from a2ui.parser.constants import (
+    MSG_TYPE_CREATE_SURFACE,
+    MSG_TYPE_DELETE_SURFACE,
+    MSG_TYPE_UPDATE_COMPONENTS,
+    MSG_TYPE_UPDATE_DATA_MODEL,
+)
 from a2ui.parser.parser import parse_response
 from a2ui.parser.streaming import A2uiStreamParser
 from a2ui.schema.catalog import CatalogConfig
 from a2ui.schema.catalog_provider import A2uiCatalogProvider
 from a2ui.schema.common_modifiers import remove_strict_validation
-from a2ui.schema.constants import A2UI_CLOSE_TAG, A2UI_OPEN_TAG, VERSION_0_9
+from a2ui.schema.constants import (
+    A2UI_CLOSE_TAG,
+    A2UI_OPEN_TAG,
+    A2UI_SURFACE_ID_KEY,
+    VERSION_0_9,
+)
 from a2ui.schema.manager import A2uiSchemaManager
+from merger import merge_template
+
+from .after_tools_callback import _add_maps_tools_tokens_to_part, after_tools_callback
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +116,19 @@ AGENT_INSTRUCTION = """
 
     **Important**: When using the `google-maps-enriched-local-query-response` skill, you MUST respond with EXACTLY ONE <a2ui-json> ... </a2ui-json> block.
     All A2UI message objects (e.g., `createSurface`, `updateComponents`, `updateDataModel`) MUST include a `"version": "v0.9"` property.
-    When generating a `PlaceCard`, you MUST explicitly set the `"orientation"` property: use `"vertical"` for single results and `"horizontal"` for lists.
     If you have more than one of these blocks, the UI will not render correctly.
 
+"""
+
+GROUNDED_TEXT_BASE_INSTRUCTION = """\
+You are an expert location and navigation assistant with access to Google Maps tools.
+
+## Core Rules
+1. **Accuracy & Grounding**: Use Google Maps tools to look up real-time places, business hours, amenities, contact details, routes, and weather. NEVER hallucinate place facts, locations, or operational details.
+2. **Parallel Tool Execution**: When researching multiple entities, neighborhoods, routes, or options, emit ALL independent tool calls in parallel within your initial response turn. Only serialize calls when Step 2 strictly depends on data returned by Step 1.
+3. **Minimize Round-Trips**: Gather necessary place facts efficiently and emit independent queries in parallel. Only perform follow-up tool turns when subsequent calls strictly depend on data returned from earlier steps (e.g., retrieving details for specific place IDs or searching along a computed route polyline). Avoid redundant follow-up queries for details already retrieved.
+4. **Helpful & Actionable Answers**: Fully address all constraints in the user's prompt (e.g., parking, pricing, specific dietary options, bag policies). If tools return generic listings that lack specific policy details, supplement with known facts while noting any uncertainty.
+5. **No A2UI Tags**: Return standard plain text/markdown only. Do NOT output A2UI tags or JSON surfaces.
 """
 
 
@@ -143,6 +168,24 @@ class MergedCatalogProvider(A2uiCatalogProvider):
     return catalog
 
 
+def extract_surface_id(data: Any) -> str | None:
+  """Extracts the surface ID from an A2UI payload dictionary or part."""
+  if not isinstance(data, dict):
+    return None
+  for key in (
+      MSG_TYPE_CREATE_SURFACE,
+      MSG_TYPE_UPDATE_COMPONENTS,
+      MSG_TYPE_UPDATE_DATA_MODEL,
+      MSG_TYPE_DELETE_SURFACE,
+  ):
+    target = data.get(key)
+    if isinstance(target, dict):
+      surface_id = target.get(A2UI_SURFACE_ID_KEY)
+      if surface_id:
+        return str(surface_id)
+  return None
+
+
 class MAUIAgent:
   """An agent that finds restaurants based on user criteria."""
 
@@ -159,14 +202,13 @@ class MAUIAgent:
     self._model_name = model_name
     self._user_id = "remote_agent"
     self._shared_session_service = InMemorySessionService()
+    self._after_tool_callback = after_tools_callback
     self._text_runner: Runner | None = self._build_runner(
         self._build_llm_agent()
     )
 
     self._schema_managers: dict[str, A2uiSchemaManager] = {}
     self._ui_runners: dict[str, Runner] = {}
-    self._parsers = OrderedDict()
-    self._max_parsers = 1000  # Max active sessions to keep in memory
 
     for version in [VERSION_0_9]:
       schema_manager = self._build_schema_manager(version)
@@ -270,6 +312,32 @@ class MAUIAgent:
   def get_processing_message(self) -> str:
     return "Working on it..."
 
+  def _load_shared_guidelines(self) -> str:
+    """Loads shared conversational text style guidelines if available."""
+    try:
+      guidelines_file = importlib.resources.files(__package__).joinpath(
+          "shared", "instructions", "shared_style_guidelines.md"
+      )
+      if guidelines_file.is_file():
+        with importlib.resources.as_file(guidelines_file) as path:
+          with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except (OSError, ValueError, TypeError, ModuleNotFoundError) as e:
+      logger.warning("Failed to load shared style guidelines: %s", e)
+    return ""
+
+  def _wrap_in_text_only(self, text: str, session_id: str) -> list[Part]:
+    """Wraps plain text in a text_only template Part list."""
+    short_id = uuid.uuid4().hex[:8]
+    merged_actions = merge_template(
+        "text_only",
+        {
+            "text": text,
+            "surface_id": f"text-only_{session_id}-{short_id}",
+        },
+    )
+    return [create_a2ui_part(action) for action in merged_actions]
+
   def _build_llm_agent(
       self, schema_manager: A2uiSchemaManager | None = None
   ) -> LlmAgent:
@@ -303,6 +371,7 @@ class MAUIAgent:
         ),
         instruction=instruction,
         tools=[grounding_lite_mcp, skill_manager_tool],
+        after_tool_callback=self._after_tool_callback,
     )
 
   async def stream(
@@ -397,32 +466,41 @@ class MAUIAgent:
                 full_content_list.append(p.text)
                 yield p.text
 
+      parser = None
       if selected_catalog:
         logger.info(
             "--- MAUIAgent.stream: Using A2UI stream parser for catalog %s ---",
             selected_catalog.catalog_id,
         )
 
-        if session_id in self._parsers:
-          self._parsers.move_to_end(session_id)
-        else:
-          self._parsers[session_id] = A2uiStreamParser(selected_catalog)
-          if len(self._parsers) > self._max_parsers:
-            self._parsers.popitem(last=False)
+        parser = A2uiStreamParser(selected_catalog)
 
         logger.info(
             "--- MAUIAgent.stream: Streamed part: %s ---", token_stream()
         )
 
-        async for part in stream_response_to_parts(
-            self._parsers[session_id],
-            token_stream(),
-        ):
-          logger.info("-- MAUIAgent.stream: Streamed part: %s ---", part)
-          yield {
-              "is_task_complete": False,
-              "parts": [part],
-          }
+        session_surface_id = None
+        # Wrap stream parsing in try/except to prevent A2uiValidatorError from crashing the ASGI app.
+        # This ensures execution falls through to the deleteSurface/retry loop below.
+        try:
+          async for part in stream_response_to_parts(
+              parser,
+              token_stream(),
+          ):
+            _add_maps_tools_tokens_to_part(part, session)
+            logger.info("-- MAUIAgent.stream: Streamed part: %s ---", part)
+            # TODO(b/553539577): Remove this workaround once A2UI fixes the stream parser state issue.
+            if isinstance(part.root, DataPart):
+              s_id = extract_surface_id(part.root.data)
+              if s_id:
+                session_surface_id = s_id
+                logger.info("[WORKAROUND] Sniffed surfaceId '%s' from streamed part", session_surface_id)
+            yield {
+                "is_task_complete": False,
+                "parts": [part],
+            }
+        except Exception as e:
+          logger.warning("--- MAUIAgent.stream: Error during stream parsing (will fall through to retry loop): %s ---", e)
       else:
         async for token in token_stream():
           yield {
@@ -528,6 +606,9 @@ class MAUIAgent:
             filtered_parts.append(p)
         final_parts = filtered_parts
 
+        for p in final_parts:
+          _add_maps_tools_tokens_to_part(p, session)
+
         yield {
             "is_task_complete": True,
             "parts": final_parts,
@@ -542,6 +623,26 @@ class MAUIAgent:
             attempt,
             max_retries + 1,
         )
+
+        # Extract surfaceId to clear the failed UI card on the client
+        surface_id = session_surface_id or getattr(parser, "surface_id", None)
+
+        if surface_id:
+          logger.info("--- MAUIAgent.stream: Sending deleteSurface for '%s' to clear failed attempt ---", surface_id)
+          yield {
+              "is_task_complete": False,
+              "parts": [
+                  Part(
+                      root=DataPart(
+                          data={
+                              "version": "v0.9",
+                              "deleteSurface": {"surfaceId": surface_id},
+                          }
+                      )
+                  )
+              ],
+          }
+
         # Prepare the query for the retry
         current_query_text = (
             f"Your previous response was invalid. {error_message} You MUST"
