@@ -42,9 +42,9 @@ class AgentConfig:
   """
 
   max_list_size: int = 5
-  router_model: str = "gemini/gemini-3.1-flash-lite"
-  template_model: str = "gemini/gemini-3.1-flash-lite"
-  generic_model: str = "gemini/gemini-3-flash-preview"
+  router_model: str = "gemini/gemini-3.5-flash-lite"
+  template_model: str = "gemini/gemini-3.5-flash-lite"
+  generic_model: str = "gemini/gemini-3.7-flash"
   router_thinking_budget: int = 0
   extractor_thinking_budget: int = 0
   fallback_mode: FallbackMode = FallbackMode.TEXT
