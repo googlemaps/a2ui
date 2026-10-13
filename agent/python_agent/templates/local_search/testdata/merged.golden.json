@@ -1,0 +1,103 @@
+[
+  {
+    "version": "v0.9",
+    "createSurface": {
+      "surfaceId": "test-surface",
+      "catalogId": "a2ui://maps-agentic-ui-catalog.json"
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateComponents": {
+      "surfaceId": "test-surface",
+      "components": [
+        {
+          "id": "root",
+          "component": "Column",
+          "children": [
+            "heading-text",
+            "summary-text",
+            "map",
+            "list"
+          ]
+        },
+        {
+          "id": "heading-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "### Top Places"
+        },
+        {
+          "id": "summary-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "Here are 2 places."
+        },
+        {
+          "id": "map",
+          "component": "GoogleMap",
+          "center": {
+            "lat": 47.6,
+            "lng": -122.3
+          },
+          "zoom": 13,
+          "tilt": 0,
+          "mode": "roadmap",
+          "markers": [
+            {
+              "lat": 47.6,
+              "lng": -122.3,
+              "label": "P1",
+              "placeId": "ChIJ1"
+            },
+            {
+              "lat": 47.61,
+              "lng": -122.31,
+              "label": "P2",
+              "placeId": "ChIJ2"
+            }
+          ]
+        },
+        {
+          "id": "list",
+          "component": "List",
+          "direction": "vertical",
+          "children": {
+            "componentId": "place-card",
+            "path": "/places"
+          }
+        },
+        {
+          "id": "place-card",
+          "component": "PlaceDetailsCompact",
+          "placeId": {
+            "path": "placeId"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateDataModel": {
+      "surfaceId": "test-surface",
+      "path": "/",
+      "value": {
+        "places": [
+          {
+            "placeId": "ChIJ1",
+            "name": "P1",
+            "lat": 47.6,
+            "lng": -122.3
+          },
+          {
+            "placeId": "ChIJ2",
+            "name": "P2",
+            "lat": 47.61,
+            "lng": -122.31
+          }
+        ]
+      }
+    }
+  }
+]
