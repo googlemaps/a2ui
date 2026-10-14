@@ -19,6 +19,22 @@ import {state} from 'lit/decorators.js';
 
 import {A2UIRenderer, type TimelineItem, themeStyleSheet} from '@googlemaps/a2ui/lit';
 
+// In single-file Closure bundles where all modules are already inlined,
+// register resolved import handlers so dynamic import() calls succeed.
+interface GoogDynamicImport {
+  setImportHandlerInternalDoNotCallOrElse?:
+      (handler: (chunkId: string) => Promise<unknown>) => void;
+  setUncompiledChunkIdHandlerInternalDoNotCallOrElse?:
+      (handler: (name: string) => string) => void;
+}
+declare const goog: unknown;
+const googDynamicImport =
+    typeof goog === 'undefined' ? null : (goog as GoogDynamicImport);
+googDynamicImport?.setImportHandlerInternalDoNotCallOrElse?.(
+    () => Promise.resolve(null));
+googDynamicImport?.setUncompiledChunkIdHandlerInternalDoNotCallOrElse?.(
+    (name) => name);
+
 export interface A2UIComponentNode {
   id?: string;
   component: string;
@@ -36,6 +52,39 @@ export interface A2UIMessage {
   [key: string]: unknown;
 }
 
+// Override default A2UI horizontal list styling on narrow mobile WebViews.
+// Without explicit scroll and card width bounds, side-by-side cards (such as
+// PlaceDetailsCompact) collapse below 350px width and trigger a ResizeObserver
+// flickering loop. Since <a2ui-list> renders inside <a2ui-surface>'s Shadow DOM
+// with inline styles, these rules use !important and are injected via
+// adoptedStyleSheets.
+const HORIZONTAL_SCROLL_CSS = css`
+  .a2ui-list.horizontal {
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    scroll-snap-type: x mandatory !important;
+    padding-bottom: 8px !important;
+    scrollbar-width: none !important;
+  }
+  .a2ui-list.horizontal::-webkit-scrollbar {
+    display: none !important;
+  }
+  .a2ui-list.horizontal > div,
+  .a2ui-list.horizontal > .a2ui-list-item-none {
+    flex: 0 0 85% !important;
+    min-width: 280px !important;
+    max-width: 360px !important;
+    scroll-snap-align: start !important;
+    box-sizing: border-box !important;
+  }
+  a2ui-placedetailscompact {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+`;
+
 export abstract class A2UICoreShell extends LitElement {
   @state()
   protected timeline: TimelineItem[] = [];
@@ -46,8 +95,7 @@ export abstract class A2UICoreShell extends LitElement {
   protected timeoutId: ReturnType<typeof setTimeout> | null = null;
 
   static override styles = [
-    themeStyleSheet,
-    css`
+    themeStyleSheet, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -72,14 +120,35 @@ export abstract class A2UICoreShell extends LitElement {
       margin-top: 20px;
       font-family: sans-serif;
     }
-  `];
+    ${HORIZONTAL_SCROLL_CSS}
+  `
+  ];
+
+  private static horizontalScrollSheet: CSSStyleSheet|null = null;
+
+  private static getHorizontalScrollSheet(): CSSStyleSheet {
+    if (!A2UICoreShell.horizontalScrollSheet) {
+      A2UICoreShell.horizontalScrollSheet = new CSSStyleSheet();
+      A2UICoreShell.horizontalScrollSheet.replaceSync(
+          HORIZONTAL_SCROLL_CSS.cssText);
+    }
+    return A2UICoreShell.horizontalScrollSheet;
+  }
 
   override connectedCallback() {
     super.connectedCallback();
 
-    // Ensure global typography and Material theme definitions are present on the document
+    // Ensure global typography and Material theme definitions are present on
+    // the document
     if (!document.adoptedStyleSheets.includes(themeStyleSheet)) {
-      document.adoptedStyleSheets = [...document.adoptedStyleSheets, themeStyleSheet];
+      document.adoptedStyleSheets =
+          [...document.adoptedStyleSheets, themeStyleSheet];
+    }
+    const scrollSheet = A2UICoreShell.getHorizontalScrollSheet();
+    if (document.adoptedStyleSheets &&
+        !document.adoptedStyleSheets.includes(scrollSheet)) {
+      document.adoptedStyleSheets =
+          [...document.adoptedStyleSheets, scrollSheet];
     }
 
     this.setupResizer();
@@ -237,7 +306,7 @@ export abstract class A2UICoreShell extends LitElement {
                 if (m.updateDataModel) surfaceId = m.updateDataModel.surfaceId;
                 if (surfaceId) break;
             }
-            if (surfaceId) {
+            if (surfaceId && !this.rendererRef.getSurface(surfaceId)) {
                 messages.unshift({
                     createSurface: {
                         surfaceId,
@@ -255,18 +324,32 @@ export abstract class A2UICoreShell extends LitElement {
     }
   }
 
+  private adoptScrollStylesheets() {
+    const sheet = A2UICoreShell.getHorizontalScrollSheet();
+    const surfaces = this.shadowRoot?.querySelectorAll('a2ui-surface');
+    if (!surfaces) return;
+    surfaces.forEach((surface) => {
+      const sr = surface.shadowRoot;
+      if (sr && sr.adoptedStyleSheets &&
+          !sr.adoptedStyleSheets.includes(sheet)) {
+        sr.adoptedStyleSheets = [...sr.adoptedStyleSheets, sheet];
+      }
+    });
+  }
+
   private setupResizer() {
     this.resizeObserver = new ResizeObserver(() => {
-        if (this.timeoutId) {
-          clearTimeout(this.timeoutId);
+      this.adoptScrollStylesheets();
+      if (this.timeoutId) {
+        clearTimeout(this.timeoutId);
+      }
+      this.timeoutId = setTimeout(() => {
+        const rootWrapper = this.shadowRoot?.querySelector('.chat-messages');
+        if (rootWrapper) {
+          const newHeight = rootWrapper.scrollHeight;
+          this.notifyWebpageResized(newHeight);
         }
-        this.timeoutId = setTimeout(() => {
-          const rootWrapper = this.shadowRoot?.querySelector('.chat-messages');
-          if (rootWrapper) {
-            const newHeight = rootWrapper.scrollHeight;
-            this.notifyWebpageResized(newHeight);
-          }
-        }, 100);
+      }, 100);
     });
 
 
@@ -284,6 +367,8 @@ export abstract class A2UICoreShell extends LitElement {
     if (chatMessagesEl && this.resizeObserver) {
       this.resizeObserver.observe(chatMessagesEl);
     }
+
+    this.adoptScrollStylesheets();
   }
 
   override render() {

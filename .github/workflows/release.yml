@@ -18,6 +18,11 @@
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run in dry-run mode (no tags, no publish)"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -45,7 +50,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: client/web
-        run: npm ci
+        run: npm install
 
       - name: Setup Node for Publishing
         uses: actions/setup-node@b39b52d1213e96004bfcb1c61a8a6fa8ab84f3e8 # v4.0.1
@@ -60,5 +65,15 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_WOMBAT_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_WOMBAT_TOKEN }}
           NODE_PATH: ${{ github.workspace }}/client/web/node_modules
-        run: npx --prefix client/web semantic-release
+          DRY_RUN: ${{ inputs.dry_run }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          EXTRA_ARGS=""
+          if [ "$DRY_RUN" != "false" ]; then
+            EXTRA_ARGS="--dry-run"
+          fi
+          if [ "$REF_NAME" != "main" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --branches $REF_NAME"
+          fi
+          npx --prefix client/web semantic-release $EXTRA_ARGS
 
