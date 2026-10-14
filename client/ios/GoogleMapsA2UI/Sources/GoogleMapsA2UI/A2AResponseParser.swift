@@ -113,8 +113,7 @@ public enum A2AResponseParser {
   }
 
   private static let a2uiKeys: Set<String> = [
-    "createSurface", "updateComponents", "updateDataModel",
-    "beginRendering", "surfaceUpdate", "dataModelUpdate",
+    "createSurface", "updateComponents", "updateDataModel", "deleteSurface",
   ]
 
   /// Checks if a given dictionary represents an A2UI payload.
@@ -143,29 +142,32 @@ public enum A2AResponseParser {
     if textPart.contains(a2uiJsonTagOpen) {
       var remainingText = textPart
       while let startRange = remainingText.range(of: a2uiJsonTagOpen) {
+        let rest = remainingText[startRange.upperBound...]
+        guard let endRange = rest.range(of: a2uiJsonTagClose) else {
+          break
+        }
+
         let intro = String(remainingText[..<startRange.lowerBound])
           .trimmingCharacters(in: .whitespacesAndNewlines)
         if !intro.isEmpty {
           parts.append(.text(intro))
         }
 
-        let rest = remainingText[startRange.upperBound...]
-        let jsonStr: String
-        if let endRange = rest.range(of: a2uiJsonTagClose) {
-          jsonStr = String(rest[..<endRange.lowerBound])
-          remainingText = String(rest[endRange.upperBound...])
-        } else {
-          jsonStr = String(rest)
-          remainingText = ""
-        }
+        let jsonStr = String(rest[..<endRange.lowerBound])
+        remainingText = String(rest[endRange.upperBound...])
 
         let trimmedJSON = jsonStr.trimmingCharacters(in: .whitespacesAndNewlines)
-        let dataValue = parseJSON(trimmedJSON) ?? trimmedJSON
-        let event = ParsedA2AEvent.data(
-          [dataValue],
-          metadata: ParsedA2AEventMetadata(mimeType: a2uiJsonMimeType)
-        )
-        parts.append(event)
+        if let dataValue = parseJSON(trimmedJSON) {
+          let arrayPayload: [Any] = (dataValue as? [Any]) ?? [dataValue]
+          let event = ParsedA2AEvent.data(
+            arrayPayload,
+            metadata: ParsedA2AEventMetadata(mimeType: a2uiJsonMimeType)
+          )
+          parts.append(event)
+        } else {
+          let rawTag = "\(a2uiJsonTagOpen)\(jsonStr)\(a2uiJsonTagClose)"
+          parts.append(.text(rawTag))
+        }
       }
       let remaining = remainingText.trimmingCharacters(in: .whitespacesAndNewlines)
       if !remaining.isEmpty {
