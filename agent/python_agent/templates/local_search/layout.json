@@ -3,7 +3,7 @@
     "version": "v0.9",
     "createSurface": {
       "surfaceId": "{{surface_id}}",
-      "catalogId": "a2ui://maps-agentic-ui-catalog.json"
+      "catalogId": "{{catalog_id}}"
     }
   },
   {
@@ -14,7 +14,13 @@
         {
           "id": "root",
           "component": "Column",
-          "children": ["summary-text", "map", "list"]
+          "children": ["heading-text", "summary-text", "map", "list"]
+        },
+        {
+          "id": "heading-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "### {{heading}}"
         },
         {
           "id": "summary-text",
@@ -30,6 +36,8 @@
             "lng": "{{center_lng}}"
           },
           "zoom": "{{zoom}}",
+          "tilt": 0,
+          "mode": "roadmap",
           "anchorMarker": "{{anchor_marker}}",
           "markers": "{{markers}}"
         },
