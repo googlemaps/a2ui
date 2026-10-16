@@ -28,6 +28,7 @@ public enum A2AParserError: Error {
 /// Declared as a case-less enum to prevent instantiation.
 public enum A2AResponseParser {
   private static let a2uiJsonMimeType = "application/json+a2ui"
+  private static let a2uiV1MimeType = "application/a2ui+json"
   private static let a2uiJsonTagOpen = "<a2ui-json>"
   private static let a2uiJsonTagClose = "</a2ui-json>"
 
@@ -94,7 +95,7 @@ public enum A2AResponseParser {
           mimeType
           ?? (isA2UIPayload(dataPayload) ? a2uiJsonMimeType : nil)
 
-        if resolvedMimeType == a2uiJsonMimeType {
+        if resolvedMimeType == a2uiJsonMimeType || resolvedMimeType == a2uiV1MimeType {
           a2uiPayloads.append(dataPayload)
         } else {
           flushA2UI()
