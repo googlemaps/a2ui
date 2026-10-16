@@ -40,7 +40,7 @@ describe('PlaceDetailsCompact Component', () => {
        // 4. Assert that the attribute has the correct fallback ID
        const attrId =
            detailsCompact!.getAttribute('internal-usage-attribution-ids');
-       expect(attrId).toBe('gmp_web_maui_v0.1.9_atoui');
+       expect(attrId).toBe('gmp_web_maui_v0.1.10_atoui');
 
        // Cleanup
        document.body.removeChild(element);

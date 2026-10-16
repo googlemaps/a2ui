@@ -20,7 +20,7 @@ import {customElement} from 'lit/decorators.js';
 import {A2UICoreShell} from './core-shell';
 
 (window as any)['A2UI_ATTRIBUTION_ID'] =
-    'gmp_web_maui_v0.1.9_atoui,gmp_android_maui_v0.1.9_atoui';
+    'gmp_web_maui_v0.1.10_atoui,gmp_android_maui_v0.1.10_atoui';
 
 const PLACE_CARD_THUMBNAIL_MIN_WIDTH = 350;
 

@@ -423,7 +423,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
           color-scheme=${this.colorScheme ?? nothing}
           map-id="2d6e1a27a57efe3c9479f6fc"
           internal-usage-attribution-ids="${
-        (window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.9_atoui'}"
+        (window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.10_atoui'}"
         >${
         routes.map(
             (route: any) => html`
@@ -434,7 +434,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
             autofits-camera
             internal-usage-attribution-ids="${
                 (window as any)['A2UI_ATTRIBUTION_ID'] ||
-                'gmp_web_maui_v0.1.9_atoui'}"
+                'gmp_web_maui_v0.1.10_atoui'}"
           ></gmp-route-3d>`)}
         </gmp-map-3d>
       </section>
