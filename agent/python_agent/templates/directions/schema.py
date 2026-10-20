@@ -111,15 +111,6 @@ class DirectionsExtractorSchema(BaseModel):
           " the constraint."
       ),
   )
-  center_lat: float = Field(
-      description="Latitude of the center of the route map"
-  )
-  center_lng: float = Field(
-      description="Longitude of the center of the route map"
-  )
-  zoom: int = Field(
-      default=12, description="Recommended map zoom level (typically 12)"
-  )
   routes: list[RouteSegment] = Field(
       min_length=1,
       description=(
