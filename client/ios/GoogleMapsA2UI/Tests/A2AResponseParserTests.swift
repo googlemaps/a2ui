@@ -187,6 +187,32 @@ final class A2AResponseParserTests: XCTestCase {
     XCTAssertEqual(a2uiArray.count, 1)
   }
 
+  /// Tests that a data part with the standard `application/a2ui+json` mime type is parsed and batched into an array.
+  func testParse_dataPartWithStandardA2UIMimeType() throws {
+    let payload: [String: Any] = [
+      "parts": [
+        [
+          "kind": "data",
+          "data": [
+            "version": "v0.9",
+            "updateComponents": [
+              "surfaceId": "sushi-seattle",
+              "components": [],
+            ],
+          ],
+          "metadata": ["mimeType": "application/a2ui+json"],
+        ]
+      ]
+    ]
+
+    let events = try A2AResponseParser.parse(payload)
+    XCTAssertEqual(events.count, 1)
+    XCTAssertEqual(events.first?.metadataMimeType, "application/json+a2ui")
+
+    let a2uiArray = try XCTUnwrap(events.first?.dataArray)
+    XCTAssertEqual(a2uiArray.count, 1)
+  }
+
   /// Tests that a data part is inferred as A2UI if it contains recognized keys, even without a mime type.
   func testParse_dataPartWithImplicitA2UIKey() throws {
     let payload: [String: Any] = [
