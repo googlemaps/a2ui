@@ -81,11 +81,15 @@ _BUILTIN_FALLBACK_ROUTER_INTENTS: tuple[RouterIntentSpec, ...] = (
         intent=INTENT_OTHER_SPATIAL,
         archetype=(
             "Queries requiring polygon boundaries, raw coordinate plotting,"
-            " or complex navigation combining routes with secondary overlays"
+            " complex navigation combining routes with secondary overlays"
             " (e.g., weather, air quality forecasts, displaying all available"
-            " charging stations along a route). Note: Requests to show one or"
-            " more specific named places, buildings, or addresses on a map"
-            " belong to LOCAL_SEARCH, not OTHER_SPATIAL."
+            " charging stations along a route), or compound multi-intent"
+            " prompts combining two or more distinct questions spanning"
+            " different templates (e.g., directions to a destination plus"
+            " recommendations for places to eat or drink there, or a place"
+            " search combined with an unrelated question). Note: Requests to"
+            " show one or more specific named places, buildings, or addresses"
+            " on a map belong to LOCAL_SEARCH, not OTHER_SPATIAL."
         ),
         few_shot_examples=[
             FewShotExample(
@@ -98,6 +102,13 @@ _BUILTIN_FALLBACK_ROUTER_INTENTS: tuple[RouterIntentSpec, ...] = (
             FewShotExample(
                 user_query=(
                     "show the boundary of Yosemite National Park on the map"
+                ),
+                intent=INTENT_OTHER_SPATIAL,
+            ),
+            FewShotExample(
+                user_query=(
+                    "How do I get from Lafayette to Oakland airport? What are"
+                    " the best places to get a beer inside the airport?"
                 ),
                 intent=INTENT_OTHER_SPATIAL,
             ),
@@ -454,5 +465,11 @@ class TemplateRegistry:
         ' via C") should be classified as DIRECTIONS, unless they require'
         ' searching for stops along the way (e.g., "find coffee shops along'
         ' the route") which requires LOCAL_SEARCH overlays and should be'
-        f" promoted to OTHER_SPATIAL.\n\n## Few-shot Examples\n\n{examples_str}"
+        " promoted to OTHER_SPATIAL.\nCompound Multi-Intent Prompts: If a"
+        " single prompt asks two or more distinct questions that map to"
+        " different intent archetypes (e.g., DIRECTIONS +"
+        " LOCAL_SEARCH/NEARBY_PLACES_DEPTH, or a spatial template + a"
+        " secondary question), you MUST promote the classification to"
+        " OTHER_SPATIAL so the fallback handler can answer all parts of the"
+        f" prompt.\n\n## Few-shot Examples\n\n{examples_str}"
     )
