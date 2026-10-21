@@ -135,6 +135,48 @@ describe('PlacePinMarker Module', () => {
     expect(css).not.toContain('light-dark(#4c3cff');
   });
 
+  it('keeps the glyph position independent of host page typography', () => {
+    /** Returns the glyph's offset inside its disc under the given host font. */
+    function glyphOffset(hostFont: string): {top: number, left: number} {
+      const host = document.createElement('div');
+      host.style.font = hostFont;
+      document.body.append(host);
+      try {
+        const root = host.attachShadow({mode: 'open'});
+        root.adoptedStyleSheets = [PLACE_PIN_MARKER_STYLES.styleSheet!];
+        const template = createPlacePinMarkerTemplate({
+          label: 'Cafe',
+          placePrimaryType: 'food_and_drink',
+        });
+        // The builder appends to the <template> element itself (that is what
+        // <gmp-marker> consumes), so mount its children in a marker wrapper.
+        const marker = document.createElement('div');
+        marker.classList.add('custom-marker');
+        for (const child of Array.from(template.childNodes)) {
+          marker.append(child.cloneNode(true));
+        }
+        root.append(marker);
+        const icon =
+            root.querySelector('.custom-marker-content-icon') as HTMLElement;
+        const svg = icon.querySelector('svg')!;
+        const iconRect = icon.getBoundingClientRect();
+        const svgRect = svg.getBoundingClientRect();
+        return {
+          top: svgRect.top - iconRect.top,
+          left: svgRect.left - iconRect.left,
+        };
+      } finally {
+        host.remove();
+      }
+    }
+
+    const baseline = glyphOffset('16px/normal sans-serif');
+    // Mirrors the React sample's `:root { font: 18px/145% ... }`, plus an
+    // exaggerated case.
+    expect(glyphOffset('18px/145% sans-serif')).toEqual(baseline);
+    expect(glyphOffset('40px/3 serif')).toEqual(baseline);
+  });
+
   it('calculates latitude z-index so southern position gets higher z-index',
      () => {
        const northZ = calculateLatitudeZIndex(47.6062);  // Seattle

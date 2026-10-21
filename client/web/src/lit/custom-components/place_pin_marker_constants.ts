@@ -192,6 +192,17 @@ export const PLACE_PIN_MARKER_STYLES: CSSResult = css`
     border-radius: 50%;
     z-index: 1;
     /*
+     * The glyph SVGs are laid out inline on the text baseline, so the line box
+     * (and therefore the per-category offsets below) depends on the inherited
+     * text metrics. Pin them here, matching the marker labels' font, so a host
+     * page's global typography (e.g. a larger line-height or font-size on
+     * :root or body, which would otherwise be inherited) cannot shift the
+     * glyph inside the disc.
+     */
+    font-family: "Google Sans", sans-serif;
+    font-size: 16px;
+    line-height: normal;
+    /*
      * The per-POI circle colors are set as custom properties on the element
      * (see createPlacePinMarkerTemplate) so that both palettes travel with the
      * marker and the scheme is picked here. The fallbacks mirror \`generic\`.
