@@ -28,9 +28,6 @@ class NearbyPlacesDepthSchemaTest(unittest.TestCase):
   def test_nearby_places_depth_extractor_schema_valid(self):
     schema = NearbyPlacesDepthExtractorSchema(
         heading="3 hidden gem activities near Seattle Center",
-        center_lat=47.6205,
-        center_lng=-122.3493,
-        zoom=14,
         places=[
             NearbyPlaceItem(
                 placeId="ChIJ1",
@@ -47,17 +44,12 @@ class NearbyPlacesDepthSchemaTest(unittest.TestCase):
     self.assertEqual(
         schema.heading, "3 hidden gem activities near Seattle Center"
     )
-    self.assertEqual(schema.center_lat, 47.6205)
-    self.assertEqual(schema.center_lng, -122.3493)
-    self.assertEqual(schema.zoom, 14)
     self.assertEqual(len(schema.places), 1)
     self.assertEqual(schema.places[0].name, "Chihuly Garden and Glass")
 
   def test_nearby_places_depth_extractor_schema_computed_markers(self):
     schema = NearbyPlacesDepthExtractorSchema(
         heading="Quiet romantic dinner spots near The Plaza Hotel",
-        center_lat=40.7644,
-        center_lng=-73.9745,
         places=[
             NearbyPlaceItem(
                 placeId="ChIJ1",
@@ -89,8 +81,6 @@ class NearbyPlacesDepthSchemaTest(unittest.TestCase):
   def test_nearby_places_depth_extractor_schema_strips_markdown_heading(self):
     schema = NearbyPlacesDepthExtractorSchema(
         heading="### 3 hidden gem activities near Seattle Center",
-        center_lat=47.6205,
-        center_lng=-122.3493,
         places=[
             NearbyPlaceItem(
                 placeId="ChIJ1",
@@ -121,15 +111,12 @@ class NearbyPlacesDepthSchemaTest(unittest.TestCase):
     with self.assertRaises(pydantic.ValidationError):
       NearbyPlacesDepthExtractorSchema(
           heading="Empty",
-          center_lat=47.6,
-          center_lng=-122.3,
           places=[],
       )
 
   def test_nearby_places_depth_extractor_schema_requires_mandatory_fields(self):
     with self.assertRaises(pydantic.ValidationError):
       NearbyPlacesDepthExtractorSchema(
-          heading="Missing coordinates",
           places=[
               NearbyPlaceItem(
                   placeId="ChIJ1",
