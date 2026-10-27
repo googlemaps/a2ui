@@ -242,6 +242,29 @@ describe('PlaceDetailsCompact Component', () => {
          expect(computed.boxShadow)
              .toBe('rgba(0, 0, 0, 0.04) 0px 0px 20px 0px');
        });
+
+    it('constrains card width to max-width 500px to prevent wide-screen stretching',
+       async () => {
+         const card = createCard({});
+         await card.updateComplete;
+         const detailsCompact =
+             card.renderRoot.querySelector('gmp-place-details-compact')!;
+
+         const computed = getComputedStyle(detailsCompact);
+
+         expect(computed.maxWidth).toBe('500px');
+         expect(computed.boxSizing).toBe('border-box');
+         expect(getComputedStyle(card).minWidth).toBe('0px');
+       });
+  });
+
+  it('renders gmp-place-address inside gmp-place-content-config', async () => {
+    const card = createCard({});
+    await card.updateComplete;
+
+    const addressEl = card.renderRoot.querySelector(
+        'gmp-place-content-config > gmp-place-address');
+    expect(addressEl).not.toBeNull();
   });
 });
 

@@ -124,6 +124,52 @@
         }
       ],
       "unevaluatedProperties": false
+    },
+    "AdvancedPlaceList": {
+      "description": "Renders a Google Maps Places UI Kit advanced place list (<gmp-advanced-place-list>) displaying multiple places.",
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "common_types.json#/$defs/ComponentCommon"
+        },
+        {
+          "$ref": "#/$defs/CatalogComponentCommon"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "component": {
+              "const": "AdvancedPlaceList"
+            },
+            "places": {
+              "$ref": "common_types.json#/$defs/DynamicStringList",
+              "description": "An array of place resource names or place IDs to display."
+            },
+            "orientation": {
+              "type": "string",
+              "enum": [
+                "horizontal",
+                "vertical"
+              ],
+              "default": "vertical",
+              "description": "The orientation of the place list. Defaults to vertical."
+            },
+            "selectable": {
+              "$ref": "common_types.json#/$defs/DynamicBoolean",
+              "description": "Whether or not the list items are selectable buttons."
+            },
+            "truncationPreferred": {
+              "$ref": "common_types.json#/$defs/DynamicBoolean",
+              "description": "Whether or not text fields in list items are truncated."
+            }
+          },
+          "required": [
+            "component",
+            "places"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
     }
   },
   "$defs": {

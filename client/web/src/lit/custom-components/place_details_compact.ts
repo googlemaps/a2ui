@@ -102,8 +102,12 @@ export class PlaceDetailsCompact extends
       :host {
         display: block;
         width: 100%;
+        min-width: 0;
       }
       gmp-place-details-compact {
+        width: 100%;
+        max-width: 500px;
+        box-sizing: border-box;
         color-scheme: var(--color-scheme);
         --gmpx-color-scheme: var(--color-scheme);
         border: var(
@@ -149,6 +153,7 @@ export class PlaceDetailsCompact extends
           </gmp-place-details-place-request>
             <gmp-place-content-config>
               <gmp-place-media lightbox-preferred></gmp-place-media>
+              <gmp-place-address></gmp-place-address>
               <gmp-place-rating></gmp-place-rating>
               <gmp-place-type></gmp-place-type>
               <gmp-place-price></gmp-place-price>
