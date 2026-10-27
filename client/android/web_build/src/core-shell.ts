@@ -88,7 +88,12 @@ export abstract class A2UICoreShell extends LitElement {
   @state()
   protected timeline: TimelineItem[] = [];
 
-  protected rendererRef = new A2UIRenderer();
+  // Typed as an intersection so Copybara GitHub Actions CI (`npx tsc --noEmit`
+  // in client/{android,ios}/web_build) type-checks against the currently
+  // published `@googlemaps/a2ui` NPM package before the next NPM release.
+  protected rendererRef = new A2UIRenderer() as A2UIRenderer & {
+    addContentTokens(tokens: Record<string, unknown>): Promise<void>;
+  };
   protected globalDataModelRef: Record<string, unknown> = {};
   protected resizeObserver!: ResizeObserver;
   protected timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -168,6 +173,12 @@ export abstract class A2UICoreShell extends LitElement {
 
   protected abstract notifyWebpageResized(height: number): void;
   protected abstract notifyJsReady(): void;
+
+  /**
+   * Maps JS API usage attribution IDs identifying the native platform, sent by
+   * every MAUI component in addition to MAUI's own web ID.
+   */
+  protected abstract readonly platformAttributionIds: readonly string[];
 
   processA2uiMessages(json: unknown) {
     try {
@@ -321,7 +332,19 @@ export abstract class A2UICoreShell extends LitElement {
         this.rendererRef.processResponse(messages.map((msg) => ({ type: "a2ui", message: msg })));
         this.timeline = [...this.rendererRef.timeline];
     } catch (e) {
-        console.error("Failed to process A2UI JSON:", e);
+      console.error('Failed to process A2UI JSON:', e);
+    }
+  }
+
+  addContentTokens(tokensJson: string): void {
+    try {
+      const parsed: unknown = JSON.parse(tokensJson);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        void this.rendererRef.addContentTokens(
+            parsed as Record<string, string|readonly string[]>);
+      }
+    } catch (e) {
+      console.error('Failed to add content tokens:', e);
     }
   }
 
@@ -375,20 +398,24 @@ export abstract class A2UICoreShell extends LitElement {
   override render() {
     return html`
       <div class="chat-messages">
-        <maui-providers>
-          ${this.timeline.length === 0 ? html`<p class="loading">Waiting for payload...</p>` : nothing}
+        <maui-providers .additionalAttributionIds=${
+        this.platformAttributionIds}>
+          ${
+        this.timeline.length === 0 ?
+            html`<p class="loading">Waiting for payload...</p>` :
+            nothing}
           ${this.timeline.map((item) => {
-            if (item.type === 'surface') {
-              const surface = this.rendererRef.getSurface(item.surfaceId);
-              if (!surface) return nothing;
-              return html`
+      if (item.type === 'surface') {
+        const surface = this.rendererRef.getSurface(item.surfaceId);
+        if (!surface) return nothing;
+        return html`
                 <div class="surface-message">
                   <a2ui-surface .surface=${surface}></a2ui-surface>
                 </div>
               `;
-            }
-            return nothing;
-          })}
+      }
+      return nothing;
+    })}
         </maui-providers>
       </div>
     `;

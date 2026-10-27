@@ -16,6 +16,7 @@
 
 import dataclasses
 import enum
+import functools
 import importlib
 import importlib.resources
 from importlib.resources import abc as resources_abc
@@ -81,11 +82,15 @@ _BUILTIN_FALLBACK_ROUTER_INTENTS: tuple[RouterIntentSpec, ...] = (
         intent=INTENT_OTHER_SPATIAL,
         archetype=(
             "Queries requiring polygon boundaries, raw coordinate plotting,"
-            " or complex navigation combining routes with secondary overlays"
+            " complex navigation combining routes with secondary overlays"
             " (e.g., weather, air quality forecasts, displaying all available"
-            " charging stations along a route). Note: Requests to show one or"
-            " more specific named places, buildings, or addresses on a map"
-            " belong to LOCAL_SEARCH, not OTHER_SPATIAL."
+            " charging stations along a route), or compound multi-intent"
+            " prompts combining two or more distinct questions spanning"
+            " different templates (e.g., directions to a destination plus"
+            " recommendations for places to eat or drink there, or a place"
+            " search combined with an unrelated question). Note: Requests to"
+            " show one or more specific named places, buildings, or addresses"
+            " on a map belong to LOCAL_SEARCH, not OTHER_SPATIAL."
         ),
         few_shot_examples=[
             FewShotExample(
@@ -98,6 +103,13 @@ _BUILTIN_FALLBACK_ROUTER_INTENTS: tuple[RouterIntentSpec, ...] = (
             FewShotExample(
                 user_query=(
                     "show the boundary of Yosemite National Park on the map"
+                ),
+                intent=INTENT_OTHER_SPATIAL,
+            ),
+            FewShotExample(
+                user_query=(
+                    "How do I get from Lafayette to Oakland airport? What are"
+                    " the best places to get a beer inside the airport?"
                 ),
                 intent=INTENT_OTHER_SPATIAL,
             ),
@@ -235,6 +247,7 @@ class TemplateRegistry:
     self._bundles: dict[str, TemplateBundle] = {}
     self._bundles_by_intent: dict[str, TemplateBundle] = {}
     self._cached_router_classification: type[RouterClassification] | None = None
+    self._frozen = False
 
     # Use importlib.resources.files for compatibility with both package data and
     # disk paths. Anchor on this module rather than `__package__`, which is
@@ -313,7 +326,15 @@ class TemplateRegistry:
         its name or its intent, and the collision is logged. A displaced bundle
         is removed from both indexes so it cannot be routed to or advertised to
         the router afterwards.
+
+    Raises:
+      RuntimeError: The registry is frozen.
     """
+    if self._frozen:
+      raise RuntimeError(
+          "This template registry is frozen and shared; build a separate"
+          f" TemplateRegistry to register bundle '{bundle.name}'."
+      )
     displaced = self._bundles.get(bundle.name)
     if displaced is not None:
       logger.warning(
@@ -342,6 +363,10 @@ class TemplateRegistry:
         bundle.name,
         bundle.intent,
     )
+
+  def freeze(self) -> None:
+    """Makes the registry read-only: later `register_bundle` calls raise."""
+    self._frozen = True
 
   def get_bundle(self, name: str) -> TemplateBundle | None:
     """Looks up a bundle by its primary directory/bundle name (e.g., 'local_search')."""
@@ -454,5 +479,30 @@ class TemplateRegistry:
         ' via C") should be classified as DIRECTIONS, unless they require'
         ' searching for stops along the way (e.g., "find coffee shops along'
         ' the route") which requires LOCAL_SEARCH overlays and should be'
-        f" promoted to OTHER_SPATIAL.\n\n## Few-shot Examples\n\n{examples_str}"
+        " promoted to OTHER_SPATIAL.\nCompound Multi-Intent Prompts: If a"
+        " single prompt asks two or more distinct questions that map to"
+        " different intent archetypes (e.g., DIRECTIONS +"
+        " LOCAL_SEARCH/NEARBY_PLACES_DEPTH, or a spatial template + a"
+        " secondary question), you MUST promote the classification to"
+        " OTHER_SPATIAL so the fallback handler can answer all parts of the"
+        f" prompt.\n\n## Few-shot Examples\n\n{examples_str}"
     )
+
+
+@functools.cache
+def default_registry() -> TemplateRegistry:
+  """Returns the process-wide registry of the built-in template bundles.
+
+  Building a `TemplateRegistry` lists the templates directory, reads every
+  bundle's manifest and SKILL.md, and imports every schema module. Served from
+  a zip-imported archive, each of those package data reads is slow, so a
+  registry built per call costs seconds. The built-in bundles ship with the
+  build and cannot change at runtime, so discover them once per process.
+
+  The instance is shared by every request in the process, so it is frozen:
+  `register_bundle` raises on it. Build a separate `TemplateRegistry` to
+  register bundles of your own.
+  """
+  registry = TemplateRegistry()
+  registry.freeze()
+  return registry

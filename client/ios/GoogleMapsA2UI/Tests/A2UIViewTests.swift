@@ -488,6 +488,35 @@ final class A2UIViewTests: XCTestCase {
     view.updateWebView(webView, coordinator: coordinator)
     XCTAssertNotNil(coordinator.lastInjectedPayload)
   }
+
+  /// Tests that the coordinator caches and deduplicates subsequent identical content token injections.
+  func testCoordinator_InjectContentTokens_DeduplicatesIdenticalTokens() throws {
+    var height: CGFloat = 100
+    let parent = A2UIMessageRepresentableView(
+      webViewID: "test-view",
+      payload: [],
+      metadata: ParsedA2AEventMetadata(contentTokens: "{\"place_1\":\"token-1\"}"),
+      dynamicHeight: Binding(get: { height }, set: { height = $0 }),
+      onUserAction: { _ in },
+      onRenderComplete: nil
+    )
+    let coordinator = A2UIMessageRepresentableView.Coordinator(parent)
+    let webView = WKWebView()
+
+    coordinator.injectContentTokens(webView, tokens: nil)
+    XCTAssertNil(coordinator.lastInjectedContentTokens)
+
+    coordinator.injectContentTokens(webView, tokens: "")
+    XCTAssertNil(coordinator.lastInjectedContentTokens)
+
+    let tokens = "{\"place_1\":\"token-1\"}"
+    coordinator.injectContentTokens(webView, tokens: tokens)
+    XCTAssertEqual(coordinator.lastInjectedContentTokens, tokens)
+
+    // Subsequent call with identical tokens preserves cached value
+    coordinator.injectContentTokens(webView, tokens: tokens)
+    XCTAssertEqual(coordinator.lastInjectedContentTokens, tokens)
+  }
 }
 
 private class MockNavigationAction: WKNavigationAction {

@@ -660,4 +660,136 @@ class A2AResponseParserTest {
     assertThat(arr.length()).isEqualTo(1)
     assertThat(arr.getJSONObject(0).has("createSurface")).isTrue()
   }
+
+  /**
+   * Verifies that `maps_tools_content_tokens` in part `metadata` (including fallback token lists)
+   * are extracted onto `ParsedA2AEvent.Data.metadata.contentTokens` from the last part carrying
+   * tokens.
+   */
+  @Test
+  fun parse_dataPartsWithContentTokens_extractsMetadataContentTokens() {
+    val payload =
+      """
+      {
+        "parts": [
+          {
+            "kind": "data",
+            "data": {"createSurface": {"surfaceId": "sushi-seattle"}},
+            "metadata": {
+              "mimeType": "application/json+a2ui",
+              "maps_tools_content_tokens": {
+                "place_1": "stale_token"
+              }
+            }
+          },
+          {
+            "kind": "data",
+            "data": {"updateComponents": {"surfaceId": "sushi-seattle", "components": []}},
+            "metadata": {
+              "maps_tools_content_tokens": {
+                "place_1": "token_a",
+                "place_2": "token_b",
+                "": ["fallback_1", "fallback_2"]
+              }
+            }
+          },
+          {
+            "kind": "data",
+            "data": {"updateComponents": {"surfaceId": "sushi-seattle", "components": []}},
+            "metadata": {
+              "maps_tools_content_tokens": {}
+            }
+          },
+          {
+            "kind": "data",
+            "data": {"updateDataModel": {"surfaceId": "sushi-seattle"}}
+          }
+        ]
+      }
+      """
+        .trimIndent()
+
+    val events = A2AResponseParser.parse(payload)
+    assertThat(events).hasSize(1)
+    val dataEvent = events[0] as ParsedA2AEvent.Data
+    assertThat(dataEvent.metadata).isNotNull()
+    val tokensJson = JSONObject(checkNotNull(dataEvent.metadata?.contentTokens))
+    assertThat(tokensJson.getString("place_1")).isEqualTo("token_a")
+    assertThat(tokensJson.getString("place_2")).isEqualTo("token_b")
+    val fallbackArray = tokensJson.getJSONArray("")
+    assertThat(fallbackArray.length()).isEqualTo(2)
+    assertThat(fallbackArray.getString(0)).isEqualTo("fallback_1")
+    assertThat(fallbackArray.getString(1)).isEqualTo("fallback_2")
+  }
+
+  /**
+   * Verifies that `maps_tools_content_tokens` is extracted from a single-part payload (where index
+   * 0 is also the final part).
+   */
+  @Test
+  fun parse_singleDataPartWithContentTokens_extractsMetadataContentTokens() {
+    val payload =
+      """
+      {
+        "parts": [
+          {
+            "kind": "data",
+            "data": {"createSurface": {"surfaceId": "sushi-seattle"}},
+            "metadata": {
+              "maps_tools_content_tokens": {
+                "place_1": "token_only"
+              }
+            }
+          }
+        ]
+      }
+      """
+        .trimIndent()
+
+    val events = A2AResponseParser.parse(payload)
+    assertThat(events).hasSize(1)
+    val dataEvent = events[0] as ParsedA2AEvent.Data
+    val tokensJson = JSONObject(checkNotNull(dataEvent.metadata?.contentTokens))
+    assertThat(tokensJson.getString("place_1")).isEqualTo("token_only")
+  }
+
+  /**
+   * Verifies that `maps_tools_content_tokens` on the final part supersedes tokens from earlier
+   * parts.
+   */
+  @Test
+  fun parse_contentTokensOnLastPart_overridesEarlierPartTokens() {
+    val payload =
+      """
+      {
+        "parts": [
+          {
+            "kind": "data",
+            "data": {"createSurface": {"surfaceId": "sushi-seattle"}},
+            "metadata": {
+              "maps_tools_content_tokens": {
+                "place_1": "stale_token"
+              }
+            }
+          },
+          {
+            "kind": "data",
+            "data": {"updateDataModel": {"surfaceId": "sushi-seattle"}},
+            "metadata": {
+              "maps_tools_content_tokens": {
+                "place_1": "latest_token"
+              }
+            }
+          }
+        ]
+      }
+      """
+        .trimIndent()
+
+    val events = A2AResponseParser.parse(payload)
+    assertThat(events).hasSize(1)
+    val dataEvent = events[0] as ParsedA2AEvent.Data
+    val tokensJson = JSONObject(checkNotNull(dataEvent.metadata?.contentTokens))
+    assertThat(tokensJson.getString("place_1")).isEqualTo("latest_token")
+  }
 }

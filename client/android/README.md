@@ -72,8 +72,8 @@ for (part in parsedParts) {
             chatAdapter.addTextMessage(part.text)
         }
         is ParsedA2AEvent.Data -> {
-            // Feed the structured data into A2UIView
-            chatAdapter.addGmpA2UIViewMessage(part.data)
+            // Feed the structured data and metadata (including content tokens) into A2UIView
+            chatAdapter.addGmpA2UIViewMessage(part.data, part.metadata)
         }
     }
 }
@@ -103,19 +103,24 @@ The library provides `A2UIView`, a custom component that manages the rendering o
 class GmpA2UIViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
     val gmpA2UIView: A2UIView = itemView.findViewById(R.id.gmpA2UIView)
 
-    fun bind(a2uiJson: String) {
-        gmpA2UIView.render(a2uiJson)
+    fun bind(a2uiJson: String, metadata: ParsedA2AEventMetadata? = null) {
+        gmpA2UIView.render(a2uiJson, metadata = metadata)
     }
 
     // Support real-time SSE streaming updates
-    fun updateStreamingJson(newJson: String) {
-        gmpA2UIView.updateA2uiJson(newJson)
+    fun updateStreamingJson(newJson: String, metadata: ParsedA2AEventMetadata? = null) {
+        gmpA2UIView.updateA2uiJson(newJson, metadata)
     }
 }
 ```
 
 ### 4. Streaming vs. Non-Streaming Updates (`message/stream` & `message/send`)
-In Compose or View-based apps, `A2UIView` supports both real-time SSE streaming (`message/stream`) and single-response requests (`message/send`). When `useStreaming` is enabled, incremental `.Data` chunks emitted by `A2AResponseParser.parse(chunkJson)` are applied in place via `updateA2uiJson(newJson)` without recreating the underlying `WebView` (see `MainActivity.kt` and `ChatRepository.kt` in the Android sample app).
+In Compose or View-based apps, `A2UIView` supports both real-time SSE streaming
+(`message/stream`) and single-response requests (`message/send`). When
+`useStreaming` is enabled, incremental `.Data` chunks emitted by
+`A2AResponseParser.parse(chunkJson)` are applied in place via
+`updateA2uiJson(newJson, metadata)` without recreating the underlying `WebView`
+(see `MainActivity.kt` and `ChatRepository.kt` in the Android sample app).
 
 ## Architecture Deep Dive
 
@@ -131,7 +136,7 @@ The SDK encapsulates all complex parsing and rendering logic into four core comp
 
 The `GoogleMapsA2UI` library relies on a pre-built HTML bundle (`index.html`) which is shipped inside its `assets` folder. This bundle compiles the core A2UI web components together with the Android platform-specific shell logic at `a2ui/client/android/web_build/`.
 
-If you have customized your `internal-usage-attribution-ids` or modified the underlying web components, you must recompile the HTML payload and bundle it back into this Android Library.
+If you have customized the usage attribution IDs (`platformAttributionIds` in `a2ui/client/android/web_build/src/main.ts`) or modified the underlying web components, you must recompile the HTML payload and bundle it back into this Android Library.
 
 Steps to update the web components with your customizations:
 

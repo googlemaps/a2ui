@@ -15,6 +15,7 @@
  */
 
 import {type Marker3DElementOptions, ThreeDMarker} from './3d_marker.js';
+import {A2uiAdvancedPlaceList, AdvancedPlaceList} from './advanced_place_list.js';
 import {AnchorMarker, type AnchorMarkerOptions} from './anchor_marker.js';
 import {A2uiGoogleMap, GoogleMap} from './google_map.js';
 import {A2uiPlaceDetailsCompact, PlaceDetailsCompact} from './place_details_compact.js';
@@ -22,9 +23,11 @@ import {calculateLatitudeZIndex, type MarkerElementOptions, PlacePinMarker} from
 import {getPinColor, getPinIcon, PLACE_PIN_COLOR_LOOKUP, PLACE_PIN_ICON_LOOKUP, PLACE_PIN_MARKER_STYLES} from './place_pin_marker_constants.js';
 
 export {type Marker3DElementOptions, ThreeDMarker} from './3d_marker.js';
+export {A2uiAdvancedPlaceList, AdvancedPlaceList} from './advanced_place_list.js';
 export {AnchorMarker, type AnchorMarkerOptions} from './anchor_marker.js';
+export {attributionIdsContext, attributionIdsConverter, type AttributionIdsInput, MAUI_WEB_ATTRIBUTION_ID, resolveAttributionIds} from './attribution.js';
 export {A2uiGoogleMap, GoogleMap} from './google_map.js';
-export {configureMapsJsApi, ensureImportLibrary, loadMapsLibraries, loadMapsLibrary, type MapsJsApiOptions, type MapsLibraries, type MapsLibraryName} from './maps_api_loader.js';
+export {addContentTokens, configureMapsJsApi, ensureImportLibrary, loadMapsLibraries, loadMapsLibrary, type MapsJsApiOptions, type MapsLibraries, type MapsLibraryName} from './maps_api_loader.js';
 export {A2uiPlaceDetailsCompact, PlaceDetailsCompact} from './place_details_compact.js';
 export {calculateLatitudeZIndex, type MarkerElementOptions, PlacePinMarker} from './place_pin_marker.js';
 export {getPinColor, getPinIcon, PLACE_PIN_COLOR_LOOKUP, PLACE_PIN_ICON_LOOKUP, PLACE_PIN_MARKER_STYLES} from './place_pin_marker_constants.js';
@@ -36,5 +39,8 @@ export function registerA2UICustomElements(): void {
   }
   if (!customElements.get('a2ui-placedetailscompact')) {
     customElements.define('a2ui-placedetailscompact', PlaceDetailsCompact);
+  }
+  if (!customElements.get('a2ui-advancedplacelist')) {
+    customElements.define('a2ui-advancedplacelist', AdvancedPlaceList);
   }
 }

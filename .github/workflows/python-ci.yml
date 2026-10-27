@@ -20,10 +20,17 @@ on:
   pull_request:
     branches: [ main ]
 
+# Cancel superseded pull_request runs when a newer commit is pushed to the same
+# PR. Other events get a per-commit group, so they are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     name: Python CI / build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
