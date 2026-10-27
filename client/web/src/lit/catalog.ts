@@ -15,6 +15,7 @@ import {basicCatalog} from '@a2ui/lit/v0_9';
 import {Catalog} from '@a2ui/web_core/v0_9';
 import {z} from 'zod';
 
+import {A2uiAdvancedPlaceList} from './custom-components/advanced_place_list';
 import {A2uiGoogleMap} from './custom-components/google_map';
 import {A2uiPlaceDetailsCompact} from './custom-components/place_details_compact';
 
@@ -24,6 +25,7 @@ import {A2uiPlaceDetailsCompact} from './custom-components/place_details_compact
 const mapsAgenticUICatalog = new Catalog(
     'a2ui://maps-agentic-ui-catalog.json',
     [
+      A2uiAdvancedPlaceList,
       A2uiGoogleMap,
       A2uiPlaceDetailsCompact,
       ...basicCatalog.components.values(),
