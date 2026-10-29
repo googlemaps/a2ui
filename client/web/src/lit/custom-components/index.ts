@@ -23,6 +23,7 @@ import {getPinColor, getPinIcon, PLACE_PIN_COLOR_LOOKUP, PLACE_PIN_ICON_LOOKUP, 
 
 export {type Marker3DElementOptions, ThreeDMarker} from './3d_marker.js';
 export {AnchorMarker, type AnchorMarkerOptions} from './anchor_marker.js';
+export {attributionIdsContext, attributionIdsConverter, type AttributionIdsInput, MAUI_WEB_ATTRIBUTION_ID, resolveAttributionIds} from './attribution.js';
 export {A2uiGoogleMap, GoogleMap} from './google_map.js';
 export {configureMapsJsApi, ensureImportLibrary, loadMapsLibraries, loadMapsLibrary, type MapsJsApiOptions, type MapsLibraries, type MapsLibraryName} from './maps_api_loader.js';
 export {A2uiPlaceDetailsCompact, PlaceDetailsCompact} from './place_details_compact.js';
