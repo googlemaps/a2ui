@@ -1,0 +1,43 @@
+[
+  {
+    "version": "v0.9",
+    "createSurface": {
+      "surfaceId": "test-surface",
+      "catalogId": "a2ui://maps-agentic-ui-catalog.json"
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateComponents": {
+      "surfaceId": "test-surface",
+      "components": [
+        {
+          "id": "root",
+          "component": "Column",
+          "children": [
+            "heading-text",
+            "summary-text",
+            "place-card"
+          ]
+        },
+        {
+          "id": "heading-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "### Space Needle"
+        },
+        {
+          "id": "summary-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "Valet parking is available at the Space Needle entrance, with paid public garages located nearby around Seattle Center.\n\n* **Valet service**: Available directly at the Broad Street drop-off circle.\n* **Nearby garages**: Seattle Center 5th Ave. N. Garage and Mercer Street Garage are within a 5-minute walk."
+        },
+        {
+          "id": "place-card",
+          "component": "PlaceDetailsCompact",
+          "placeId": "ChIJ-bfVTh8VkFQR6yFmQ34e2mo"
+        }
+      ]
+    }
+  }
+]

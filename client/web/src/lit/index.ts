@@ -17,5 +17,5 @@
 export {A2UIClient} from './a2ui_client';
 export {A2UIRenderer, type TimelineItem} from './a2ui_renderer';
 export {mapsAgenticUICatalog} from './catalog';
-export {registerA2UICustomElements} from './custom-components';
+export {configureMapsJsApi, type MapsJsApiOptions, registerA2UICustomElements} from './custom-components';
 export {themeStyleSheet} from './theme';

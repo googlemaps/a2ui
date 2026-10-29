@@ -1,0 +1,43 @@
+[
+  {
+    "version": "v0.9",
+    "createSurface": {
+      "surfaceId": "{{surface_id}}",
+      "catalogId": "{{catalog_id}}"
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateComponents": {
+      "surfaceId": "{{surface_id}}",
+      "components": [
+        {
+          "id": "root",
+          "component": "Column",
+          "children": [
+            "heading-text",
+            "summary-text",
+            "place-card"
+          ]
+        },
+        {
+          "id": "heading-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "### {{heading}}"
+        },
+        {
+          "id": "summary-text",
+          "component": "Text",
+          "variant": "body",
+          "text": "{{summary}}"
+        },
+        {
+          "id": "place-card",
+          "component": "PlaceDetailsCompact",
+          "placeId": "{{placeId}}"
+        }
+      ]
+    }
+  }
+]

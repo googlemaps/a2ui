@@ -19,7 +19,6 @@ import enum
 import importlib
 import importlib.resources
 from importlib.resources import abc as resources_abc
-import json
 import logging
 import re
 from typing import Any
@@ -36,7 +35,6 @@ class RouterClassification(pydantic.BaseModel):
   intent: str = pydantic.Field(
       description="The classified intent archetype name."
   )
-  query: str = pydantic.Field(description="The cleaned user query")
 
 
 class FewShotExample(pydantic.BaseModel):
@@ -46,7 +44,6 @@ class FewShotExample(pydantic.BaseModel):
 
   user_query: str
   intent: str | None = None
-  query: str | None = None
 
   def __getitem__(self, key: str) -> Any:
     return getattr(self, key)
@@ -97,17 +94,12 @@ _BUILTIN_FALLBACK_ROUTER_INTENTS: tuple[RouterIntentSpec, ...] = (
                     " coffee shops and rain forecasts along the way"
                 ),
                 intent=INTENT_OTHER_SPATIAL,
-                query=(
-                    "walking route from Central Park to Times Square with"
-                    " coffee shop stops and rain forecast"
-                ),
             ),
             FewShotExample(
                 user_query=(
                     "show the boundary of Yosemite National Park on the map"
                 ),
                 intent=INTENT_OTHER_SPATIAL,
-                query="boundary of Yosemite National Park",
             ),
         ],
     ),
@@ -394,7 +386,6 @@ class TemplateRegistry:
             dynamic_intent_enum,
             pydantic.Field(description="The classified intent archetype name."),
         ),
-        query=(str, pydantic.Field(description="The cleaned user query")),
     )
     return self._cached_router_classification
 
@@ -438,14 +429,7 @@ class TemplateRegistry:
             if isinstance(example, FewShotExample)
             else example.get("intent", spec.intent)
         )
-        extracted_query = (
-            (example.query or user_query)
-            if isinstance(example, FewShotExample)
-            else example.get("query", user_query)
-        )
-        output_json = json.dumps(
-            {"intent": intent, "query": extracted_query}, indent=2
-        )
+        output_json = "{\n" f'  "intent": "{intent}"\n' "}"
         examples_blocks.append(
             f"### Example {example_index}\n"
             f'**User Query:** "{user_query}"\n'

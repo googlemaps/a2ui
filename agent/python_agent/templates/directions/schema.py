@@ -19,6 +19,7 @@ from typing import Any, Literal
 
 import pydantic
 
+from templates.common import normalize_markdown_text
 from templates.common import Pin
 
 BaseModel = pydantic.BaseModel
@@ -87,9 +88,27 @@ class DirectionsExtractorSchema(BaseModel):
   )
   summary: str = Field(
       description=(
-          "A natural, direct resolution of the route prompt describing"
-          " approximate travel duration and distance (e.g. 'Driving from"
-          " [Origin] to [Destination] takes about 19 minutes (14 miles).')."
+          "A scannable markdown resolution that directly answers the route"
+          " prompt. Start with a concise introductory overview bolding the"
+          " origin, destination, approximate travel duration (rounded to the"
+          " nearest minute, or 'less than a minute' if under 30s; e.g.,"
+          " '**about 20 minutes**'), and numerical distance in local units"
+          " (miles vs. km, rounded to a whole number for driving/transit; e.g.,"
+          " '**14 miles**'), followed by a blank line (\\n\\n) and 2 to 3"
+          " concise markdown bullet points:\n"
+          "- Standard routes: '* **Route details**: ...' (primary roads,"
+          " specific transit lines and stations, intermediate stops) and"
+          " '* **Arrival & logistics**: ...' (destination address, operating"
+          " hours, parking or transfer tips).\n"
+          "- Option comparisons (e.g., driving vs. transit, train vs. light"
+          " rail, alternative corridors): summarize all options in the intro,"
+          " provide a dedicated bullet for each option's duration, distance,"
+          " and route details, and conclude with a"
+          " '* **Recommendation**: ...' bullet.\n"
+          "- Temporal/route constraints (departure time, rush hour, scenic"
+          " preference, road/line avoidance): explicitly include the"
+          " traffic-adjusted duration range or confirm how the route satisfies"
+          " the constraint."
       ),
   )
   center_lat: float = Field(
@@ -111,7 +130,8 @@ class DirectionsExtractorSchema(BaseModel):
   travel_mode: Literal["driving", "walking", "transit", "bicycling"] = Field(
       description=(
           "The transit travel mode, one of: driving, walking, transit,"
-          " bicycling. Must match the user's requested travel mode."
+          " bicycling. Must match the user's requested travel mode (or the"
+          " primary/recommended mode when comparing multiple travel modes)."
       ),
   )
 
@@ -125,6 +145,10 @@ class DirectionsExtractorSchema(BaseModel):
     heading = data.get("heading")
     if isinstance(heading, str):
       data["heading"] = re.sub(r"^#+\s*", "", heading).strip()
+
+    summary = data.get("summary")
+    if isinstance(summary, str):
+      data["summary"] = normalize_markdown_text(summary)
 
     if "travel_mode" in data and data["travel_mode"]:
       normalized = normalize_travel_mode(data["travel_mode"])

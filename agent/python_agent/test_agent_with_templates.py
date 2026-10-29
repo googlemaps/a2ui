@@ -172,7 +172,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     # Mock router response stream yielding classification JSON
     self.mock_router.generate_content_async.return_value = (
-        self._mock_llm_stream('{"intent": "TEXT_ONLY", "query": "hello"}')
+        self._mock_llm_stream('{"intent": "TEXT_ONLY"}')
     )
 
     mock_runner = mock.MagicMock()
@@ -252,7 +252,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self._setup_mock_llm(mock_lite_llm_class)
 
     self.mock_router.generate_content_async.return_value = (
-        self._mock_llm_stream('{"intent": "TEXT_ONLY", "query": "hello"}')
+        self._mock_llm_stream('{"intent": "TEXT_ONLY"}')
     )
 
     mock_runner = mock.MagicMock()
@@ -286,7 +286,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self._setup_mock_llm(mock_lite_llm_class)
 
     self.mock_router.generate_content_async.return_value = (
-        self._mock_llm_stream('{"intent": "OTHER_SPATIAL", "query": "coffee"}')
+        self._mock_llm_stream('{"intent": "OTHER_SPATIAL"}')
     )
 
     config = AgentConfig(
@@ -332,9 +332,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     # Mock router yielding DIRECTIONS
     self.mock_router.generate_content_async.return_value = (
-        self._mock_llm_stream(
-            '{"intent": "DIRECTIONS", "query": "directions from home to work"}'
-        )
+        self._mock_llm_stream('{"intent": "DIRECTIONS"}')
     )
 
     # Mock extractor runner:
@@ -412,9 +410,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     # Mock router yielding DIRECTIONS
     self.mock_router.generate_content_async.return_value = (
-        self._mock_llm_stream(
-            '{"intent": "DIRECTIONS", "query": "directions to work"}'
-        )
+        self._mock_llm_stream('{"intent": "DIRECTIONS"}')
     )
 
     self.mock_extractor.generate_content_async.return_value = (
@@ -465,9 +461,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self._setup_mock_llm(mock_lite_llm_class)
 
     self.mock_router.generate_content_async.return_value = (
-        self._mock_llm_stream(
-            '{"intent": "DIRECTIONS", "query": "bus to work"}'
-        )
+        self._mock_llm_stream('{"intent": "DIRECTIONS"}')
     )
 
     mock_runner = mock.MagicMock()
@@ -520,9 +514,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self._setup_mock_llm(mock_lite_llm_class)
 
     self.mock_router.generate_content_async.return_value = (
-        self._mock_llm_stream(
-            '{"intent": "DIRECTIONS", "query": "walk to park"}'
-        )
+        self._mock_llm_stream('{"intent": "DIRECTIONS"}')
     )
 
     mock_runner = mock.MagicMock()
@@ -577,9 +569,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self._setup_mock_llm(mock_lite_llm_class)
 
     self.mock_router.generate_content_async.return_value = (
-        self._mock_llm_stream(
-            '{"intent": "DIRECTIONS", "query": "bike to work"}'
-        )
+        self._mock_llm_stream('{"intent": "DIRECTIONS"}')
     )
 
     mock_runner = mock.MagicMock()
@@ -634,9 +624,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self._setup_mock_llm(mock_lite_llm_class)
 
     self.mock_router.generate_content_async.return_value = (
-        self._mock_llm_stream(
-            '{"intent": "DIRECTIONS", "query": "directions to work"}'
-        )
+        self._mock_llm_stream('{"intent": "DIRECTIONS"}')
     )
 
     self.mock_extractor.generate_content_async.return_value = (
@@ -715,9 +703,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     # Mock router yielding LOCAL_SEARCH
     self.mock_router.generate_content_async.return_value = (
-        self._mock_llm_stream(
-            '{"intent": "LOCAL_SEARCH", "query": "sushi Seattle"}'
-        )
+        self._mock_llm_stream('{"intent": "LOCAL_SEARCH"}')
     )
 
     # Mock extractor runner:
@@ -786,6 +772,149 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     places = update_data_model["value"]["places"]
     self.assertEqual(len(places), 1)
     self.assertEqual(places[0]["name"], "Shiki Sushi")
+
+  @mock.patch(_LITELLM_PATH)
+  async def test_agent_nearby_places_depth_flow(self, mock_lite_llm_class):
+    """Verifies nearby places depth flow, structured extraction, and template merging."""
+    self._setup_mock_llm(mock_lite_llm_class)
+
+    self.mock_router.generate_content_async.return_value = self._mock_llm_stream(
+        '{"intent": "NEARBY_PLACES_DEPTH", "query": "quiet dinner spots'
+        ' near The Plaza Hotel"}'
+    )
+
+    mock_runner = mock.MagicMock()
+    mock_fc = MockFunctionCall(
+        name="render_nearby_places_depth_template",
+        args={
+            "heading": "Quiet romantic dinner spots near The Plaza Hotel",
+            "center_lat": 40.7644,
+            "center_lng": -73.9745,
+            "zoom": 14,
+            "places": [{
+                "placeId": "ChIJ111",
+                "name": "Bistro One",
+                "lat": 40.7650,
+                "lng": -73.9750,
+                "placePrimaryType": "food_and_drink",
+                "description": (
+                    "**Bistro One** is an intimate candlelit French bistro.\n"
+                    "* **The vibe**: Cozy corner booths.\n"
+                    "* **Logistics**: Just steps away."
+                ),
+            }],
+        },
+    )
+    mock_event = MockEvent(function_calls=[mock_fc])
+    mock_runner.run_async.return_value = MockAsyncIterator([mock_event])
+
+    config = AgentConfig(
+        fallback_mode="DYNAMIC",
+        router_model="gemini/router-model",
+        template_model="gemini/template-model",
+    )
+    agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._extractor_runners["0.9"] = mock_runner
+
+    results = await self._collect_stream(
+        agent, "quiet dinner spots near The Plaza Hotel"
+    )
+
+    self.assertEqual(len(results), 1)
+    self.assertTrue(results[0]["is_task_complete"])
+    parts = results[0]["parts"]
+    self.assertEqual(len(parts), 3)
+
+    create_surface = parts[0].root.data["createSurface"]
+    self.assertTrue(
+        create_surface["surfaceId"].startswith("nearby-places-depth-surface-")
+    )
+
+    update_components = parts[1].root.data["updateComponents"]
+    heading_comp = next(
+        comp
+        for comp in update_components["components"]
+        if comp["id"] == "heading-text"
+    )
+    self.assertEqual(
+        heading_comp["text"],
+        "### Quiet romantic dinner spots near The Plaza Hotel",
+    )
+
+    map_comp = next(
+        comp for comp in update_components["components"] if comp["id"] == "map"
+    )
+    self.assertEqual(map_comp["zoom"], 14)
+
+    update_data_model = parts[2].root.data["updateDataModel"]
+    self.assertEqual(update_data_model["path"], "/")
+    places = update_data_model["value"]["places"]
+    self.assertEqual(len(places), 1)
+    self.assertEqual(places[0]["name"], "Bistro One")
+    self.assertIn("\n\n* **The vibe**:", places[0]["description"])
+
+  @mock.patch(_LITELLM_PATH)
+  async def test_agent_place_answer_factual_flow(self, mock_lite_llm_class):
+    """Verifies place answer factual flow, extraction, and template merging."""
+    self._setup_mock_llm(mock_lite_llm_class)
+
+    self.mock_router.generate_content_async.return_value = self._mock_llm_stream(
+        '{"intent": "PLACE_ANSWER_FACTUAL", "query": "Space Needle parking'
+        ' Seattle"}'
+    )
+
+    mock_runner = mock.MagicMock()
+    mock_fc = MockFunctionCall(
+        name="render_place_answer_factual_template",
+        args={
+            "heading": "Space Needle",
+            "summary": (
+                "Valet parking is available at the Space Needle entrance.\n"
+                "* **Valet service**: Available directly at Broad Street."
+            ),
+            "name": "Space Needle",
+            "placeId": "ChIJ-bfVTh8VkFQR6yFmQ34e2mo",
+        },
+    )
+    mock_event = MockEvent(function_calls=[mock_fc])
+    mock_runner.run_async.return_value = MockAsyncIterator([mock_event])
+
+    config = AgentConfig(
+        fallback_mode="DYNAMIC",
+        router_model="gemini/router-model",
+        template_model="gemini/template-model",
+    )
+    agent = MAUIAgentWithTemplates(base_url="http://test-url", config=config)
+    agent._extractor_runners["0.9"] = mock_runner
+
+    results = await self._collect_stream(
+        agent, "Does the Space Needle have parking?"
+    )
+
+    self.assertEqual(len(results), 1)
+    self.assertTrue(results[0]["is_task_complete"])
+    parts = results[0]["parts"]
+    self.assertEqual(len(parts), 2)
+
+    create_surface = parts[0].root.data["createSurface"]
+    self.assertTrue(
+        create_surface["surfaceId"].startswith("place-answer-factual-surface-")
+    )
+
+    update_components = parts[1].root.data["updateComponents"]
+    heading_comp = next(
+        comp
+        for comp in update_components["components"]
+        if comp["id"] == "heading-text"
+    )
+    self.assertEqual(heading_comp["text"], "### Space Needle")
+
+    place_card = next(
+        comp
+        for comp in update_components["components"]
+        if comp["id"] == "place-card"
+    )
+    self.assertEqual(place_card["placeId"], "ChIJ-bfVTh8VkFQR6yFmQ34e2mo")
 
   @mock.patch(_LITELLM_PATH)
   async def test_agent_local_search_flow_validation_failure_fallback(
@@ -1170,6 +1299,16 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
       )
       self.assertIsNotNone(extractor_agent)
 
+  def test_get_grounded_text_instruction_appends_shared_guidelines(self):
+    """Verifies that grounded text instruction includes shared style guidelines."""
+    maui_agent = MAUIAgentWithTemplates(base_url="http://test-url")
+    # pylint: disable=protected-access
+    instruction = maui_agent._get_grounded_text_instruction()
+    # pylint: enable=protected-access
+    self.assertIn(agent.GROUNDED_TEXT_BASE_INSTRUCTION, instruction)
+    self.assertIn("## Style Guidelines", instruction)
+    self.assertIn("Bold visual anchors", instruction)
+
   def test_build_unified_extractor_agent_directions_loads_skill_instructions(
       self,
   ):
@@ -1178,9 +1317,11 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     extractor_agent = (
         agent._build_unified_extractor_agent()  # pylint: disable=protected-access
     )
-    self.assertIn("less than a minute", extractor_agent.instruction)
     self.assertIn(
-        "Always round seconds to the nearest minute",
+        "Multi-Step Route Resolution Policy", extractor_agent.instruction
+    )
+    self.assertIn(
+        "Handling Routing Failures & Regional Limitations",
         extractor_agent.instruction,
     )
     tool_names = [t.name for t in extractor_agent.tools if hasattr(t, "name")]
@@ -1205,6 +1346,12 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         "   - `[TARGET_INTENT: LOCAL_SEARCH]`: Invoke"
         " `render_local_search_template`. Do NOT invoke any other template"
         " rendering tool.\n"
+        "   - `[TARGET_INTENT: NEARBY_PLACES_DEPTH]`: Invoke"
+        " `render_nearby_places_depth_template`. Do NOT invoke any other"
+        " template rendering tool.\n"
+        "   - `[TARGET_INTENT: PLACE_ANSWER_FACTUAL]`: Invoke"
+        " `render_place_answer_factual_template`. Do NOT invoke any other"
+        " template rendering tool.\n"
         "3. Your final action MUST be this template rendering tool call. Do"
         " NOT emit raw JSON or `<a2ui-json>` blocks in your text response."
     )
@@ -1274,6 +1421,22 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
       self.assertEqual(tool.template_name, bundle.name)
       self.assertEqual(tool.schema_class, bundle.schema_cls)
       self.assertEqual(tool.description, bundle.effective_tool_description)
+
+  def test_build_unified_extractor_instruction_includes_shared_grounding_policy(
+      self,
+  ):
+    """Verifies that shared grounding and placePrimaryType rules are included."""
+    maui_agent = MAUIAgentWithTemplates(base_url="http://test-url")
+    # pylint: disable=protected-access
+    instruction = maui_agent._build_unified_extractor_instruction()
+    # pylint: enable=protected-access
+    self.assertIn("Grounding & Tool-Calling Policy (CRITICAL)", instruction)
+    self.assertIn("DO NOT HALLUCINATE OR GUESS", instruction)
+    self.assertIn("placePrimaryType", instruction)
+    self.assertIn("search_places", instruction)
+    self.assertIn("compute_routes", instruction)
+    self.assertIn("locationBias", instruction)
+    self.assertIn("radiusMeters", instruction)
 
   def test_normalize_version(self):
     """Verifies version strings collapse to the unprefixed schema key."""

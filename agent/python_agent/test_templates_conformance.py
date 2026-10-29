@@ -54,7 +54,6 @@ class ConformanceFewShotExample(pydantic.BaseModel):
 
   user_query: str = pydantic.Field(min_length=1)
   intent: str = pydantic.Field(min_length=1)
-  query: str = pydantic.Field(min_length=1)
 
 
 class BundleManifestModel(pydantic.BaseModel):
@@ -157,6 +156,29 @@ class TestTemplatesConformance(unittest.TestCase):
         self.assertTrue((bundle.bundle_dir / "schema.py").exists())
         self.assertTrue(issubclass(bundle.schema_cls, pydantic.BaseModel))
 
+  def test_bundle_heading_strips_markdown_hashtags(self):
+    """Verifies every bundle's ExtractorSchema strips leading markdown '#' from heading."""
+    for bundle in self.bundles:
+      with self.subTest(bundle=bundle.name):
+        manifest = self._load_bundle_manifest(bundle)
+        example = dict(manifest.conformance_example)
+        example["heading"] = "### Conformance Heading"
+        validated = bundle.schema_cls.model_validate(example)
+        self.assertEqual(validated.heading, "Conformance Heading")
+
+  def test_bundle_summary_normalizes_markdown(self):
+    """Verifies that bundles with a summary field normalize markdown bullets."""
+    for bundle in self.bundles:
+      if "summary" in bundle.schema_cls.model_fields:
+        with self.subTest(bundle=bundle.name):
+          manifest = self._load_bundle_manifest(bundle)
+          example = dict(manifest.conformance_example)
+          example["summary"] = "Intro overview.\\n* Bullet item"
+          validated = bundle.schema_cls.model_validate(example)
+          self.assertEqual(
+              validated.summary, "Intro overview.\n\n* Bullet item"
+          )
+
   def test_bundle_schema_validates_conformance_example(self):
     """Verifies each bundle's conformance_example passes schema validation."""
     for bundle in self.bundles:
@@ -208,6 +230,28 @@ class TestTemplatesConformance(unittest.TestCase):
         self.assertTrue(skill.frontmatter.description)
         self.assertGreater(len(skill.instructions), 0)
         self.assertEqual(bundle.skill_instructions, skill.instructions)
+
+  def test_bundle_skill_instructions_exclude_mcp_tool_names(self):
+    """Verifies bundle SKILL.md files do not hardcode MCP or rendering tool names."""
+    forbidden_mcp_terms = (
+        "search_places",
+        "compute_routes",
+        "radiusMeters",
+        "locationBias",
+        "render_local_search_template",
+        "render_directions_template",
+        "render_nearby_places_depth_template",
+        "render_place_answer_factual_template",
+    )
+    for bundle in self.bundles:
+      with self.subTest(bundle=bundle.name):
+        for term in forbidden_mcp_terms:
+          self.assertNotIn(
+              term,
+              bundle.skill_instructions,
+              f"Bundle '{bundle.name}' SKILL.md should not contain MCP tool"
+              f" term '{term}'",
+          )
 
   def test_bundle_catalog_schema_compliance(self):
     """Verifies that rendered layouts pass A2UI catalog schema validation."""

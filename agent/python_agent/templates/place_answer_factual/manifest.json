@@ -1,0 +1,24 @@
+{
+  "intent": "PLACE_ANSWER_FACTUAL",
+  "surface_prefix": "place-answer-factual-surface",
+  "archetype": "Single place factual Q&A, venue overview, or specific factual inquiries about a single named landmark or business (e.g., 'does the Space Needle have parking?', 'is Pike Place Market dog-friendly?', 'tell me about the Ferry Building').",
+  "empty_fallback_text": "Could not retrieve information for the requested place.",
+  "tool_description": "Renders a Google Maps single-place factual answer UI component with a direct answer summary, supporting bulleted details, and place card.",
+  "conformance_example": {
+    "surface_id": "test-surface",
+    "heading": "Space Needle",
+    "summary": "Valet parking is available at the Space Needle entrance, with paid public garages located nearby around Seattle Center.\n\n* **Valet service**: Available directly at the Broad Street drop-off circle.\n* **Nearby garages**: Seattle Center 5th Ave. N. Garage and Mercer Street Garage are within a 5-minute walk.",
+    "name": "Space Needle",
+    "placeId": "ChIJ-bfVTh8VkFQR6yFmQ34e2mo"
+  },
+  "few_shot_examples": [
+    {
+      "user_query": "Does the Space Needle have parking?",
+      "intent": "PLACE_ANSWER_FACTUAL"
+    },
+    {
+      "user_query": "Is Pike Place Market dog-friendly?",
+      "intent": "PLACE_ANSWER_FACTUAL"
+    }
+  ]
+}

@@ -16,9 +16,7 @@
         {
           "type": "object",
           "required": [
-            "component",
-            "center",
-            "zoom"
+            "component"
           ],
           "properties": {
             "component": {

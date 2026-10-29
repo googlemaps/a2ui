@@ -71,8 +71,8 @@ export declare interface MapPinProps {
 
 /** Declared so Closure Compiler does not rename GoogleMap schema keys. */
 export declare interface GoogleMapProps {
-  center: {lat: number; lng: number};
-  zoom: number;
+  center?: {lat: number; lng: number};
+  zoom?: number;
   tilt?: number;
   heading?: number;
   mode?: 'roadmap'|'satellite';
@@ -96,8 +96,9 @@ export const GoogleMapApi = {
   name: 'GoogleMap',
   schema:
       z.object({
-         center: DynamicLatLngSchema.describe('The center point of the map.'),
-         zoom: DynamicNumberSchema.describe('The zoom level.'),
+         center: DynamicLatLngSchema.describe('The center point of the map.')
+                     .optional(),
+         zoom: DynamicNumberSchema.describe('The zoom level.').optional(),
          tilt: DynamicNumberSchema.describe('The tilt angle.').optional(),
          heading: DynamicNumberSchema.describe('The heading angle.').optional(),
          mode: z.enum(['roadmap', 'satellite'])
@@ -130,16 +131,6 @@ declare global {
     tilt: number;
     heading: number;
     maxTilt: number;
-  }
-
-  interface HTMLElementTagNameMap {
-    'gmp-map-3d': HTMLElement&Map3DElement;
-    'gmp-advanced-marker': HTMLElement&{
-      position: google.maps.LatLng|google.maps.LatLngLiteral;
-    };
-    'gmp-marker-3d': HTMLElement&{
-      position: {lat: number, lng: number, altitude?: number};
-    };
   }
 }
 
@@ -174,6 +165,9 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
   private prevRoutes: unknown = null;
   private maps3dLoadPromise: Promise<google.maps.Maps3DLibrary|null>|null =
       null;
+  private routesLoadPromise: Promise<google.maps.RoutesLibrary|null>|null =
+      null;
+  private routesLoaded = false;
   private markerUpdateSeq = 0;
   private colorScheme: 'LIGHT'|'DARK'|null = null;
   private themeObserver?: MutationObserver;
@@ -205,13 +199,23 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     return this.maps3dLoadPromise;
   }
 
-  private async ensureRoutesLoaded(): Promise<void> {
-    await this.ensureMaps3DLoaded();
-    try {
-      await loadMapsLibrary('routes');
-    } catch (err) {
-      console.error('Failed to load Google Maps Routes library:', err);
+  private ensureRoutesLoaded(): Promise<google.maps.RoutesLibrary|null> {
+    if (!this.routesLoadPromise) {
+      this.routesLoadPromise = (async () => {
+        await this.ensureMaps3DLoaded();
+        try {
+          const routesLib = await loadMapsLibrary('routes');
+          this.routesLoaded = true;
+          this.requestUpdate();
+          return routesLib;
+        } catch (err) {
+          this.routesLoadPromise = null;
+          console.error('Failed to load Google Maps Routes library:', err);
+          return null;
+        }
+      })();
     }
+    return this.routesLoadPromise;
   }
 
   override connectedCallback(): void {
@@ -276,7 +280,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
 
   getCenter() {
     const props = this.controller.props;
-    if (!props) return {lat: 0, lng: 0};
+    if (!props || !props.center) return {lat: 0, lng: 0};
 
     const center = props.center;
 
@@ -414,7 +418,10 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
 
     return html`
       <section aria-label="${UIStrings.MAP_VIEW}" style=${styleMap(style)}>
-        <gmp-map-3d
+        ${
+        routes.length > 0 && !this.routesLoaded ?
+            nothing :
+            html`<gmp-map-3d
           center="${lat},${lng},0"
           tilt="${tilt}"
           mode="${mode}"
@@ -423,20 +430,21 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
           color-scheme=${this.colorScheme ?? nothing}
           map-id="2d6e1a27a57efe3c9479f6fc"
           internal-usage-attribution-ids="${
-        (window as any)['A2UI_ATTRIBUTION_ID'] || 'gmp_web_maui_v0.1.10_atoui'}"
+                (window as any)['A2UI_ATTRIBUTION_ID'] ||
+                'gmp_web_maui_v0.1.10_atoui'}"
         >${
-        routes.map(
-            (route: any) => html`
+                routes.map(
+                    (route: any) => html`
           <gmp-route-3d
             origin="${route.origin.lat},${route.origin.lng}"
             destination="${route.destination.lat},${route.destination.lng}"
             travel-mode="${props.travelMode || nothing}"
             autofits-camera
             internal-usage-attribution-ids="${
-                (window as any)['A2UI_ATTRIBUTION_ID'] ||
-                'gmp_web_maui_v0.1.10_atoui'}"
+                        (window as any)['A2UI_ATTRIBUTION_ID'] ||
+                        'gmp_web_maui_v0.1.10_atoui'}"
           ></gmp-route-3d>`)}
-        </gmp-map-3d>
+        </gmp-map-3d>`}
       </section>
     `;
   }

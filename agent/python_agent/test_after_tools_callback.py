@@ -27,7 +27,7 @@ class TestAfterToolsCallback(unittest.TestCase):
     mock_tool_context.state = {}
 
     tool_response_1 = {
-        "content_token": "token_abc_123",
+        "structuredContent": {"contentToken": "token_abc_123"},
     }
     after_tools_callback(
         tool=None,
@@ -41,7 +41,7 @@ class TestAfterToolsCallback(unittest.TestCase):
     )
 
     tool_response_2 = {
-        "content_token": "token_def_456",
+        "structuredContent": {"contentToken": "token_def_456"},
     }
     after_tools_callback(
         tool=None,
@@ -59,29 +59,62 @@ class TestAfterToolsCallback(unittest.TestCase):
         tool=None,
         args={},
         tool_context=mock_tool_context,
-        tool_response={"content_token": "token_abc_123"},
+        tool_response={"structuredContent": {"contentToken": "token_abc_123"}},
     )
     self.assertEqual(
         mock_tool_context.state.get("maps_tools_content_tokens"),
         ["token_abc_123", "token_def_456"],
     )
 
-  def test_after_tool_callback_limits_maps_tools_content_tokens(self):
-    mock_tool_context = mock.MagicMock()
-    mock_tool_context.state = {}
+  def test_after_tool_callback_keeps_tokens_only_for_one_prompt(self):
+    """Verifies that content tokens are reset when invocation_id changes."""
+    shared_state = {}
+    prompt_1_context = mock.MagicMock()
+    prompt_1_context.state = shared_state
+    prompt_1_context.invocation_id = "prompt_1"
 
-    for i in range(15):
-      after_tools_callback(
-          tool=None,
-          args={},
-          tool_context=mock_tool_context,
-          tool_response={"content_token": f"token_{i}"},
-      )
+    after_tools_callback(
+        tool=None,
+        args={},
+        tool_context=prompt_1_context,
+        tool_response={"structuredContent": {"contentToken": "token_prompt_1"}},
+    )
+    self.assertEqual(
+        shared_state.get("maps_tools_content_tokens"),
+        ["token_prompt_1"],
+    )
 
-    tokens = mock_tool_context.state.get("maps_tools_content_tokens")
-    self.assertEqual(len(tokens), 10)
-    self.assertEqual(tokens[0], "token_5")
-    self.assertEqual(tokens[-1], "token_14")
+    # Second prompt with a new invocation_id resets tokens from the first prompt
+    prompt_2_context = mock.MagicMock()
+    prompt_2_context.state = shared_state
+    prompt_2_context.invocation_id = "prompt_2"
+
+    after_tools_callback(
+        tool=None,
+        args={},
+        tool_context=prompt_2_context,
+        tool_response={"structuredContent": {"contentToken": "token_prompt_2"}},
+    )
+    self.assertEqual(
+        shared_state.get("maps_tools_content_tokens"),
+        ["token_prompt_2"],
+    )
+
+    # Third prompt with no contentToken clears previous prompt's tokens
+    prompt_3_context = mock.MagicMock()
+    prompt_3_context.state = shared_state
+    prompt_3_context.invocation_id = "prompt_3"
+
+    after_tools_callback(
+        tool=None,
+        args={},
+        tool_context=prompt_3_context,
+        tool_response={"structuredContent": {}},
+    )
+    self.assertEqual(
+        shared_state.get("maps_tools_content_tokens"),
+        [],
+    )
 
   def test_after_tool_callback_with_kwargs(self):
     mock_tool_context = mock.MagicMock()
@@ -91,7 +124,7 @@ class TestAfterToolsCallback(unittest.TestCase):
         tool="mock_tool",
         args={"query": "test"},
         tool_context=mock_tool_context,
-        tool_response={"content_token": "token_xyz"},
+        tool_response={"structuredContent": {"contentToken": "token_xyz"}},
         extra_param="unused",
     )
     self.assertEqual(
@@ -146,7 +179,7 @@ class TestAfterToolsCallback(unittest.TestCase):
     # None tool_context
     result = after_maps_tools_callback(
         tool_context=None,
-        tool_response={"content_token": "token_1"},
+        tool_response={"structuredContent": {"contentToken": "token_1"}},
     )
     self.assertIsNone(result)
 
@@ -155,7 +188,7 @@ class TestAfterToolsCallback(unittest.TestCase):
     mock_context_no_state.state = None
     result = after_maps_tools_callback(
         tool_context=mock_context_no_state,
-        tool_response={"content_token": "token_1"},
+        tool_response={"structuredContent": {"contentToken": "token_1"}},
     )
     self.assertIsNone(result)
 
@@ -165,7 +198,7 @@ class TestAfterToolsCallback(unittest.TestCase):
 
     result = after_maps_tools_callback(
         tool_context=DummyContext(),
-        tool_response={"content_token": "token_1"},
+        tool_response={"structuredContent": {"contentToken": "token_1"}},
     )
     self.assertIsNone(result)
 
@@ -176,25 +209,25 @@ class TestAfterToolsCallback(unittest.TestCase):
     # None token
     after_maps_tools_callback(
         tool_context=mock_tool_context,
-        tool_response={"content_token": None},
+        tool_response={"structuredContent": {"contentToken": None}},
     )
     self.assertEqual(mock_tool_context.state, {})
 
     # Empty string token
     after_maps_tools_callback(
         tool_context=mock_tool_context,
-        tool_response={"content_token": ""},
+        tool_response={"structuredContent": {"contentToken": ""}},
     )
     self.assertEqual(mock_tool_context.state, {})
 
     # Non-string token (int)
     after_maps_tools_callback(
         tool_context=mock_tool_context,
-        tool_response={"content_token": 12345},
+        tool_response={"structuredContent": {"contentToken": 12345}},
     )
     self.assertEqual(mock_tool_context.state, {})
 
-    # Missing content_token key
+    # Missing contentToken key
     after_maps_tools_callback(
         tool_context=mock_tool_context,
         tool_response={"places": []},
@@ -208,7 +241,7 @@ class TestAfterToolsCallback(unittest.TestCase):
     mock_tool_context.state = {"maps_tools_content_tokens": "invalid_string"}
     after_maps_tools_callback(
         tool_context=mock_tool_context,
-        tool_response={"content_token": "token_1"},
+        tool_response={"structuredContent": {"contentToken": "token_1"}},
     )
     self.assertEqual(
         mock_tool_context.state.get("maps_tools_content_tokens"),
@@ -219,7 +252,7 @@ class TestAfterToolsCallback(unittest.TestCase):
     mock_tool_context.state = {"maps_tools_content_tokens": None}
     after_maps_tools_callback(
         tool_context=mock_tool_context,
-        tool_response={"content_token": "token_2"},
+        tool_response={"structuredContent": {"contentToken": "token_2"}},
     )
     self.assertEqual(
         mock_tool_context.state.get("maps_tools_content_tokens"),

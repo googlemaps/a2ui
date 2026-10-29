@@ -14,6 +14,7 @@
 
 """Shared schema models and primitive types for MAUI template bundles."""
 
+import re
 from typing import Any, Literal
 
 import pydantic
@@ -32,6 +33,23 @@ PlacePrimaryType = Literal[
     "parking",
     "generic",
 ]
+
+
+def normalize_name_and_label(data: dict[str, Any]) -> dict[str, Any]:
+  """Synchronizes 'name' and 'label' fields when one is omitted."""
+  if "name" not in data and "label" in data:
+    data["name"] = data["label"]
+  if "label" not in data and "name" in data:
+    data["label"] = data["name"]
+  return data
+
+
+def normalize_markdown_text(text: str) -> str:
+  """Normalizes escaped newlines and markdown bullet list boundaries."""
+  text = text.replace("\\n", "\n")
+  text = re.sub(r"([^\s*])[ \t]+(\*\s+)", r"\1\n\2", text)
+  text = re.sub(r"(?m)^((?!\s*[*-]\s+)[^\n]+)\n([*-]\s+)", r"\1\n\n\2", text)
+  return text
 
 
 class Pin(pydantic.BaseModel):
@@ -75,8 +93,7 @@ class Pin(pydantic.BaseModel):
       The normalized dictionary.
     """
     if isinstance(data, dict):
-      if "label" not in data and "name" in data:
-        data["label"] = data["name"]
+      normalize_name_and_label(data)
       if not data.get("label"):
         data["label"] = "Location"
     return data
@@ -85,4 +102,6 @@ class Pin(pydantic.BaseModel):
 __all__ = [
     "Pin",
     "PlacePrimaryType",
+    "normalize_markdown_text",
+    "normalize_name_and_label",
 ]
