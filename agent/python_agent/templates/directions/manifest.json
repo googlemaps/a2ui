@@ -8,9 +8,6 @@
     "surface_id": "test-surface",
     "heading": "Directions",
     "summary": "Commute is 15 mins.",
-    "center_lat": 37.5,
-    "center_lng": 127.0,
-    "zoom": 12,
     "routes": [
       {
         "origin": {"lat": 37.4, "lng": 126.9, "label": "Start"},
