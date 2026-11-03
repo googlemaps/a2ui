@@ -169,6 +169,12 @@ export abstract class A2UICoreShell extends LitElement {
   protected abstract notifyWebpageResized(height: number): void;
   protected abstract notifyJsReady(): void;
 
+  /**
+   * Maps JS API usage attribution IDs identifying the native platform, sent by
+   * every MAUI component in addition to MAUI's own web ID.
+   */
+  protected abstract readonly platformAttributionIds: readonly string[];
+
   processA2uiMessages(json: unknown) {
     try {
         let messages: A2UIMessage[] = (typeof json === 'string' ? JSON.parse(json) : json) as A2UIMessage[];
@@ -375,20 +381,24 @@ export abstract class A2UICoreShell extends LitElement {
   override render() {
     return html`
       <div class="chat-messages">
-        <maui-providers>
-          ${this.timeline.length === 0 ? html`<p class="loading">Waiting for payload...</p>` : nothing}
+        <maui-providers .additionalAttributionIds=${
+        this.platformAttributionIds}>
+          ${
+        this.timeline.length === 0 ?
+            html`<p class="loading">Waiting for payload...</p>` :
+            nothing}
           ${this.timeline.map((item) => {
-            if (item.type === 'surface') {
-              const surface = this.rendererRef.getSurface(item.surfaceId);
-              if (!surface) return nothing;
-              return html`
+      if (item.type === 'surface') {
+        const surface = this.rendererRef.getSurface(item.surfaceId);
+        if (!surface) return nothing;
+        return html`
                 <div class="surface-message">
                   <a2ui-surface .surface=${surface}></a2ui-surface>
                 </div>
               `;
-            }
-            return nothing;
-          })}
+      }
+      return nothing;
+    })}
         </maui-providers>
       </div>
     `;

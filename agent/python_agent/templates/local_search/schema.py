@@ -91,11 +91,6 @@ class LocalSearchExtractorSchema(BaseModel):
           " min walk**) from the reference point, and operating hours')."
       ),
   )
-  center_lat: float = Field(description="Latitude of the center of results")
-  center_lng: float = Field(description="Longitude of the center of results")
-  zoom: int = Field(
-      default=13, description="Recommended map zoom level (typically 13)"
-  )
   places: list[PlacePin] = Field(
       min_length=1,
       description=(

@@ -14,15 +14,20 @@
  limitations under the License.
  */
 
-import * as v0_9 from "@a2ui/web_core/v0_9";
-import { basicCatalog, Context } from "@a2ui/lit/v0_9";
-import { LitElement, html } from "lit";
-import { ContextProvider } from "@lit/context";
-import { renderMarkdown } from "@a2ui/markdown-it";
-import * as Types from "@a2ui/web_core/types/types";
-import { mapsAgenticUICatalog } from "./catalog";
+import {basicCatalog, Context} from '@a2ui/lit/v0_9';
+import {renderMarkdown} from '@a2ui/markdown-it';
+import * as Types from '@a2ui/web_core/types/types';
+import * as v0_9 from '@a2ui/web_core/v0_9';
+import {ContextProvider} from '@lit/context';
+import {html, LitElement} from 'lit';
+import {property} from 'lit/decorators.js';
+
+import {mapsAgenticUICatalog} from './catalog';
+import {attributionIdsContext, attributionIdsConverter} from './custom-components/attribution';
 
 export class MAUIProviders extends LitElement {
+  private attributionIdsValue: readonly string[] = [];
+
   private markdownProvider = new ContextProvider(this, {
     context: Context.markdown,
     initialValue: async (
@@ -30,6 +35,35 @@ export class MAUIProviders extends LitElement {
         options?: Types.MarkdownRendererOptions,
         ) => renderMarkdown(markdown, options),
   });
+
+  private attributionIdsProvider = new ContextProvider(this, {
+    context: attributionIdsContext,
+    initialValue: this.attributionIdsValue,
+  });
+
+  /**
+   * Maps JS API usage attribution IDs that every MAUI component inside this
+   * element sends in addition to MAUI's own ID. Also settable as a
+   * comma-separated `additional-attribution-ids` attribute.
+   */
+  @property({
+    attribute: 'additional-attribution-ids',
+    converter: attributionIdsConverter,
+    noAccessor: true,
+  })
+  get additionalAttributionIds(): readonly string[] {
+    return this.attributionIdsValue;
+  }
+
+  set additionalAttributionIds(ids: readonly string[]) {
+    const oldIds = this.attributionIdsValue;
+    this.attributionIdsValue = ids ?? [];
+    // Update consumers synchronously, so that MAUI components rendered in the
+    // same pass see the IDs before they first render. Maps JS API elements may
+    // ignore attribution ID changes after they are instantiated.
+    this.attributionIdsProvider?.setValue(this.attributionIdsValue);
+    this.requestUpdate('additionalAttributionIds', oldIds);
+  }
 
   protected override render() {
     return html`<slot></slot>`;
