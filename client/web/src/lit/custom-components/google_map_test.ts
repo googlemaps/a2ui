@@ -14,13 +14,15 @@
 
 import './google_map';
 
+import {flushEventLoop} from '../testing/event_loop';
+
 import {type GoogleMap, GoogleMapApi, type GoogleMapProps, type MapPinProps} from './google_map';
 import {PlacePinMarker} from './place_pin_marker';
 
 interface GoogleMapInternals {
   _controller: {
     props: {
-      center: {lat: number; lng: number};
+      center?: {lat: number; lng: number};
       markers?: unknown[];
       travelMode?: string | null;
       routes?: Array<{
@@ -32,6 +34,7 @@ interface GoogleMapInternals {
   prevCenter: {lat: number; lng: number}|null;
   prevMarkers: unknown;
   prevRoutes: unknown;
+  ensureRoutesLoaded: () => Promise<google.maps.RoutesLibrary|null>;
 }
 
 describe('GoogleMap Component', () => {
@@ -105,7 +108,9 @@ describe('GoogleMap Component', () => {
     internals.prevCenter = {lat: 0, lng: 0};
     document.body.appendChild(element);
 
-    // Wait for lit to finish initial render
+    // Wait for lit to finish initial render and route library load
+    await element.updateComplete;
+    await flushEventLoop();
     await element.updateComplete;
 
     // 2. Query the rendered route
@@ -167,7 +172,7 @@ describe('GoogleMap Component', () => {
          document.documentElement.style.colorScheme = 'light';
          document.body.style.colorScheme = 'light';
          // Wait a microtask for MutationObserver + Lit update
-         await new Promise((resolve) => setTimeout(resolve, 0));
+         await flushEventLoop();
          await element.updateComplete;
 
          expect(gmpMap3d.getAttribute('color-scheme')).toBe('LIGHT');
@@ -176,7 +181,7 @@ describe('GoogleMap Component', () => {
          // Reset to dual 'light dark' — attribute should be removed
          document.documentElement.style.colorScheme = 'light dark';
          document.body.style.colorScheme = 'light dark';
-         await new Promise((resolve) => setTimeout(resolve, 0));
+         await flushEventLoop();
          await element.updateComplete;
 
          expect(gmpMap3d.getAttribute('color-scheme')).toBeNull();
@@ -204,7 +209,9 @@ describe('GoogleMap Component', () => {
     internals.prevCenter = {lat: 0, lng: 0};
     document.body.appendChild(element);
 
-    // Wait for lit to finish initial render
+    // Wait for lit to finish initial render and route library load
+    await element.updateComplete;
+    await flushEventLoop();
     await element.updateComplete;
 
     // 2. Query the rendered route
@@ -236,7 +243,9 @@ describe('GoogleMap Component', () => {
     internals.prevCenter = {lat: 0, lng: 0};
     document.body.appendChild(element);
 
-    // Wait for lit to finish initial render
+    // Wait for lit to finish initial render and route library load
+    await element.updateComplete;
+    await flushEventLoop();
     await element.updateComplete;
 
     // 2. Query the rendered route
@@ -268,7 +277,9 @@ describe('GoogleMap Component', () => {
     internals.prevCenter = {lat: 0, lng: 0};
     document.body.appendChild(element);
 
-    // Wait for lit to finish initial render
+    // Wait for lit to finish initial render and route library load
+    await element.updateComplete;
+    await flushEventLoop();
     await element.updateComplete;
 
     // 2. Query the rendered route
@@ -397,6 +408,29 @@ describe('GoogleMap Component', () => {
        expect(result.success).toBeTrue();
      });
 
+  it('validates payload without center and zoom in GoogleMapApi.schema', () => {
+    const validPayload = {
+      markers: [{lat: 6.4485, lng: 3.449, label: 'Sample'}],
+    };
+    const result = GoogleMapApi.schema.safeParse(validPayload);
+    expect(result.success).toBeTrue();
+  });
+
+  it('falls back to (0, 0) center when center prop is omitted', async () => {
+    const element = document.createElement('a2ui-googlemap') as GoogleMap;
+    const internals = element as unknown as GoogleMapInternals;
+    internals._controller = {props: {markers: []}};
+    document.body.appendChild(element);
+
+    await element.updateComplete;
+
+    expect(element.getCenter()).toEqual({lat: 0, lng: 0});
+    const gmpMap3d = element.renderRoot.querySelector('gmp-map-3d');
+    expect(gmpMap3d?.getAttribute('center')).toBe('0,0,0');
+
+    document.body.removeChild(element);
+  });
+
   it('requires label for markers (MapPinSchema) in GoogleMapApi.schema', () => {
     const invalidPayload = {
       center: {lat: 6.4485, lng: 3.449},
@@ -473,61 +507,131 @@ describe('GoogleMap Component', () => {
        document.body.appendChild(element);
 
        await element.updateComplete;
-       await new Promise((resolve) => setTimeout(resolve, 0));
+       await flushEventLoop();
 
        expect(importLibrarySpy).toHaveBeenCalledOnceWith('maps3d');
 
        document.body.removeChild(element);
      });
 
-  it('lazyloads maps3d before routes when routes are provided', async () => {
-    const callOrder: string[] = [];
-    let resolveMaps3d!: (val: unknown) => void;
-    const maps3dPromise = new Promise((resolve) => {
-      resolveMaps3d = resolve;
-    });
+  it('lazyloads maps3d before routes and waits for both before rendering gmp-map-3d when routes are provided',
+     async () => {
+       const callOrder: string[] = [];
+       let resolveMaps3d!: (val: unknown) => void;
+       const maps3dPromise = new Promise((resolve) => {
+         resolveMaps3d = resolve;
+       });
+       let resolveRoutes!: (val: unknown) => void;
+       const routesPromise = new Promise((resolve) => {
+         resolveRoutes = resolve;
+       });
 
-    const importLibrarySpy =
-        jasmine.createSpy('importLibrary').and.callFake((lib: string) => {
-          callOrder.push(lib);
-          if (lib === 'maps3d') {
-            return maps3dPromise;
-          }
-          return Promise.resolve({});
-        });
+       const importLibrarySpy =
+           jasmine.createSpy('importLibrary').and.callFake((lib: string) => {
+             callOrder.push(lib);
+             if (lib === 'maps3d') {
+               return maps3dPromise;
+             }
+             if (lib === 'routes') {
+               return routesPromise;
+             }
+             return Promise.resolve({});
+           });
 
-    (window as unknown as Record<string, unknown>)['google'] = {
-      maps: {
-        importLibrary: importLibrarySpy,
-        maps3d: {AltitudeMode: {RELATIVE_TO_GROUND: 1}},
-      },
-    };
+       (window as unknown as Record<string, unknown>)['google'] = {
+         maps: {
+           importLibrary: importLibrarySpy,
+           maps3d: {AltitudeMode: {RELATIVE_TO_GROUND: 1}},
+         },
+       };
 
-    const element = document.createElement('a2ui-googlemap') as GoogleMap;
-    const internals = element as unknown as GoogleMapInternals;
-    internals._controller = {
-      props: {
-        center: {lat: 0, lng: 0},
-        routes: [{
-          origin: {lat: 1, lng: 1, label: 'Origin'},
-          destination: {lat: 2, lng: 2, label: 'Destination'},
-        }],
-      },
-    };
-    internals.prevCenter = {lat: 0, lng: 0};
-    document.body.appendChild(element);
+       const element = document.createElement('a2ui-googlemap') as GoogleMap;
+       const internals = element as unknown as GoogleMapInternals;
+       internals._controller = {
+         props: {
+           center: {lat: 0, lng: 0},
+           routes: [{
+             origin: {lat: 1, lng: 1, label: 'Origin'},
+             destination: {lat: 2, lng: 2, label: 'Destination'},
+           }],
+         },
+       };
+       internals.prevCenter = {lat: 0, lng: 0};
+       document.body.appendChild(element);
 
-    await element.updateComplete;
-    // Before maps3d resolves, routes must not be requested yet.
-    expect(callOrder).toEqual(['maps3d']);
+       await element.updateComplete;
+       // Before maps3d resolves, routes must not be requested yet, and
+       // gmp-map-3d must not be rendered yet.
+       expect(callOrder).toEqual(['maps3d']);
+       expect(element.renderRoot.querySelector('gmp-map-3d')).toBeNull();
 
-    resolveMaps3d({});
-    await new Promise((resolve) => setTimeout(resolve, 0));
+       resolveMaps3d({});
+       await flushEventLoop();
+       await element.updateComplete;
 
-    expect(callOrder).toEqual(['maps3d', 'routes']);
+       // While routes is still loading, gmp-map-3d must remain unrendered so it
+       // does not initialize its camera before gmp-route-3d upgrades.
+       expect(callOrder).toEqual(['maps3d', 'routes']);
+       expect(element.renderRoot.querySelector('gmp-map-3d')).toBeNull();
 
-    document.body.removeChild(element);
-  });
+       const fakeRoutesLib = {Route: class {}} as unknown as
+           google.maps.RoutesLibrary;
+       resolveRoutes(fakeRoutesLib);
+       await flushEventLoop();
+       await element.updateComplete;
+
+       expect(await internals.ensureRoutesLoaded()).toBe(fakeRoutesLib);
+       expect(element.renderRoot.querySelector('gmp-map-3d')).not.toBeNull();
+       expect(element.renderRoot.querySelector('gmp-route-3d')).not.toBeNull();
+
+       document.body.removeChild(element);
+     });
+
+  it('does not render gmp-map-3d and logs an error when loading the routes library fails',
+     async () => {
+       const routesError = new Error('routes network error');
+       const consoleErrorSpy = spyOn(console, 'error');
+       const importLibrarySpy =
+           jasmine.createSpy('importLibrary').and.callFake((lib: string) => {
+             if (lib === 'routes') {
+               return Promise.reject(routesError);
+             }
+             return Promise.resolve({});
+           });
+       (window as unknown as Record<string, unknown>)['google'] = {
+         maps: {
+           importLibrary: importLibrarySpy,
+           maps3d: {AltitudeMode: {RELATIVE_TO_GROUND: 1}},
+         },
+       };
+
+       const element = document.createElement('a2ui-googlemap') as GoogleMap;
+       const internals = element as unknown as GoogleMapInternals;
+       internals._controller = {
+         props: {
+           center: {lat: 0, lng: 0},
+           routes: [{
+             origin: {lat: 1, lng: 1, label: 'Origin'},
+             destination: {lat: 2, lng: 2, label: 'Destination'},
+           }],
+         },
+       };
+       internals.prevCenter = {lat: 0, lng: 0};
+       document.body.appendChild(element);
+
+       await element.updateComplete;
+       const routesLibPromise = internals.ensureRoutesLoaded();
+       await flushEventLoop();
+       await element.updateComplete;
+
+       expect(await routesLibPromise).toBeNull();
+       expect(consoleErrorSpy)
+           .toHaveBeenCalledWith(
+               'Failed to load Google Maps Routes library:', routesError);
+       expect(element.renderRoot.querySelector('gmp-map-3d')).toBeNull();
+
+       document.body.removeChild(element);
+     });
 
   it('updates markers when only the markers change', async () => {
     (window as unknown as Record<string, unknown>)['google'] = {
@@ -543,7 +647,7 @@ describe('GoogleMap Component', () => {
     internals.prevCenter = {lat: 0, lng: 0};
     document.body.appendChild(element);
     await element.updateComplete;
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushEventLoop();
 
     const updateMarkersSpy =
         spyOn(

@@ -19,13 +19,11 @@
   "few_shot_examples": [
     {
       "user_query": "Find coffee shops near Central Park",
-      "intent": "LOCAL_SEARCH",
-      "query": "coffee shops near Central Park"
+      "intent": "LOCAL_SEARCH"
     },
     {
       "user_query": "Show me GWC2 and google 1950 in the same map",
-      "intent": "LOCAL_SEARCH",
-      "query": "GWC2 and Google 1950"
+      "intent": "LOCAL_SEARCH"
     }
   ]
 }

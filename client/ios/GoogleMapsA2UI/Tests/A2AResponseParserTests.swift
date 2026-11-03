@@ -19,28 +19,79 @@ import XCTest
 @testable import GoogleMapsA2UI
 
 final class A2AResponseParserTests: XCTestCase {
-  /// Tests that an error is thrown when the input payload is not a valid JSON object.
+  /// Tests that an error is thrown when the input is not valid JSON text.
   func testParse_invalidJSONFormat() {
-    let invalidPayload: [String: Any] = ["key": Date()]  // Date is not valid JSON
-    XCTAssertThrowsError(try A2AResponseParser.parse(invalidPayload)) { error in
+    XCTAssertThrowsError(try A2AResponseParser.parse(#"{"parts": ["#)) { error in
+      XCTAssertEqual(error as? A2AParserError, .invalidJSONFormat)
+    }
+  }
+
+  /// Tests that an error is thrown when the top-level JSON value is not an object.
+  func testParse_topLevelArray_throwsInvalidJSONFormat() {
+    XCTAssertThrowsError(try A2AResponseParser.parse(#"[{"text": "hi"}]"#)) { error in
       XCTAssertEqual(error as? A2AParserError, .invalidJSONFormat)
     }
   }
 
   /// Tests that an error is thrown when the JSON payload lacks a recognizable `parts` structure.
   func testParse_invalidPayloadStructure() {
-    let payloadWithNoParts: [String: Any] = ["status": "ok"]
-    XCTAssertThrowsError(try A2AResponseParser.parse(payloadWithNoParts)) { error in
+    XCTAssertThrowsError(try A2AResponseParser.parse(#"{"status": "ok"}"#)) { error in
       XCTAssertEqual(error as? A2AParserError, .invalidPayloadStructure)
     }
   }
 
   /// Tests that an error is thrown when `parts` is not an array of dictionaries.
   func testParse_invalidPartsType_throwsError() {
-    let payloadWithInvalidParts: [String: Any] = ["parts": "not_an_array"]
-    XCTAssertThrowsError(try A2AResponseParser.parse(payloadWithInvalidParts)) { error in
+    XCTAssertThrowsError(try A2AResponseParser.parse(#"{"parts": "not_an_array"}"#)) { error in
       XCTAssertEqual(error as? A2AParserError, .invalidPayloadStructure)
     }
+  }
+
+  /// Tests that a JSON-RPC `result` wrapper is unwrapped before parsing.
+  func testParse_jsonRPCResultWrapper_unwrapsResult() throws {
+    let payload = """
+      {"jsonrpc": "2.0", "id": 1, "result": {"kind": "status-update", "status": {"message": \
+      {"role": "agent", "parts": [{"text": "Top coffee shops in Seattle:"}]}}}}
+      """
+
+    let events = try A2AResponseParser.parse(payload)
+    XCTAssertEqual(events.map(\.textValue), ["Top coffee shops in Seattle:"])
+  }
+
+  /// Tests that a JSON-RPC error object is surfaced as `A2AParserError.serverError`.
+  func testParse_jsonRPCError_throwsServerError() {
+    let payload =
+      #"{"jsonrpc": "2.0", "id": 1, "error": {"code": -32603, "message": "Internal error"}}"#
+    XCTAssertThrowsError(try A2AResponseParser.parse(payload)) { error in
+      XCTAssertEqual(
+        error as? A2AParserError, .serverError(code: -32603, message: "Internal error"))
+    }
+  }
+
+  /// Tests that an error nested inside `result` is also surfaced as a server error.
+  func testParse_errorInsideResult_throwsServerError() {
+    XCTAssertThrowsError(try A2AResponseParser.parse(#"{"result": {"error": "quota exceeded"}}"#)) {
+      error in
+      XCTAssertEqual(error as? A2AParserError, .serverError(code: nil, message: "quota exceeded"))
+    }
+  }
+
+  /// Tests that a null `error` field is ignored.
+  func testParse_nullError_isIgnored() throws {
+    let payload = #"{"error": null, "result": {"parts": [{"text": "ok"}]}}"#
+    let events = try A2AResponseParser.parse(payload)
+    XCTAssertEqual(events.map(\.textValue), ["ok"])
+  }
+
+  /// Tests that streaming events without message parts, such as a task snapshot or a final status
+  /// update, produce an empty list instead of throwing.
+  func testParse_partlessStreamingEvents_returnEmptyList() throws {
+    let taskSnapshot = #"{"result": {"kind": "task", "id": "task-123"}}"#
+    let finalStatusUpdate =
+      #"{"result": {"kind": "status-update", "final": true, "status": {"state": "completed"}}}"#
+
+    XCTAssertTrue(try A2AResponseParser.parse(taskSnapshot).isEmpty)
+    XCTAssertTrue(try A2AResponseParser.parse(finalStatusUpdate).isEmpty)
   }
 
   /// Tests that a single text part is parsed correctly into a text event.
@@ -51,7 +102,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(events.count, 1)
     XCTAssertEqual(events.first?.textValue, "Show me some good sushi in Seattle")
   }
@@ -64,7 +115,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertTrue(events.isEmpty)
   }
 
@@ -79,7 +130,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(
       events.map(\.textValue),
       [
@@ -98,7 +149,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(events.count, 3)
     XCTAssertEqual(events[0].textValue, "Here is the Seattle map")
     XCTAssertEqual(events[1].metadataMimeType, "application/json+a2ui")
@@ -117,7 +168,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(events.count, 3)
     XCTAssertEqual(events[0].textValue, "Here is the map:")
     XCTAssertEqual(events[1].metadataMimeType, "application/json+a2ui")
@@ -137,7 +188,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(
       events.map(\.textValue),
       [
@@ -156,7 +207,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(events.count, 1)
     XCTAssertEqual(events.first?.textValue, unclosedTagText)
   }
@@ -179,7 +230,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(events.count, 1)
     XCTAssertEqual(events.first?.metadataMimeType, "application/json+a2ui")
 
@@ -205,7 +256,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(events.count, 1)
     XCTAssertEqual(events.first?.metadataMimeType, "application/json+a2ui")
 
@@ -229,7 +280,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(events.count, 1)
     XCTAssertEqual(events.first?.metadataMimeType, "application/json+a2ui")
     let a2uiArray = try XCTUnwrap(events.first?.dataArray)
@@ -248,7 +299,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(events.count, 1)
     XCTAssertEqual(events.first?.textValue, "Seattle is home to a world-class sushi scene")
   }
@@ -280,7 +331,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(events.count, 1)
     XCTAssertEqual(events.first?.metadataMimeType, "application/json+a2ui")
 
@@ -308,7 +359,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(events.count, 3)
 
     XCTAssertEqual(events[0].metadataMimeType, "application/json+a2ui")
@@ -330,7 +381,7 @@ final class A2AResponseParserTests: XCTestCase {
       ]
     ]
 
-    let events = try A2AResponseParser.parse(payload)
+    let events = try A2AResponseParser.parse(jsonString(payload))
     XCTAssertEqual(events.count, 5)
 
     XCTAssertEqual(events[0].textValue, "First map:")
@@ -350,18 +401,24 @@ final class A2AResponseParserTests: XCTestCase {
   /// the parser returns an empty list safely without throwing an exception.
   func testParse_emptyOrUnknownParts_returnsEmptyList() throws {
     let emptyPartsPayload: [String: Any] = ["parts": []]
-    let emptyEvents = try A2AResponseParser.parse(emptyPartsPayload)
+    let emptyEvents = try A2AResponseParser.parse(jsonString(emptyPartsPayload))
     XCTAssertEqual(emptyEvents.count, 0)
 
     let unknownPartsPayload: [String: Any] = [
       "parts": [["kind": "unsupported_media"]]
     ]
-    let unknownEvents = try A2AResponseParser.parse(unknownPartsPayload)
+    let unknownEvents = try A2AResponseParser.parse(jsonString(unknownPartsPayload))
     XCTAssertEqual(unknownEvents.count, 0)
   }
 }
 
 // MARK: - Test Helpers
+
+/// Serializes a JSON dictionary into the raw text form accepted by `A2AResponseParser.parse`.
+private func jsonString(_ object: [String: Any]) throws -> String {
+  let data = try JSONSerialization.data(withJSONObject: object)
+  return try XCTUnwrap(String(data: data, encoding: .utf8))
+}
 
 extension ParsedA2AEvent {
   fileprivate var textValue: String? {

@@ -19,6 +19,8 @@ from typing import Any, ClassVar
 
 import pydantic
 
+from templates.common import normalize_markdown_text
+from templates.common import normalize_name_and_label
 from templates.common import Pin
 from templates.common import PlacePrimaryType
 
@@ -51,10 +53,7 @@ class PlacePin(BaseModel):
   @classmethod
   def normalize_place_pin(cls, data: Any) -> Any:
     if isinstance(data, dict):
-      if "name" not in data and "label" in data:
-        data["name"] = data["label"]
-      if "label" not in data and "name" in data:
-        data["label"] = data["name"]
+      normalize_name_and_label(data)
     return data
 
 
@@ -80,19 +79,16 @@ class LocalSearchExtractorSchema(BaseModel):
   )
   summary: str = Field(
       description=(
-          "A concise 1-paragraph overview that covers all returned places by"
-          " weaving them into natural, contrasting groups (e.g., pairing"
-          " lively group-friendly spots vs. intimate neighborhood bistros)"
-          " rather than listing them one by one. Broadly characterize the"
-          " dining or activity landscape near the reference location using"
-          " concrete, sensory details, bolding every place name (e.g.,"
-          " **Carmine's** and **Tony's Di Napoli**), and directly addressing"
-          " any prompt constraints. For nearby places, never describe"
-          " distances as numbers (e.g., do not say '0.3 miles' or '500"
-          " meters'); instead generalize (e.g., 'a short walk', 'just steps"
-          " away', 'a quick stroll'). Plain text with markdown bolding only;"
-          " do NOT include conversational greetings ('Sure!', 'Here are...')"
-          " and do NOT list place names in bullet points."
+          "A scannable markdown overview of the returned places. Start with a"
+          " concise introductory overview (e.g., 'Five specialty coffee shops"
+          " offer espresso and pastries within a 10-minute walk of the Space"
+          " Needle.'), followed by a blank line (\\n\\n) and a two-level"
+          " indented bullet list covering every place in 'places': use a"
+          " top-level bullet per place with a bold name and rating (e.g., '*"
+          " **Place Name** (4.7★, $$)'), and 2 indented sub-bullets ('  *"
+          " **Highlights**: Standout specialty, vibe, or query-matching"
+          " feature' and '  * **Logistics**: Street address, **0.4 miles** (**8"
+          " min walk**) from the reference point, and operating hours')."
       ),
   )
   center_lat: float = Field(description="Latitude of the center of results")
@@ -102,7 +98,10 @@ class LocalSearchExtractorSchema(BaseModel):
   )
   places: list[PlacePin] = Field(
       min_length=1,
-      description="A list of places found (limit to max list size, e.g. 5)",
+      description=(
+          "Grounded places found (return 5 places by default, or the exact"
+          " count requested by the user if possible)."
+      ),
   )
   anchor_marker: Pin | None = Field(
       default=None,
@@ -114,11 +113,14 @@ class LocalSearchExtractorSchema(BaseModel):
   @pydantic.model_validator(mode="before")
   @classmethod
   def normalize_heading(cls, data: Any) -> Any:
-    """Normalizes markdown headers in heading if present."""
+    """Normalizes markdown headers in heading and bullet boundaries in summary."""
     if isinstance(data, dict):
       heading = data.get("heading")
       if heading and isinstance(heading, str):
         data["heading"] = re.sub(r"^#+\s*", "", heading).strip()
+      summary = data.get("summary")
+      if isinstance(summary, str):
+        data["summary"] = normalize_markdown_text(summary)
     return data
 
   @pydantic.computed_field

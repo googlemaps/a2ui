@@ -119,5 +119,44 @@ class PlacePrimaryTypeTest(unittest.TestCase):
           )
 
 
+class NormalizationHelpersTest(unittest.TestCase):
+  """Tests for shared normalization helpers in common.py."""
+
+  def test_normalize_name_and_label_copies_label_to_name(self):
+    data = {"label": "Pike Place Market"}
+    common.normalize_name_and_label(data)
+    self.assertEqual(data["name"], "Pike Place Market")
+    self.assertEqual(data["label"], "Pike Place Market")
+
+  def test_normalize_name_and_label_copies_name_to_label(self):
+    data = {"name": "Space Needle"}
+    common.normalize_name_and_label(data)
+    self.assertEqual(data["name"], "Space Needle")
+    self.assertEqual(data["label"], "Space Needle")
+
+  def test_normalize_markdown_text_unescapes_newlines_and_formats_bullets(self):
+    raw = (
+        "**Bistro One** is cozy.\\n* **The vibe**: Cozy. * **Logistics**: Easy."
+    )
+    normalized = common.normalize_markdown_text(raw)
+    self.assertEqual(
+        normalized,
+        "**Bistro One** is cozy.\n\n* **The vibe**: Cozy.\n* **Logistics**:"
+        " Easy.",
+    )
+
+  def test_normalize_markdown_text_preserves_indented_sub_bullets(self):
+    raw = (
+        "Intro overview.\\n* **Venue** (4.8★)\\n  * **Logistics**: 123 Main St,"
+        " **0.4 miles** (**8 min walk**)"
+    )
+    normalized = common.normalize_markdown_text(raw)
+    self.assertEqual(
+        normalized,
+        "Intro overview.\n\n* **Venue** (4.8★)\n  * **Logistics**: 123 Main St,"
+        " **0.4 miles** (**8 min walk**)",
+    )
+
+
 if __name__ == "__main__":
   unittest.main()

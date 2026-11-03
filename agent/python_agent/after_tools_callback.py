@@ -19,25 +19,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Maximum number of recent content tokens to retain in session state.
-#
-# Trade-offs / Considerations:
-# - Pros of larger values:
-#     - Retains grounding tokens across longer multi-turn conversations where
-#       older tool calls returned entities that are still referenced or
-#       rendered in UI widgets.
-#     - Prevents premature eviction of valid tokens, ensuring Place Widget
-#       requests can successfully waive billing even after multiple subsequent
-#       tool turns.
-# - Cons of larger values:
-#     - Increases session state size and payload memory footprint across
-#       requests.
-#     - Increases serialized metadata size attached to message parts and RPCs.
-#     - Adds backend processing overhead when downstream services must decrypt
-#       and validate a larger list of candidate tokens.
-#     - Since tokens have an expiration TTL (e.g. 30 minutes), retaining too
-#       many historical tokens increases stale/expired tokens in the payload.
-MAX_CONTENT_TOKENS: int = 10
+# Tracks the current prompt invocation_id per underlying state dictionary so
+# maps_tools_content_tokens is only kept in tool_context for a single prompt.
+_state_invocation_ids: dict[int, Any] = {}
 
 
 def after_tools_callback(
@@ -49,9 +33,6 @@ def after_tools_callback(
 ) -> Any:
   """Callback to aggregate grounding_content_token into session state."""
   # pylint: disable=unused-argument
-  if not tool_response or not isinstance(tool_response, dict):
-    return None
-
   after_maps_tools_callback(tool_context, tool_response)
 
   return None
@@ -61,12 +42,34 @@ def after_maps_tools_callback(
     tool_context: Any,
     tool_response: Any,
 ) -> Any:
-  """Callback to aggregate content_token from Maps Tools into session state."""
+  """Callback to aggregate content tokens from Maps Tools for one prompt."""
   # pylint: disable=unused-argument
   if tool_context is None or getattr(tool_context, "state", None) is None:
     return None
 
-  token = tool_response.get("content_token")
+  # 1. Reset collected tokens when a new prompt turn (invocation_id) starts.
+  state_obj = getattr(tool_context.state, "_value", tool_context.state)
+  state_id = id(state_obj)
+  invocation_id = getattr(tool_context, "invocation_id", None)
+  if invocation_id is not None:
+    if (
+        state_id in _state_invocation_ids
+        and _state_invocation_ids[state_id] != invocation_id
+    ):
+      if "maps_tools_content_tokens" in tool_context.state:
+        tool_context.state["maps_tools_content_tokens"] = []
+    _state_invocation_ids[state_id] = invocation_id
+
+  if not tool_response or not isinstance(tool_response, dict):
+    return None
+
+  # 2. Extract contentToken from the Maps Grounding Lite MCP tool response.
+  structured_content = tool_response.get("structuredContent")
+  token = (
+      structured_content.get("contentToken")
+      if isinstance(structured_content, dict)
+      else None
+  )
   if isinstance(token, str) and token:
     content_tokens = tool_context.state.get("maps_tools_content_tokens", [])
     # If content_tokens is not a list, initialize it to an empty list.
@@ -74,9 +77,6 @@ def after_maps_tools_callback(
       content_tokens = []
     if token not in content_tokens:
       content_tokens.append(token)
-    # Keep only the last MAX_CONTENT_TOKENS tokens.
-    if len(content_tokens) > MAX_CONTENT_TOKENS:
-      content_tokens = content_tokens[-MAX_CONTENT_TOKENS:]
     tool_context.state["maps_tools_content_tokens"] = content_tokens
     logger.info(
         "--- after_maps_tools_callback: Aggregated content token into"

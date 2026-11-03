@@ -15,11 +15,29 @@
 package com.google.android.libraries.mapsplatform.a2ui
 
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 
-sealed class A2AParserException(message: String) : Exception(message) {
+/** Errors thrown by [A2AResponseParser.parse]. */
+sealed class A2AParserException(message: String, cause: Throwable? = null) :
+  Exception(message, cause) {
+  /** The input is not valid JSON text, or its top-level value is not a JSON object. */
+  class InvalidJsonFormat(
+    message: String = "The raw response is not a valid JSON object.",
+    cause: Throwable? = null,
+  ) : A2AParserException(message, cause)
+
+  /** The JSON object lacks a recognized message parts structure. */
   class InvalidPayloadStructure(
-    message: String = "The raw JSON response lacks a recognized message parts structure."
+    message: String = "The raw JSON response lacks a recognized message parts structure.",
+    cause: Throwable? = null,
+  ) : A2AParserException(message, cause)
+
+  /** The server returned a JSON-RPC `error` object instead of a result. */
+  class ServerError(
+    /** The JSON-RPC error code, or `null` if the server did not provide one. */
+    val code: Int?,
+    message: String,
   ) : A2AParserException(message)
 }
 
@@ -51,11 +69,69 @@ object A2AResponseParser {
   private const val KEY_DELETE_SURFACE = "deleteSurface"
   private const val KEY_SURFACE_ID = "surfaceId"
 
+  private const val KEY_RESULT = "result"
+  private const val KEY_ERROR = "error"
+  private const val KEY_CODE = "code"
+
+  /** A2A event kinds that may legitimately carry no message parts, e.g. a final status update. */
+  private val PARTLESS_EVENT_KINDS = setOf("task", "status-update", "artifact-update")
+
+  /** A2A event kinds whose agent reply, if any, is carried in `status.message`. */
+  private val STATUS_EVENT_KINDS = setOf("task", "status-update")
+
   private val A2UI_PATTERN = "<a2ui-json>(.*?)</a2ui-json>".toRegex(RegexOption.DOT_MATCHES_ALL)
 
-  fun parse(rawJson: JSONObject): List<ParsedA2AEvent> {
-    val partsArray =
-      extractPartsArray(rawJson) ?: throw A2AParserException.InvalidPayloadStructure()
+  /**
+   * Parses one A2A server response into an ordered list of events.
+   *
+   * [rawJson] is the JSON text of a single response: a JSON-RPC response (the body of a
+   * `message/send` call, or the payload of one `message/stream` SSE `data:` line), or a bare A2A
+   * `Message`, `Task`, or `TaskStatusUpdateEvent` object. A JSON-RPC `result` wrapper is unwrapped
+   * automatically, and for `task` and `status-update` objects the agent reply in `status.message`
+   * is parsed. Streaming events that carry no message parts, such as an initial `task` snapshot or
+   * a final `status-update`, produce an empty list.
+   *
+   * @throws A2AParserException.InvalidJsonFormat if [rawJson] is not a valid JSON object.
+   * @throws A2AParserException.ServerError if the response contains a JSON-RPC `error`.
+   * @throws A2AParserException.InvalidPayloadStructure if no message parts structure is found.
+   */
+  @JvmStatic
+  @Throws(A2AParserException::class)
+  fun parse(rawJson: String): List<ParsedA2AEvent> {
+    val root =
+      try {
+        JSONObject(rawJson)
+      } catch (e: JSONException) {
+        throw A2AParserException.InvalidJsonFormat(cause = e)
+      }
+    var payload = root.optJSONObject(KEY_RESULT) ?: root
+    throwIfServerError(payload)
+    // For task snapshots and status updates, the agent's reply is the status message.
+    if (payload.optString(KEY_KIND) in STATUS_EVENT_KINDS) {
+      payload.optJSONObject(KEY_STATUS)?.optJSONObject(KEY_MESSAGE)?.let { payload = it }
+    }
+    return try {
+      parsePayload(payload)
+    } catch (e: JSONException) {
+      throw A2AParserException.InvalidPayloadStructure(cause = e)
+    }
+  }
+
+  private fun throwIfServerError(obj: JSONObject) {
+    if (obj.isNull(KEY_ERROR)) return
+    val error = obj.opt(KEY_ERROR)
+    val errorObj = error as? JSONObject
+    val message = errorObj?.optString(KEY_MESSAGE)?.takeIf { it.isNotEmpty() } ?: error.toString()
+    val code = errorObj?.takeIf { it.has(KEY_CODE) }?.optInt(KEY_CODE)
+    throw A2AParserException.ServerError(code, message)
+  }
+
+  private fun parsePayload(rawJson: JSONObject): List<ParsedA2AEvent> {
+    val partsArray = extractPartsArray(rawJson)
+    if (partsArray == null) {
+      if (rawJson.optString(KEY_KIND) in PARTLESS_EVENT_KINDS) return emptyList()
+      throw A2AParserException.InvalidPayloadStructure()
+    }
 
     val partsList = mutableListOf<ParsedA2AEvent>()
     var currentTextBuilder = java.lang.StringBuilder()

@@ -376,6 +376,24 @@ The specific libraries required by MAUI components are:
 * `places`
 * `routes`
 
+Alternatively, web apps that do not load the Maps JavaScript API themselves can
+let the web client library load it the first time a component renders. Call
+`configureMapsJsApi` once from your app's JavaScript or TypeScript entry point
+(for example `main.ts` or `app.ts`), before rendering any components. It is a
+module export, so it does not go in an `index.html` `<script>` tag. Pages
+without a bundled entry point should load the API with one of the methods above
+instead.
+
+```ts
+import { configureMapsJsApi } from '@googlemaps/a2ui/lit';
+
+configureMapsJsApi({ apiKey: "YOUR_API_KEY", version: "alpha" });
+```
+
+`configureMapsJsApi` installs the official Dynamic Library Import bootstrapper,
+so no Maps JavaScript API code is downloaded until a component needs it. It does
+nothing if the page already loads the Maps JavaScript API.
+
 ### Gemini API Key
 
 *Note: This API is variously referred to in Google Cloud as the* Gemini API *and the* Generative Language API.

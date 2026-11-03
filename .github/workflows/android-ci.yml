@@ -46,3 +46,23 @@ jobs:
           chmod +x ./gradlew
           ./gradlew test assembleRelease --no-daemon
         working-directory: client/android/GoogleMapsA2UI
+
+      - name: Use Node.js
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: '22'
+
+      - name: Install WebView shell dependencies
+        run: npm install
+        working-directory: client/android/web_build
+
+      # Type-checks the WebView shell sources and their unit tests.
+      - name: Type check WebView shell
+        run: npx tsc --noEmit
+        working-directory: client/android/web_build
+
+      # Uses vite build directly instead of npm run build, which would also
+      # overwrite the checked-in SDK index.html asset.
+      - name: Build WebView shell bundle
+        run: npx vite build
+        working-directory: client/android/web_build

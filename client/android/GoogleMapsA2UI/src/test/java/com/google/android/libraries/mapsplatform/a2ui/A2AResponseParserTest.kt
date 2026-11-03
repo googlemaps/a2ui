@@ -31,7 +31,7 @@ class A2AResponseParserTest {
    */
   @Test
   fun parse_invalidPayloadStructure_throwsException() {
-    val payloadWithNoParts = JSONObject().apply { put("status", "ok") }
+    val payloadWithNoParts = """{"status": "ok"}"""
     val thrown =
       assertThrows(A2AParserException.InvalidPayloadStructure::class.java) {
         A2AResponseParser.parse(payloadWithNoParts)
@@ -45,7 +45,7 @@ class A2AResponseParserTest {
    */
   @Test
   fun parse_invalidHistoryType_throwsException() {
-    val payloadWithInvalidHistory = JSONObject().apply { put("history", "not_an_array") }
+    val payloadWithInvalidHistory = """{"history": "not_an_array"}"""
     val thrown =
       assertThrows(A2AParserException.InvalidPayloadStructure::class.java) {
         A2AResponseParser.parse(payloadWithInvalidHistory)
@@ -53,10 +53,127 @@ class A2AResponseParserTest {
     assertThat(thrown).hasMessageThat().contains("lacks a recognized message parts structure")
   }
 
+  /** Verifies that malformed JSON text throws [A2AParserException.InvalidJsonFormat]. */
+  @Test
+  fun parse_malformedJson_throwsInvalidJsonFormat() {
+    assertThrows(A2AParserException.InvalidJsonFormat::class.java) {
+      A2AResponseParser.parse("""{"parts": [""")
+    }
+  }
+
+  /** Verifies that a top-level JSON value other than an object throws InvalidJsonFormat. */
+  @Test
+  fun parse_topLevelArray_throwsInvalidJsonFormat() {
+    assertThrows(A2AParserException.InvalidJsonFormat::class.java) {
+      A2AResponseParser.parse("""[{"text": "hi"}]""")
+    }
+  }
+
+  /**
+   * Verifies that a parts array containing non-object entries throws
+   * [A2AParserException.InvalidPayloadStructure] rather than leaking an org.json exception.
+   */
+  @Test
+  fun parse_nonObjectPartEntry_throwsInvalidPayloadStructure() {
+    assertThrows(A2AParserException.InvalidPayloadStructure::class.java) {
+      A2AResponseParser.parse("""{"parts": ["not_an_object"]}""")
+    }
+  }
+
+  /** Verifies that a JSON-RPC `result` wrapper is unwrapped before parsing. */
+  @Test
+  fun parse_jsonRpcResultWrapper_unwrapsResult() {
+    val payload =
+      """
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "kind": "status-update",
+          "status": {
+            "message": {"role": "agent", "parts": [{"text": "Top coffee shops in Seattle:"}]}
+          }
+        }
+      }
+      """
+        .trimIndent()
+
+    val events = A2AResponseParser.parse(payload)
+    assertThat(events).containsExactly(ParsedA2AEvent.Text("Top coffee shops in Seattle:"))
+  }
+
+  /** Verifies that a JSON-RPC error object is surfaced as [A2AParserException.ServerError]. */
+  @Test
+  fun parse_jsonRpcError_throwsServerError() {
+    val payload =
+      """{"jsonrpc": "2.0", "id": 1, "error": {"code": -32603, "message": "Internal error"}}"""
+
+    val thrown =
+      assertThrows(A2AParserException.ServerError::class.java) { A2AResponseParser.parse(payload) }
+    assertThat(thrown.code).isEqualTo(-32603)
+    assertThat(thrown).hasMessageThat().isEqualTo("Internal error")
+  }
+
+  /** Verifies that an error nested inside `result` is also surfaced as a ServerError. */
+  @Test
+  fun parse_errorInsideResult_throwsServerError() {
+    val payload = """{"result": {"error": "quota exceeded"}}"""
+
+    val thrown =
+      assertThrows(A2AParserException.ServerError::class.java) { A2AResponseParser.parse(payload) }
+    assertThat(thrown.code).isNull()
+    assertThat(thrown).hasMessageThat().isEqualTo("quota exceeded")
+  }
+
+  /** Verifies that a null `error` field is ignored. */
+  @Test
+  fun parse_nullError_isIgnored() {
+    val payload = """{"error": null, "result": {"parts": [{"text": "ok"}]}}"""
+
+    val events = A2AResponseParser.parse(payload)
+    assertThat(events).containsExactly(ParsedA2AEvent.Text("ok"))
+  }
+
+  /**
+   * Verifies that streaming events without message parts, such as a task snapshot or a final status
+   * update, produce an empty list instead of throwing.
+   */
+  @Test
+  fun parse_partlessStreamingEvents_returnEmptyList() {
+    val taskSnapshot = """{"result": {"kind": "task", "id": "task-123"}}"""
+    val finalStatusUpdate =
+      """{"result": {"kind": "status-update", "final": true, "status": {"state": "completed"}}}"""
+
+    assertThat(A2AResponseParser.parse(taskSnapshot)).isEmpty()
+    assertThat(A2AResponseParser.parse(finalStatusUpdate)).isEmpty()
+  }
+
+  /** Verifies that for a task snapshot, the status message is parsed instead of the history. */
+  @Test
+  fun parse_taskWithStatusMessage_parsesStatusMessageOnly() {
+    val payload =
+      """
+      {
+        "result": {
+          "kind": "task",
+          "history": [
+            {"role": "user", "parts": [{"text": "Find sushi"}]},
+            {"role": "agent", "parts": [{"text": "Searching..."}]}
+          ],
+          "status": {"message": {"role": "agent", "parts": [{"text": "Here is sushi."}]}}
+        }
+      }
+      """
+        .trimIndent()
+
+    val events = A2AResponseParser.parse(payload)
+    assertThat(events).containsExactly(ParsedA2AEvent.Text("Here is sushi."))
+  }
+
   /** Verifies that when the parts array is empty, the parser returns an empty list. */
   @Test
   fun parse_emptyParts_returnsEmptyList() {
-    val emptyPartsPayload = JSONObject("""{"parts": []}""")
+    val emptyPartsPayload = """{"parts": []}"""
     val emptyEvents = A2AResponseParser.parse(emptyPartsPayload)
     assertThat(emptyEvents).isEmpty()
   }
@@ -67,7 +184,7 @@ class A2AResponseParserTest {
    */
   @Test
   fun parse_unknownParts_returnsEmptyList() {
-    val unknownPartsPayload = JSONObject("""{"parts": [{"kind": "unsupported_media"}]}""")
+    val unknownPartsPayload = """{"parts": [{"kind": "unsupported_media"}]}"""
     val unknownEvents = A2AResponseParser.parse(unknownPartsPayload)
     assertThat(unknownEvents).isEmpty()
   }
@@ -76,16 +193,14 @@ class A2AResponseParserTest {
   @Test
   fun parse_simpleTextPart_returnsSingleTextEvent() {
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {"text": "Show me some good sushi in Seattle"}
-          ]
-        }
-        """
-          .trimIndent()
-      )
+      """
+      {
+        "parts": [
+          {"text": "Show me some good sushi in Seattle"}
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).containsExactly(ParsedA2AEvent.Text("Show me some good sushi in Seattle"))
@@ -95,18 +210,16 @@ class A2AResponseParserTest {
   @Test
   fun parse_contentPartsPath_resolvesTextEvent() {
     val payload =
-      JSONObject(
-        """
-        {
-          "content": {
-            "parts": [
-              {"text": "Welcome to Seattle!"}
-            ]
-          }
+      """
+      {
+        "content": {
+          "parts": [
+            {"text": "Welcome to Seattle!"}
+          ]
         }
-        """
-          .trimIndent()
-      )
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).containsExactly(ParsedA2AEvent.Text("Welcome to Seattle!"))
@@ -116,20 +229,18 @@ class A2AResponseParserTest {
   @Test
   fun parse_statusMessagePartsPath_resolvesTextEvent() {
     val payload =
-      JSONObject(
-        """
-        {
-          "status": {
-            "message": {
-              "parts": [
-                {"text": "Status message text"}
-              ]
-            }
+      """
+      {
+        "status": {
+          "message": {
+            "parts": [
+              {"text": "Status message text"}
+            ]
           }
         }
-        """
-          .trimIndent()
-      )
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).containsExactly(ParsedA2AEvent.Text("Status message text"))
@@ -142,31 +253,29 @@ class A2AResponseParserTest {
   @Test
   fun parse_historyPayload_resolvesAgentPartsAfterLastUser() {
     val payload =
-      JSONObject(
-        """
-        {
-          "history": [
-            {
-              "role": "user",
-              "parts": [{"text": "First query"}]
-            },
-            {
-              "role": "agent",
-              "parts": [{"text": "First answer"}]
-            },
-            {
-              "role": "user",
-              "parts": [{"text": "Show me Seattle maps"}]
-            },
-            {
-              "role": "agent",
-              "parts": [{"text": "Here is Seattle!"}]
-            }
-          ]
-        }
-        """
-          .trimIndent()
-      )
+      """
+      {
+        "history": [
+          {
+            "role": "user",
+            "parts": [{"text": "First query"}]
+          },
+          {
+            "role": "agent",
+            "parts": [{"text": "First answer"}]
+          },
+          {
+            "role": "user",
+            "parts": [{"text": "Show me Seattle maps"}]
+          },
+          {
+            "role": "agent",
+            "parts": [{"text": "Here is Seattle!"}]
+          }
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).containsExactly(ParsedA2AEvent.Text("Here is Seattle!"))
@@ -179,19 +288,17 @@ class A2AResponseParserTest {
   @Test
   fun parse_historyPayloadWithNoAgentResponse_returnsEmptyList() {
     val payload =
-      JSONObject(
-        """
-        {
-          "history": [
-            {
-              "role": "user",
-              "parts": [{"text": "Hello, agent!"}]
-            }
-          ]
-        }
-        """
-          .trimIndent()
-      )
+      """
+      {
+        "history": [
+          {
+            "role": "user",
+            "parts": [{"text": "Hello, agent!"}]
+          }
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).isEmpty()
@@ -204,18 +311,16 @@ class A2AResponseParserTest {
   @Test
   fun parse_multipleTextParts_concatenatesIntoSingleTextEvent() {
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {"text": "Hello Seattle!"},
-            {"text": "Hello Seattle!"},
-            {"text": "Different text."}
-          ]
-        }
-        """
-          .trimIndent()
-      )
+      """
+      {
+        "parts": [
+          {"text": "Hello Seattle!"},
+          {"text": "Hello Seattle!"},
+          {"text": "Different text."}
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events)
@@ -226,16 +331,14 @@ class A2AResponseParserTest {
   @Test
   fun parse_emptyTextPart_returnsEmptyList() {
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {"text": ""}
-          ]
-        }
-        """
-          .trimIndent()
-      )
+      """
+      {
+        "parts": [
+          {"text": ""}
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).isEmpty()
@@ -246,7 +349,7 @@ class A2AResponseParserTest {
    */
   @Test
   fun parse_invalidPartsType_throwsException() {
-    val payload = JSONObject("""{"parts": "not_an_array"}""")
+    val payload = """{"parts": "not_an_array"}"""
     assertThrows(A2AParserException.InvalidPayloadStructure::class.java) {
       A2AResponseParser.parse(payload)
     }
@@ -261,16 +364,14 @@ class A2AResponseParserTest {
     val textWithJson =
       "Here is the map: <a2ui-json>[{\"createSurface\": {\"surfaceId\": \"seattle-map\"}}]</a2ui-json> Hope this helps!"
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {"kind": "text", "text": ${JSONObject.quote(textWithJson)}}
-          ]
-        }
-        """
-          .trimIndent()
-      )
+      """
+      {
+        "parts": [
+          {"kind": "text", "text": ${JSONObject.quote(textWithJson)}}
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).hasSize(3)
@@ -293,16 +394,14 @@ class A2AResponseParserTest {
     val textWithJsonArray =
       "Here is the map: <a2ui-json>[{\"createSurface\": {\"surfaceId\": \"sushi-seattle\"}}, {\"updateComponents\": {\"surfaceId\": \"sushi-seattle\"}}]</a2ui-json> Done."
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {"kind": "text", "text": ${JSONObject.quote(textWithJsonArray)}}
-          ]
-        }
-        """
-          .trimIndent()
-      )
+      """
+      {
+        "parts": [
+          {"kind": "text", "text": ${JSONObject.quote(textWithJsonArray)}}
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).hasSize(3)
@@ -325,16 +424,14 @@ class A2AResponseParserTest {
   fun parse_malformedEmbeddedA2UITag_fallsBackToPlainText() {
     val textWithMalformedJson = "Intro text <a2ui-json>{not_valid_json</a2ui-json> outro text"
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {"kind": "text", "text": ${JSONObject.quote(textWithMalformedJson)}}
-          ]
-        }
-        """
-          .trimIndent()
-      )
+      """
+      {
+        "parts": [
+          {"kind": "text", "text": ${JSONObject.quote(textWithMalformedJson)}}
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events)
@@ -351,16 +448,14 @@ class A2AResponseParserTest {
   fun parse_nonObjectOrArrayEmbeddedA2UITag_fallsBackToPlainText() {
     val textWithPrimitiveJson = "Intro text <a2ui-json>12345</a2ui-json> outro text"
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {"kind": "text", "text": ${JSONObject.quote(textWithPrimitiveJson)}}
-          ]
-        }
-        """
-          .trimIndent()
-      )
+      """
+      {
+        "parts": [
+          {"kind": "text", "text": ${JSONObject.quote(textWithPrimitiveJson)}}
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events)
@@ -372,16 +467,14 @@ class A2AResponseParserTest {
   fun parse_unclosedA2UITag_fallsBackToPlainText() {
     val unclosedTagText = "Before <a2ui-json>{\"createSurface\": {}} without closing tag"
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {"text": ${JSONObject.quote(unclosedTagText)}}
-          ]
-        }
-        """
-          .trimIndent()
-      )
+      """
+      {
+        "parts": [
+          {"text": ${JSONObject.quote(unclosedTagText)}}
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events)
@@ -397,25 +490,23 @@ class A2AResponseParserTest {
   @Test
   fun parse_duplicateSurfaceIds_deduplicatesSurfaces() {
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {
-              "data": {
-                "createSurface": {"surfaceId": "dup-surface"}
-              }
-            },
-            {
-              "data": {
-                "createSurface": {"surfaceId": "dup-surface"}
-              }
+      """
+      {
+        "parts": [
+          {
+            "data": {
+              "createSurface": {"surfaceId": "dup-surface"}
             }
-          ]
-        }
-        """
-          .trimIndent()
-      )
+          },
+          {
+            "data": {
+              "createSurface": {"surfaceId": "dup-surface"}
+            }
+          }
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).hasSize(1)
@@ -433,16 +524,14 @@ class A2AResponseParserTest {
     val textWithMultipleTags =
       "First map: <a2ui-json>{\"createSurface\": {\"surfaceId\": \"sushi\"}}</a2ui-json> Then: <a2ui-json>{\"updateComponents\": {\"surfaceId\": \"sushi\"}}</a2ui-json> Done."
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {"kind": "text", "text": ${JSONObject.quote(textWithMultipleTags)}}
-          ]
-        }
-        """
-          .trimIndent()
-      )
+      """
+      {
+        "parts": [
+          {"kind": "text", "text": ${JSONObject.quote(textWithMultipleTags)}}
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).hasSize(5)
@@ -470,33 +559,31 @@ class A2AResponseParserTest {
   @Test
   fun parse_consecutiveA2UIPayloads_batchesIntoSingleEvent() {
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {
-              "kind": "data",
-              "data": {
-                "createSurface": {
-                  "surfaceId": "sushi-seattle",
-                  "catalogId": "a2ui://maps-agentic-ui-catalog.json"
-                }
-              }
-            },
-            {
-              "kind": "data",
-              "data": {
-                "updateComponents": {
-                  "surfaceId": "sushi-seattle",
-                  "components": []
-                }
+      """
+      {
+        "parts": [
+          {
+            "kind": "data",
+            "data": {
+              "createSurface": {
+                "surfaceId": "sushi-seattle",
+                "catalogId": "a2ui://maps-agentic-ui-catalog.json"
               }
             }
-          ]
-        }
-        """
-          .trimIndent()
-      )
+          },
+          {
+            "kind": "data",
+            "data": {
+              "updateComponents": {
+                "surfaceId": "sushi-seattle",
+                "components": []
+              }
+            }
+          }
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).hasSize(1)
@@ -513,24 +600,22 @@ class A2AResponseParserTest {
   @Test
   fun parse_a2uiBatchInterruptedByTextPart_createsSeparateBatches() {
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {
-              "kind": "data",
-              "data": {"createSurface": {"surfaceId": "sushi-seattle"}}
-            },
-            {"kind": "text", "text": "Middle Text explaining the surface"},
-            {
-              "kind": "data",
-              "data": {"updateComponents": {"surfaceId": "sushi-seattle"}}
-            }
-          ]
-        }
-        """
-          .trimIndent()
-      )
+      """
+      {
+        "parts": [
+          {
+            "kind": "data",
+            "data": {"createSurface": {"surfaceId": "sushi-seattle"}}
+          },
+          {"kind": "text", "text": "Middle Text explaining the surface"},
+          {
+            "kind": "data",
+            "data": {"updateComponents": {"surfaceId": "sushi-seattle"}}
+          }
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).hasSize(3)
@@ -551,24 +636,22 @@ class A2AResponseParserTest {
   @Test
   fun parse_dataPartWithImplicitA2UIKey_returnsDataEvent() {
     val payload =
-      JSONObject(
-        """
-        {
-          "parts": [
-            {
-              "kind": "data",
-              "data": {
-                "createSurface": {
-                  "surfaceId": "sushi-seattle",
-                  "catalogId": "a2ui://maps-agentic-ui-catalog.json"
-                }
+      """
+      {
+        "parts": [
+          {
+            "kind": "data",
+            "data": {
+              "createSurface": {
+                "surfaceId": "sushi-seattle",
+                "catalogId": "a2ui://maps-agentic-ui-catalog.json"
               }
             }
-          ]
-        }
-        """
-          .trimIndent()
-      )
+          }
+        ]
+      }
+      """
+        .trimIndent()
 
     val events = A2AResponseParser.parse(payload)
     assertThat(events).hasSize(1)

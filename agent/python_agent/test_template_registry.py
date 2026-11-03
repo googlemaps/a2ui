@@ -57,7 +57,6 @@ def _make_bundle(
       few_shot_examples=[{
           "user_query": "Tell me about the Space Needle",
           "intent": intent,
-          "query": "Space Needle Seattle",
       }],
       schema_cls=_StubSchema,
       layout_path=bundle_dir / "layout.json",
@@ -140,13 +139,24 @@ class DiscoveryTest(unittest.TestCase):
 
   def test_supported_intents(self):
     self.assertEqual(
-        self.registry.supported_intents, {"LOCAL_SEARCH", "DIRECTIONS"}
+        self.registry.supported_intents,
+        {
+            "LOCAL_SEARCH",
+            "DIRECTIONS",
+            "NEARBY_PLACES_DEPTH",
+            "PLACE_ANSWER_FACTUAL",
+        },
     )
 
   def test_discovery_order_is_deterministic(self):
     self.assertEqual(
         [bundle.name for bundle in self.registry.list_bundles()],
-        ["directions", "local_search"],
+        [
+            "directions",
+            "local_search",
+            "nearby_places_depth",
+            "place_answer_factual",
+        ],
     )
 
 
@@ -210,29 +220,32 @@ class RegisterBundleTest(unittest.TestCase):
     self.registry.register_bundle(_make_bundle(intent="ROUTER_VISIBLE_INTENT"))
 
     classification = self.registry.router_classification(
-        intent="ROUTER_VISIBLE_INTENT", query="anything"
+        intent="ROUTER_VISIBLE_INTENT"
     )
     self.assertEqual(classification.intent, "ROUTER_VISIBLE_INTENT")
     self.assertIn("ROUTER_VISIBLE_INTENT", self.registry.supported_intents)
 
   def test_router_classification_rejects_unregistered_intent(self):
     with self.assertRaises(pydantic.ValidationError):
-      self.registry.router_classification(
-          intent="UNREGISTERED_INTENT", query="anything"
-      )
+      self.registry.router_classification(intent="UNREGISTERED_INTENT")
 
   def test_router_classification_generates_dynamic_enum_schema(self):
+    """Verifies router classification creates dynamic enum schema without query."""
     schema = self.registry.router_classification
     self.assertTrue(issubclass(schema, template_registry.RouterClassification))
+    self.assertNotIn(
+        "query", template_registry.RouterClassification.model_fields
+    )
+    self.assertNotIn("query", schema.model_fields)
     intent_field = schema.model_fields["intent"]
     self.assertTrue(issubclass(intent_field.annotation, enum.Enum))
     self.assertTrue(issubclass(intent_field.annotation, str))
 
-    classification = schema(intent="LOCAL_SEARCH", query="coffee near me")
+    classification = schema(intent="LOCAL_SEARCH")
     self.assertEqual(classification.intent, "LOCAL_SEARCH")
 
     with self.assertRaises(pydantic.ValidationError):
-      schema(intent="INVALID_INTENT", query="coffee near me")
+      schema(intent="INVALID_INTENT")
 
   def test_router_classification_is_cached(self):
     first = self.registry.router_classification
@@ -242,7 +255,7 @@ class RegisterBundleTest(unittest.TestCase):
     self.registry.register_bundle(_make_bundle(intent="DYNAMIC_INTENT"))
     third = self.registry.router_classification
     self.assertIsNot(first, third)
-    classification = third(intent="DYNAMIC_INTENT", query="test query")
+    classification = third(intent="DYNAMIC_INTENT")
     self.assertEqual(classification.intent, "DYNAMIC_INTENT")
 
   def test_registered_intent_stays_out_of_other_registries(self):

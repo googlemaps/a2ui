@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
-import { Part, SendMessageSuccessResponse, Task } from "@a2a-js/sdk";
-import { A2AClient } from "@a2a-js/sdk/client";
-import * as v0_9 from "@a2ui/web_core/v0_9";
+import {Part, SendMessageSuccessResponse, Task} from '@a2a-js/sdk';
+import {A2AClient} from '@a2a-js/sdk/client';
+import * as v0_9 from '@a2ui/web_core/v0_9';
+
+import {loadMapsLibrary} from './custom-components/maps_api_loader';
 
 const A2UI_MIME_TYPE = "application/json+a2ui";
 
@@ -80,9 +82,28 @@ export class A2UIClient {
     return [{ kind: "text", text: message }];
   }
 
-  async send(
-    message: any | string
-  ): Promise<Array<{ type: "text", text: string } | { type: "a2ui", message: any }>> {
+  private async addContentTokens(tokens: string[]): Promise<void> {
+    if (tokens.length === 0) return;
+    let settingsClass =
+        typeof google !== 'undefined' ? google.maps?.Settings : undefined;
+    if (!settingsClass) {
+      try {
+        const coreLib = await loadMapsLibrary('core');
+        settingsClass = coreLib?.Settings;
+      } catch (err) {
+        console.error('Failed to load Google Maps Core library:', err);
+        return;
+      }
+    }
+    const settings = settingsClass?.getInstance() as unknown as | {
+      addContentTokens?: (tokens: Iterable<string>) => void;
+    }
+    |undefined;
+    settings?.addContentTokens?.(tokens);
+  }
+
+  async send(message: any|string): Promise<
+      Array<{type: 'text', text: string}|{type: 'a2ui', message: any}>> {
     const client = await this.getClient();
     const parts = this._buildMessageParts(message);
 
@@ -104,7 +125,14 @@ export class A2UIClient {
       const orderedParts: Array<{ type: "text", text: string } | { type: "a2ui", message: any }> = [];
       for (const part of result.status.message.parts) {
         if (part.kind === 'data') {
-          orderedParts.push({ type: "a2ui", message: part.data });
+          const partObj = part as {
+            root?: {metadata?: Record<string, unknown>};
+          };
+          const tokens = partObj.root?.metadata?.['maps_tools_content_tokens'];
+          if (Array.isArray(tokens)) {
+            await this.addContentTokens(tokens);
+          }
+          orderedParts.push({type: 'a2ui', message: part.data});
         } else if (part.kind === 'text') {
           orderedParts.push({ type: "text", text: part.text });
         }
@@ -146,6 +174,13 @@ export class A2UIClient {
             yieldedText += deltaText;
           }
         } else if (part.kind === 'data' && part.data) {
+          const partObj = part as {
+            root?: {metadata?: Record<string, unknown>};
+          };
+          const tokens = partObj.root?.metadata?.['maps_tools_content_tokens'];
+          if (Array.isArray(tokens)) {
+            await this.addContentTokens(tokens);
+          }
           const payloadStr = JSON.stringify(part.data);
           if (!yieldedDataPayloads.has(payloadStr)) {
             yield { type: "a2ui", message: part.data };

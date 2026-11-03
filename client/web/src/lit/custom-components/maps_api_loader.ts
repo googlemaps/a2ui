@@ -14,10 +14,49 @@
  limitations under the License.
  */
 
+import {bootstrapMapsJsApi} from './maps_js_api_bootstrap.js';
+
+/** Options for letting MAUI load the Maps JS API on demand. */
+export interface MapsJsApiOptions {
+  /** Maps JS API key. */
+  apiKey: string;
+  /**
+   * Maps JS API version or release channel, e.g. `'alpha'`. The `maps3d`
+   * library used by `GoogleMap` currently requires `'alpha'`, which is the
+   * default.
+   */
+  version?: string;
+}
+
+const MAPS_JS_API_SCRIPT_SELECTOR =
+    'script[src*="maps.googleapis.com/maps/api/js"]';
+
+/** Set by `configureMapsJsApi` when MAUI installed the bootstrap. */
+let configuredImportLibrary: typeof google.maps.importLibrary|undefined;
 let warnedUnavailable = false;
 
-/** Resets the loader state. For tests only. */
+/**
+ * Opts in to MAUI loading the Maps JS API the first time a component needs a
+ * library, using the official Dynamic Library Import bootstrap.
+ *
+ * Does nothing if the page already loads the API itself, to avoid loading it
+ * twice. Such pages must use the Dynamic Library Import bootstrap (or a
+ * synchronous script tag) so that `google.maps.importLibrary` exists by the
+ * time MAUI components render.
+ */
+export function configureMapsJsApi(options: MapsJsApiOptions): void {
+  if (getImportLibrary() ||
+      (typeof document !== 'undefined' &&
+       document.querySelector(MAPS_JS_API_SCRIPT_SELECTOR))) {
+    return;
+  }
+  const version = options.version ?? 'alpha';
+  configuredImportLibrary = bootstrapMapsJsApi(options.apiKey, version);
+}
+
+/** Resets the loader configuration. For tests only. */
 export function resetMapsJsApiLoaderForTesting(): void {
+  configuredImportLibrary = undefined;
   warnedUnavailable = false;
 }
 
@@ -30,22 +69,19 @@ function getImportLibrary(): typeof google.maps.importLibrary|null {
 }
 
 /**
- * Resolves the page's `google.maps.importLibrary`, or `null` if it is not
- * available.
- *
- * Pages must load the Maps JS API with the Dynamic Library Import bootstrap (or
- * a synchronous script tag), so that `google.maps.importLibrary` exists by the
- * time MAUI components render.
+ * Resolves the function to import Maps JS API libraries with: the page's
+ * `google.maps.importLibrary`, or the bootstrap installed by
+ * `configureMapsJsApi`. Resolves to `null` if neither is available.
  */
 export async function ensureImportLibrary():
     Promise<typeof google.maps.importLibrary|null> {
-  const importLibrary = getImportLibrary();
+  const importLibrary = getImportLibrary() ?? configuredImportLibrary ?? null;
   if (!importLibrary && !warnedUnavailable) {
     warnedUnavailable = true;
     console.error(
         'google.maps.importLibrary is unavailable, so Maps components will ' +
         'not render. Load the Maps JavaScript API with the Dynamic Library ' +
-        'Import bootstrap.');
+        'Import bootstrap, or call configureMapsJsApi().');
   }
   return importLibrary;
 }
