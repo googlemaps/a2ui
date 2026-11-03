@@ -343,9 +343,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Directions from home to work",
             "summary": "Typical commute is 45 mins.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -392,7 +389,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
 
     map_comp = self._get_component_by_id(parts, "map")
-    self.assertEqual(map_comp["center"], {"lat": 37.5, "lng": 127.0})
+    self.assertNotIn("center", map_comp)
     self.assertEqual(map_comp["travelMode"], "driving")
 
     route = map_comp["routes"][0]
@@ -470,9 +467,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Bus directions to work",
             "summary": "Take bus 10 to work.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -523,9 +517,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Walking route to park",
             "summary": "Walk for 15 minutes.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -578,9 +569,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Biking route to work",
             "summary": "Bike for 25 minutes.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -636,9 +624,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Directions to work",
             "summary": "Typical commute is 45 mins.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -714,9 +699,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Top Sushi Places in Seattle",
             "summary": "Here are some sushi places.",
-            "center_lat": 47.6062,
-            "center_lng": -122.3321,
-            "zoom": 13,
             "places": [{
                 "placeId": "ChIJ111",
                 "name": "Shiki Sushi",
@@ -788,9 +770,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         name="render_nearby_places_depth_template",
         args={
             "heading": "Quiet romantic dinner spots near The Plaza Hotel",
-            "center_lat": 40.7644,
-            "center_lng": -73.9745,
-            "zoom": 14,
             "places": [{
                 "placeId": "ChIJ111",
                 "name": "Bistro One",
@@ -844,7 +823,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     map_comp = next(
         comp for comp in update_components["components"] if comp["id"] == "map"
     )
-    self.assertEqual(map_comp["zoom"], 14)
+    self.assertNotIn("zoom", map_comp)
 
     update_data_model = parts[2].root.data["updateDataModel"]
     self.assertEqual(update_data_model["path"], "/")
@@ -934,7 +913,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
 
-    # Mock invalid render_local_search_template arguments (missing required center_lat)
+    # Mock invalid render_local_search_template arguments (empty places)
     invalid_args = {"summary": "Invalid data", "places": []}
     mock_fc = MockFunctionCall("render_local_search_template", invalid_args)
     mock_event_fc = MockEvent(function_calls=[mock_fc])
@@ -993,8 +972,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         {
             "heading": "Coffee Shops",
             "summary": "Coffee",
-            "center_lat": 47.6,
-            "center_lng": -122.3,
             "places": [{
                 "placeId": "1",
                 "name": "Starbucks",
