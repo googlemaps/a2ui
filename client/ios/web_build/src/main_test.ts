@@ -145,14 +145,50 @@ describe('IOSA2UIShell', () => {
   }
 
   describe('attribution and native WKWebView bridge', () => {
-    it('registers combined web and iOS attribution ID on window', () => {
-      const attributionId =
-          (window as unknown as Record<string, unknown>)['A2UI_ATTRIBUTION_ID'];
+    it('registers the shell without setting a window attribution global',
+       () => {
+         expect((window as unknown as
+                 Record<string, unknown>)['A2UI_ATTRIBUTION_ID'])
+             .toBeUndefined();
+         expect(customElements.get('a2ui-shell')).toBe(IOSA2UIShell);
+       });
 
-      expect(attributionId)
-          .toBe('gmp_web_maui_v0.1.10_atoui,gmp_ios_maui_v0.1.10_atoui');
-      expect(customElements.get('a2ui-shell')).toBe(IOSA2UIShell);
-    });
+    it('sends combined web and iOS attribution IDs from rendered maps',
+       async () => {
+         const shell = await mountShell();
+
+         shell.processA2uiMessages([
+           {
+             createSurface: {
+               surfaceId: 'ios-attribution-surface',
+               catalogId: 'a2ui://maps-agentic-ui-catalog.json',
+             },
+             version: 'v0.9',
+           },
+           {
+             updateComponents: {
+               surfaceId: 'ios-attribution-surface',
+               components: [{
+                 id: 'root',
+                 component: 'GoogleMap',
+                 center: {lat: 37.7749, lng: -122.4194},
+               }],
+             },
+             version: 'v0.9',
+           },
+         ]);
+         await shell.updateComplete;
+         const surfaceEl =
+             shell.shadowRoot!.querySelector<LitElement>('a2ui-surface')!;
+         await surfaceEl.updateComplete;
+         const mapEl = surfaceEl.shadowRoot!.querySelector<GoogleMapElement>(
+             'a2ui-googlemap')!;
+         await mapEl.updateComplete;
+
+         expect(
+             mapEl.map3dElement.getAttribute('internal-usage-attribution-ids'))
+             .toBe('gmp_web_maui_v0.1.10_atoui,gmp_ios_maui_v0.1.10_atoui');
+       });
 
     it('posts onJsReady action to window.webkit.messageHandlers.iOS on connect',
        async () => {
