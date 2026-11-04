@@ -11,9 +11,11 @@ AI Maps Grounding.
     interaction, and unconstrained dynamic A2UI schema validation.
 *   `agent_with_templates.py`: Contains `MAUIAgentWithTemplates`, a fast
     template-driven agent utilizing intent classification (`LOCAL_SEARCH`,
-    `DIRECTIONS`) and structured parameter extraction for low latency.
+    `DIRECTIONS`, `PLACE_ANSWER_FACTUAL`, `NEARBY_PLACES_DEPTH`) and structured
+    parameter extraction for low latency.
 *   `agent_with_grounding.py`: Contains `MAUIAgentWithGrounding`, extending the
-    base agent with Vertex AI Grounding capabilities.
+    base agent with Vertex AI Grounding capabilities (and supporting
+    template-based routing via `template_config: AgentConfig`).
 *   `template_tool.py`: Contains standard ADK `BaseTool` implementations
     (`BaseTemplateTool`, `RenderTextOnlyTemplateTool`, and `TemplateToolset`)
     for template rendering. `MAUIAgentWithTemplates` builds a `BaseTemplateTool`
@@ -51,12 +53,14 @@ maui-a2ui-python = { path = "path/to/a2ui/agent/python_agent" }
 The Agentic UI Toolkit includes three agent architectures:
 
 1.  **Template-driven Agent (`MAUIAgentWithTemplates`)**: Recommended for
-    low-latency local search and directions queries.
+    low-latency spatial queries (`LOCAL_SEARCH`, `DIRECTIONS`,
+    `PLACE_ANSWER_FACTUAL`, `NEARBY_PLACES_DEPTH`).
 2.  **Standard Agent (`MAUIAgent`)**: Uses Grounding Lite MCP with dynamic A2UI
     schema generation. Recommended when preferring maximum response flexibility
     over low latency.
 3.  **Grounding Agent (`MAUIAgentWithGrounding`)**: Uses Grounding with Google
-    Maps via Vertex AI. Recommended when developing a Vertex-based solution.
+    Maps via Vertex AI. Can be run in unconstrained dynamic mode or configured
+    with `template_config: AgentConfig` for low-latency templated responses.
 
 Tip: See the
 [agent_executor.py](https://github.com/googlemaps-samples/a2ui/blob/main/agent/python/agent_executor.py)

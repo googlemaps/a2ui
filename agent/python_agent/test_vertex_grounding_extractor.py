@@ -93,9 +93,6 @@ def _create_local_search_payload(
   return {
       "heading": heading,
       "summary": summary,
-      "center_lat": 40.78,
-      "center_lng": -73.96,
-      "zoom": 13,
       "places": places,
   }
 
@@ -111,9 +108,6 @@ def _create_directions_payload(
   return {
       "heading": heading,
       "summary": f"Directions from {origin_label} to {destination_label}.",
-      "center_lat": 40.77,
-      "center_lng": -73.97,
-      "zoom": 13,
       "travel_mode": "walking",
       "routes": [{
           "origin": {
