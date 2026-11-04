@@ -13,23 +13,19 @@
       "components": [
         {
           "id": "root",
-          "component": "Column",
-          "children": ["heading-text", "map", "list"]
+          "component": "List",
+          "direction": "vertical",
+          "children": ["preamble-text", "map", "list"]
         },
         {
-          "id": "heading-text",
+          "id": "preamble-text",
           "component": "Text",
           "variant": "body",
-          "text": "### {{heading}}"
+          "text": "{{preamble}}"
         },
         {
           "id": "map",
           "component": "GoogleMap",
-          "center": {
-            "lat": "{{center_lat}}",
-            "lng": "{{center_lng}}"
-          },
-          "zoom": "{{zoom}}",
           "tilt": 0,
           "mode": "roadmap",
           "anchorMarker": "{{anchor_marker}}",
@@ -47,7 +43,19 @@
         {
           "id": "place-item",
           "component": "Column",
-          "children": ["place-card", "place-description"]
+          "children": ["place-name", "place-intro", "place-card", "place-description"]
+        },
+        {
+          "id": "place-name",
+          "component": "Text",
+          "variant": "h3",
+          "text": { "path": "name" }
+        },
+        {
+          "id": "place-intro",
+          "component": "Text",
+          "variant": "body",
+          "text": { "path": "intro" }
         },
         {
           "id": "place-card",

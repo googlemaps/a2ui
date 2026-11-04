@@ -343,9 +343,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Directions from home to work",
             "summary": "Typical commute is 45 mins.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -392,7 +389,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
 
     map_comp = self._get_component_by_id(parts, "map")
-    self.assertEqual(map_comp["center"], {"lat": 37.5, "lng": 127.0})
+    self.assertNotIn("center", map_comp)
     self.assertEqual(map_comp["travelMode"], "driving")
 
     route = map_comp["routes"][0]
@@ -470,9 +467,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Bus directions to work",
             "summary": "Take bus 10 to work.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -523,9 +517,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Walking route to park",
             "summary": "Walk for 15 minutes.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -578,9 +569,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Biking route to work",
             "summary": "Bike for 25 minutes.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -636,9 +624,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Directions to work",
             "summary": "Typical commute is 45 mins.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -714,9 +699,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Top Sushi Places in Seattle",
             "summary": "Here are some sushi places.",
-            "center_lat": 47.6062,
-            "center_lng": -122.3321,
-            "zoom": 13,
             "places": [{
                 "placeId": "ChIJ111",
                 "name": "Shiki Sushi",
@@ -787,10 +769,10 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     mock_fc = MockFunctionCall(
         name="render_nearby_places_depth_template",
         args={
-            "heading": "Quiet romantic dinner spots near The Plaza Hotel",
-            "center_lat": 40.7644,
-            "center_lng": -73.9745,
-            "zoom": 14,
+            "preamble": (
+                "Here are three quiet romantic dinner spots within a short walk"
+                " of The Plaza Hotel."
+            ),
             "places": [{
                 "placeId": "ChIJ111",
                 "name": "Bistro One",
@@ -831,27 +813,51 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
 
     update_components = parts[1].root.data["updateComponents"]
-    heading_comp = next(
+    preamble_comp = next(
         comp
         for comp in update_components["components"]
-        if comp["id"] == "heading-text"
+        if comp["id"] == "preamble-text"
     )
     self.assertEqual(
-        heading_comp["text"],
-        "### Quiet romantic dinner spots near The Plaza Hotel",
+        preamble_comp["text"],
+        "Here are three quiet romantic dinner spots within a short walk of The"
+        " Plaza Hotel.",
     )
 
     map_comp = next(
         comp for comp in update_components["components"] if comp["id"] == "map"
     )
-    self.assertEqual(map_comp["zoom"], 14)
+    self.assertNotIn("zoom", map_comp)
+
+    root_comp = next(
+        comp for comp in update_components["components"] if comp["id"] == "root"
+    )
+    self.assertEqual(root_comp["component"], "List")
+    self.assertEqual(
+        root_comp["children"],
+        ["preamble-text", "map", "list"],
+    )
+
+    place_item_comp = next(
+        comp
+        for comp in update_components["components"]
+        if comp["id"] == "place-item"
+    )
+    self.assertEqual(
+        place_item_comp["children"],
+        ["place-name", "place-intro", "place-card", "place-description"],
+    )
 
     update_data_model = parts[2].root.data["updateDataModel"]
     self.assertEqual(update_data_model["path"], "/")
     places = update_data_model["value"]["places"]
     self.assertEqual(len(places), 1)
     self.assertEqual(places[0]["name"], "Bistro One")
-    self.assertIn("\n\n* **The vibe**:", places[0]["description"])
+    self.assertEqual(
+        places[0]["intro"],
+        "**Bistro One** is an intimate candlelit French bistro.",
+    )
+    self.assertIn("* **The vibe**:", places[0]["description"])
 
   @mock.patch(_LITELLM_PATH)
   async def test_agent_place_answer_factual_flow(self, mock_lite_llm_class):
@@ -934,7 +940,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
 
-    # Mock invalid render_local_search_template arguments (missing required center_lat)
+    # Mock invalid render_local_search_template arguments (empty places)
     invalid_args = {"summary": "Invalid data", "places": []}
     mock_fc = MockFunctionCall("render_local_search_template", invalid_args)
     mock_event_fc = MockEvent(function_calls=[mock_fc])
@@ -993,8 +999,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         {
             "heading": "Coffee Shops",
             "summary": "Coffee",
-            "center_lat": 47.6,
-            "center_lng": -122.3,
             "places": [{
                 "placeId": "1",
                 "name": "Starbucks",
