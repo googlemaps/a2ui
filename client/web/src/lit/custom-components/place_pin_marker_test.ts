@@ -27,6 +27,13 @@ describe('PlacePinMarker Module', () => {
     expect(el.position).toEqual({lat: 37.7749, lng: -122.4194});
     expect(el.label).toBe('SF Store');
     expect(el.zIndex).toBe(10);
+    expect(el.style.zIndex).toBe('10');
+  });
+
+  it('includes selected marker focus styles in PLACE_PIN_MARKER_STYLES', () => {
+    const css = PLACE_PIN_MARKER_STYLES.cssText;
+    expect(css).toContain('.custom-marker--selected');
+    expect(css).toContain('scale(1.25)');
   });
 
   it('correctly builds HTML custom marker template', () => {
