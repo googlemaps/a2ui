@@ -52,7 +52,7 @@ themeStyleSheet.replaceSync(`
 :root {
   --background: ${background};
 
-  --a2ui-column-gap: 16px;
+  --a2ui-column-gap: 10px;
 
   /* Button Overrides */
   --a2ui-button-background: linear-gradient(135deg, light-dark(var(--p-70), var(--p-40)) 0%, light-dark(var(--p-60), var(--p-30)) 100%);
@@ -89,7 +89,8 @@ themeStyleSheet.replaceSync(`
   --a2ui-datetimeinput-padding: 0.5rem;
 
   /* List Overrides */
-  --a2ui-list-padding: 0.5rem;
+  --a2ui-list-padding: 0;
+  --a2ui-list-gap: 16px;
 
   /* Slider Overrides */
   --a2ui-slider-track-margin: 0.25rem 0;

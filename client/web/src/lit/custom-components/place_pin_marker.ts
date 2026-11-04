@@ -96,7 +96,10 @@ export function applyBaseMarkerOptions(
   if (options.collisionPriority != null) {
     marker.collisionPriority = options.collisionPriority;
   }
-  if (effectiveZIndex != null) marker.zIndex = effectiveZIndex;
+  if (effectiveZIndex != null) {
+    marker.zIndex = effectiveZIndex;
+    marker.style.zIndex = String(effectiveZIndex);
+  }
 }
 
 /** Helper to generate custom place pin marker template element. */

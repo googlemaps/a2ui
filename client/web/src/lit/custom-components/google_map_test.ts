@@ -13,17 +13,19 @@
 // limitations under the License.
 
 import './google_map';
+import '../a2ui_renderer';
 
 import {flushEventLoop} from '../testing/event_loop';
 
 import {type GoogleMap, GoogleMapApi, type GoogleMapProps, type MapPinProps} from './google_map';
-import {PlacePinMarker} from './place_pin_marker';
+import {calculateLatitudeZIndex, PlacePinMarker, type PlacePinMarkerElement} from './place_pin_marker';
 
 interface GoogleMapInternals {
   _controller: {
     props: {
       center?: {lat: number; lng: number};
       markers?: unknown[];
+      anchorMarker?: {lat?: number; lng?: number; label?: string};
       travelMode?: string | null;
       routes?: Array<{
         origin: {lat: number; lng: number; label: string};
@@ -35,6 +37,43 @@ interface GoogleMapInternals {
   prevMarkers: unknown;
   prevRoutes: unknown;
   ensureRoutesLoaded: () => Promise<google.maps.RoutesLibrary|null>;
+  updateMarkers: () => Promise<void>;
+}
+
+/**
+ * Renders an `a2ui-googlemap` with `props` and waits until its markers are
+ * appended. The caller removes the element.
+ */
+async function renderMapWithProps(
+    props: GoogleMapInternals['_controller']['props']): Promise<GoogleMap> {
+  const element = document.createElement('a2ui-googlemap') as GoogleMap;
+  const internals = element as unknown as GoogleMapInternals;
+  internals._controller = {
+    props: {center: {lat: 47.61, lng: -122.34}, ...props}
+  };
+  internals.prevCenter = {lat: 47.61, lng: -122.34};
+  document.body.appendChild(element);
+  // Routes render `gmp-map-3d` only after the (mocked) routes library
+  // resolves, so flush once more before updating markers.
+  await element.updateComplete;
+  await flushEventLoop();
+  await element.updateComplete;
+  await internals.updateMarkers();
+  return element;
+}
+
+/** The map's `gmp-marker`s in DOM order: later entries draw in front. */
+function readRenderedMarkers(element: GoogleMap) {
+  return Array.from(
+      element.map3dElement.querySelectorAll('gmp-marker'), (el) => {
+        const marker = el as PlacePinMarkerElement;
+        return {
+          // Place pins render a `template.custom-marker`; the anchor does not.
+          isAnchor: marker.querySelector('template.custom-marker') === null,
+          lat: marker.position?.lat,
+          zIndex: Number(marker.zIndex),
+        };
+      });
 }
 
 describe('GoogleMap Component', () => {
@@ -63,33 +102,102 @@ describe('GoogleMap Component', () => {
     windowWithGlobals['A2UI_ATTRIBUTION_ID'] = originalAttributionId;
   });
 
-  it('uses a fallback attribution ID when the global one is missing',
-     async () => {
-       // 1. Explicitly remove any global attribution ID
-       delete (
-           window as unknown as Record<string, unknown>)['A2UI_ATTRIBUTION_ID'];
+  describe('attribution IDs', () => {
+    async function renderMap(
+        configure: (element: GoogleMap) => void = () => {},
+        parent: HTMLElement = document.body): Promise<GoogleMap> {
+      const element = document.createElement('a2ui-googlemap') as GoogleMap;
+      const internals = element as unknown as GoogleMapInternals;
+      internals._controller = {
+        props: {
+          markers: [],
+          center: {lat: 0, lng: 0},
+          routes: [{
+            origin: {lat: 1, lng: 1, label: 'Origin'},
+            destination: {lat: 2, lng: 2, label: 'Destination'},
+          }],
+        },
+      };
+      internals.prevCenter = {lat: 0, lng: 0};
+      configure(element);
+      parent.appendChild(element);
+      // Wait for the initial render and the routes library load.
+      await element.updateComplete;
+      await flushEventLoop();
+      await element.updateComplete;
+      return element;
+    }
 
-       // 2. Render the component with empty props so it falls back to defaults
-       const element = document.createElement('a2ui-googlemap') as GoogleMap;
-       const internals = element as unknown as GoogleMapInternals;
-       internals._controller = {props: {markers: [], center: {lat: 0, lng: 0}}};
-       internals.prevCenter = {lat: 0, lng: 0};
-       document.body.appendChild(element);
+    function renderedIds(element: GoogleMap, selector: string): string|null {
+      return element.renderRoot.querySelector(selector)!.getAttribute(
+          'internal-usage-attribution-ids');
+    }
 
-       // Wait for lit to finish initial render
-       await element.updateComplete;
+    beforeEach(() => {
+      delete (
+          window as unknown as Record<string, unknown>)['A2UI_ATTRIBUTION_ID'];
+    });
 
-       // 3. Query the rendered map using renderRoot (since shadowRoot is
-       // closed)
-       const gmpMap3d = element.renderRoot.querySelector('gmp-map-3d');
+    it('sends only the MAUI web ID by default', async () => {
+      const element = await renderMap();
 
-       // 4. Assert that the attribute has the correct fallback ID
-       const attrId = gmpMap3d!.getAttribute('internal-usage-attribution-ids');
-       expect(attrId).toBe('gmp_web_maui_v0.1.10_atoui');
+      expect(renderedIds(element, 'gmp-map-3d'))
+          .toBe('gmp_web_maui_v0.1.11_atoui');
+      expect(renderedIds(element, 'gmp-route-3d'))
+          .toBe('gmp_web_maui_v0.1.11_atoui');
+      element.remove();
+    });
 
-       // Cleanup
-       document.body.removeChild(element);
-     });
+    it('appends additionalAttributionIds set as a property', async () => {
+      const element = await renderMap((map) => {
+        map.additionalAttributionIds = ['host_id'];
+      });
+
+      expect(renderedIds(element, 'gmp-map-3d'))
+          .toBe('gmp_web_maui_v0.1.11_atoui,host_id');
+      expect(renderedIds(element, 'gmp-route-3d'))
+          .toBe('gmp_web_maui_v0.1.11_atoui,host_id');
+      element.remove();
+    });
+
+    it('appends additional-attribution-ids set as an attribute', async () => {
+      const element = await renderMap((map) => {
+        map.setAttribute('additional-attribution-ids', 'a, b');
+      });
+
+      expect(renderedIds(element, 'gmp-map-3d'))
+          .toBe('gmp_web_maui_v0.1.11_atoui,a,b');
+      element.remove();
+    });
+
+    it('merges IDs from <maui-providers> before per-element IDs', async () => {
+      const providers =
+          document.createElement('maui-providers') as HTMLElement &
+          {additionalAttributionIds: readonly string[]};
+      providers.additionalAttributionIds = ['context_id'];
+      document.body.appendChild(providers);
+
+      const element = await renderMap((map) => {
+        map.additionalAttributionIds = ['element_id', 'context_id'];
+      }, providers);
+
+      expect(renderedIds(element, 'gmp-map-3d'))
+          .toBe('gmp_web_maui_v0.1.11_atoui,context_id,element_id');
+      providers.remove();
+    });
+
+    it('merges the deprecated window global instead of replacing the MAUI ID',
+       async () => {
+         (window as unknown as Record<string, unknown>)['A2UI_ATTRIBUTION_ID'] =
+             'legacy_id';
+
+         const element = await renderMap();
+
+         expect(renderedIds(element, 'gmp-map-3d'))
+             .toBe('gmp_web_maui_v0.1.11_atoui,legacy_id');
+         element.remove();
+       });
+  });
 
   it('propagates travelMode to gmp-route-3d', async () => {
     // 1. Render the component with travelMode and routes
@@ -431,6 +539,16 @@ describe('GoogleMap Component', () => {
     document.body.removeChild(element);
   });
 
+  it('validates markers with DataBinding path and optional center/zoom in GoogleMapApi.schema',
+     () => {
+       const validPayload = {
+         tilt: 0,
+         mode: 'roadmap',
+         markers: {path: 'markers'},
+       };
+       const result = GoogleMapApi.schema.safeParse(validPayload);
+       expect(result.success).toBeTrue();
+     });
   it('requires label for markers (MapPinSchema) in GoogleMapApi.schema', () => {
     const invalidPayload = {
       center: {lat: 6.4485, lng: 3.449},
@@ -473,14 +591,116 @@ describe('GoogleMap Component', () => {
        document.body.removeChild(element);
      });
 
+  it('draws the anchor in front of pins north of it and behind pins south of it',
+     async () => {
+       const element = await renderMapWithProps({
+         markers: [
+           {lat: 47.62, lng: -122.34, label: 'North'},
+           {lat: 47.60, lng: -122.34, label: 'South'},
+         ],
+         anchorMarker: {lat: 47.61, lng: -122.34, label: 'Anchor'},
+       });
+
+       const rendered = readRenderedMarkers(element);
+       expect(rendered.map((m) => m.isAnchor)).toEqual([false, true, false]);
+       expect(rendered.map((m) => m.lat)).toEqual([47.62, 47.61, 47.60]);
+       expect(rendered[1].zIndex).toBe(calculateLatitudeZIndex(47.61));
+       expect(rendered[0].zIndex).toBeLessThan(rendered[1].zIndex);
+       expect(rendered[1].zIndex).toBeLessThan(rendered[2].zIndex);
+
+       document.body.removeChild(element);
+     });
+
+  it('draws the anchor behind every pin when it is the northernmost marker',
+     async () => {
+       const element = await renderMapWithProps({
+         markers: [
+           {lat: 47.60, lng: -122.34, label: 'Pin A'},
+           {lat: 47.59, lng: -122.34, label: 'Pin B'},
+         ],
+         anchorMarker: {lat: 47.65, lng: -122.34},
+       });
+
+       const rendered = readRenderedMarkers(element);
+       expect(rendered.map((m) => m.isAnchor)).toEqual([true, false, false]);
+       expect(rendered.map((m) => m.lat)).toEqual([47.65, 47.60, 47.59]);
+       expect(rendered[0].zIndex).toBe(calculateLatitudeZIndex(47.65));
+       expect(rendered[0].zIndex).toBeLessThan(rendered[1].zIndex);
+
+       document.body.removeChild(element);
+     });
+
+  it('draws the anchor behind a pin at the same latitude', async () => {
+    const element = await renderMapWithProps({
+      markers: [{lat: 47.61, lng: -122.34, label: 'Pin'}],
+      anchorMarker: {lat: 47.61, lng: -122.30, label: 'Anchor'},
+    });
+
+    const rendered = readRenderedMarkers(element);
+    expect(rendered.map((m) => m.isAnchor)).toEqual([true, false]);
+    expect(rendered.map((m) => m.zIndex)).toEqual([
+      calculateLatitudeZIndex(47.61),
+      calculateLatitudeZIndex(47.61),
+    ]);
+
+    document.body.removeChild(element);
+  });
+
+  it('draws the anchor in front of every pin when it is the southernmost marker',
+     async () => {
+       const element = await renderMapWithProps({
+         markers: [
+           {lat: 47.62, lng: -122.34, label: 'Pin A'},
+           {lat: 47.61, lng: -122.34, label: 'Pin B'},
+         ],
+         anchorMarker: {lat: 47.55, lng: -122.34, label: 'Anchor'},
+       });
+
+       const rendered = readRenderedMarkers(element);
+       expect(rendered.map((m) => m.isAnchor)).toEqual([false, false, true]);
+       expect(rendered.map((m) => m.lat)).toEqual([47.62, 47.61, 47.55]);
+       expect(rendered[2].zIndex).toBe(calculateLatitudeZIndex(47.55));
+       expect(rendered[1].zIndex).toBeLessThan(rendered[2].zIndex);
+
+       document.body.removeChild(element);
+     });
+
+  it('does not render the anchor marker when routes are present', async () => {
+    const element = await renderMapWithProps({
+      markers: [{lat: 47.61, lng: -122.34, label: 'Pin'}],
+      anchorMarker: {lat: 47.60, lng: -122.34, label: 'Anchor'},
+      routes: [{
+        origin: {lat: 1, lng: 1, label: 'Origin'},
+        destination: {lat: 2, lng: 2, label: 'Destination'},
+      }],
+    });
+
+    expect(element.map3dElement).not.toBeNull();
+    expect(readRenderedMarkers(element).map((m) => m.isAnchor)).toEqual([
+      false,
+    ]);
+
+    document.body.removeChild(element);
+  });
+
   it('declares every schema key in the Closure props interfaces', () => {
     // Fails to compile if a schema key is added/removed without updating the
     // `declare` interface, which would let Closure rename it again.
-    const pinShape = GoogleMapApi.schema.shape.markers.unwrap().element.shape;
+    const pinShape =
+        GoogleMapApi.schema.shape.markers.unwrap().options[0].element.shape;
     const mapKeysMatch:
         SameKeys<typeof GoogleMapApi.schema.shape, GoogleMapProps> = true;
     const pinKeysMatch: SameKeys<typeof pinShape, MapPinProps> = true;
     expect(mapKeysMatch && pinKeysMatch).toBeTrue();
+  });
+
+  it('accepts a DataBinding path for markers in GoogleMapApi schema', () => {
+    const parsed = GoogleMapApi.schema.safeParse({
+      center: {lat: 37.7749, lng: -122.4194},
+      zoom: 12,
+      markers: {path: 'markers'},
+    });
+    expect(parsed.success).toBeTrue();
   });
 
   it('lazyloads maps3d on connect and does not load routes when routes are empty',
@@ -663,6 +883,104 @@ describe('GoogleMap Component', () => {
 
     document.body.removeChild(element);
   });
+
+  it('highlights selected marker, brings it to the front, and notifies AdvancedPlaceList on click',
+     async () => {
+       (window as unknown as Record<string, unknown>)['google'] = {
+         maps: {
+           importLibrary: jasmine.createSpy('importLibrary').and.resolveTo({}),
+           maps3d: {AltitudeMode: {RELATIVE_TO_GROUND: 1}},
+         },
+       };
+
+       const wrapper = document.createElement('div');
+       const element = document.createElement('a2ui-googlemap') as GoogleMap;
+       const fakeList =
+           document.createElement('a2ui-advancedplacelist') as HTMLElement &
+           {highlightPlace?: jasmine.Spy};
+       fakeList.highlightPlace = jasmine.createSpy('highlightPlace');
+       wrapper.appendChild(element);
+       wrapper.appendChild(fakeList);
+
+       const internals = element as unknown as {
+         _controller: {props: Record<string, unknown>};
+         prevCenter: {lat: number; lng: number};
+         updateMarkers: () => Promise<void>;
+       };
+       internals._controller = {
+         props: {
+           center: {lat: 47.61, lng: -122.33},
+           anchorMarker: {lat: 47.6062, lng: -122.3321, label: 'Hotel'},
+           markers: [
+             {
+               lat: 47.62,
+               lng: -122.32,
+               label: 'North Cafe',
+               placeId: 'ChIJNorth',
+               placePrimaryType: 'food_and_drink',
+             },
+             {
+               lat: 47.60,
+               lng: -122.33,
+               label: 'South Cafe',
+               placeId: 'ChIJSouth',
+               placePrimaryType: 'food_and_drink',
+             },
+           ],
+         },
+       };
+       internals.prevCenter = {lat: 47.61, lng: -122.33};
+       document.body.appendChild(wrapper);
+
+       await element.updateComplete;
+       await internals.updateMarkers();
+
+       expect(element.getAnchorMarker()).toEqual({
+         lat: 47.6062,
+         lng: -122.3321,
+         label: 'Hotel',
+       });
+
+       const gmpMarkers =
+           Array.from(element.map3dElement.querySelectorAll('gmp-marker')) as
+           HTMLElement[];
+       // 2 POI markers + 1 anchor marker (inserted between North and South)
+       expect(gmpMarkers.length).toBe(3);
+       const poiMarkers =
+           gmpMarkers.filter((m) => m.querySelector('.custom-marker') !== null);
+       expect(poiMarkers.length).toBe(2);
+       const northMarker = poiMarkers[0];
+       const southMarker = poiMarkers[1];
+
+       // Initially southMarker has higher z-index than northMarker
+       expect(Number(southMarker.style.zIndex))
+           .toBeGreaterThan(Number(northMarker.style.zIndex));
+
+       // Select northMarker via selectMarker({placeId: 'places/ChIJNorth'})
+       element.selectMarker({placeId: 'places/ChIJNorth'});
+       expect(northMarker.style.zIndex).toBe('9999999');
+       expect(northMarker.querySelector('.custom-marker')
+                  ?.classList.contains('custom-marker--selected'))
+           .toBeTrue();
+       expect(southMarker.querySelector('.custom-marker')
+                  ?.classList.contains('custom-marker--selected'))
+           .toBeFalse();
+
+       // Clicking southMarker selects it and notifies fakeList.highlightPlace
+       southMarker.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+       expect(southMarker.style.zIndex).toBe('9999999');
+       expect(southMarker.querySelector('.custom-marker')
+                  ?.classList.contains('custom-marker--selected'))
+           .toBeTrue();
+       expect(northMarker.querySelector('.custom-marker')
+                  ?.classList.contains('custom-marker--selected'))
+           .toBeFalse();
+       expect(fakeList.highlightPlace)
+           .toHaveBeenCalledWith(
+               {placeId: 'ChIJSouth', lat: 47.60, lng: -122.33}, true);
+
+       document.body.removeChild(wrapper);
+     });
 });
 
 /** `true` only if A and B have exactly the same keys. */

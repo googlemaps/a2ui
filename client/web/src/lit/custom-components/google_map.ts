@@ -17,12 +17,14 @@
 import {A2uiController, A2uiLitElement} from '@a2ui/lit/v0_9';
 import {structuralStyles} from '@a2ui/web_core';
 import {ComponentApi, DynamicNumberSchema, DynamicStringSchema} from '@a2ui/web_core/v0_9';
+import {ContextConsumer} from '@lit/context';
 import {css, html, LitElement, nothing, PropertyValues} from 'lit';
-import {customElement} from 'lit/decorators.js';
+import {customElement, property} from 'lit/decorators.js';
 import {styleMap} from 'lit/directives/style-map.js';
 import {z} from 'zod';
 
 import {AnchorMarker} from './anchor_marker';
+import {attributionIdsContext, attributionIdsConverter, resolveAttributionIds} from './attribution';
 import {loadMapsLibrary} from './maps_api_loader';
 import {MarkerElementOptions, PLACE_PIN_MARKER_STYLES, PlacePinMarker} from './place_pin_marker';
 
@@ -57,6 +59,11 @@ const AnchorMarkerSchema = z.union([
   MapPinSchema.extend({
     label: DynamicStringSchema.optional(),
   }),
+  z.object({path: z.string()}).strict(),
+]);
+
+const DynamicMarkersSchema = z.union([
+  z.array(MapPinSchema),
   z.object({path: z.string()}).strict(),
 ]);
 
@@ -108,7 +115,7 @@ export const GoogleMapApi = {
          anchorMarker:
              AnchorMarkerSchema.describe('The anchor marker location.')
                  .optional(),
-         markers: z.array(MapPinSchema).describe('List of markers.').optional(),
+         markers: DynamicMarkersSchema.describe('List of markers.').optional(),
          origin: DynamicLatLngSchema.describe('Origin for routes.').optional(),
          destination:
              DynamicLatLngSchema.describe('Destination for routes.').optional(),
@@ -138,8 +145,24 @@ interface ResolvedMarker {
   lat: number;
   lng: number;
   label: string;
+  placeId?: string;
   placePrimaryType?: string;
   collisionBehavior?: google.maps.CollisionBehavior;
+}
+
+interface TrackedPoiMarker {
+  element: HTMLElement;
+  placeId?: string;
+  lat: number;
+  lng: number;
+  label: string;
+  baseZIndex: number;
+}
+
+const SELECTED_MARKER_Z_INDEX = 9999999;
+
+function normalizePlaceId(placeId?: string): string {
+  return placeId ? placeId.trim().replace(/^places\//, '') : '';
 }
 
 /** A2UI Custom Component for GoogleMap */
@@ -149,6 +172,31 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     ...LitElement.shadowRootOptions,
     mode: 'closed',
   };
+
+  /**
+   * Maps JS API usage attribution IDs to send in addition to MAUI's own ID,
+   * e.g. to identify the product embedding MAUI.
+   */
+  @property({
+    attribute: 'additional-attribution-ids',
+    converter: attributionIdsConverter,
+  })
+  additionalAttributionIds: readonly string[] = [];
+
+  /** Attribution IDs provided by an ancestor `<maui-providers>`. */
+  private readonly attributionIdsConsumer = new ContextConsumer(this, {
+    context: attributionIdsContext,
+    subscribe: true,
+  });
+
+  /** The comma-separated `internal-usage-attribution-ids` value. */
+  private get attributionIds(): string {
+    return resolveAttributionIds(
+               this.attributionIdsConsumer.value,
+               this.additionalAttributionIds,
+               )
+        .join(',');
+  }
 
   get map3dElement(): HTMLElement&Map3DElement {
     return this.renderRoot.querySelector('gmp-map-3d') as HTMLElement &
@@ -160,6 +208,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
   }
 
   private markers: HTMLElement[] = [];
+  private poiMarkers: TrackedPoiMarker[] = [];
   private prevCenter: {lat: number; lng: number}|null = null;
   private prevMarkers: unknown = null;
   private prevRoutes: unknown = null;
@@ -306,6 +355,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
                 lat: marker.lat ?? 0 as number,
                 lng: marker.lng ?? 0 as number,
                 label: (marker.label ?? '') as string,
+                placeId: marker.placeId as string | undefined,
                 placePrimaryType: marker.placePrimaryType as string | undefined,
                 collisionBehavior: marker.collisionBehavior as
                         google.maps.CollisionBehavior |
@@ -316,6 +366,90 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     }
 
     return [];
+  }
+
+  /** Returns the configured anchorMarker coordinates if present. */
+  getAnchorMarker(): {lat: number; lng: number; label?: string}|null {
+    const props = this.controller.props;
+    if (!props || !props.anchorMarker) return null;
+    const anchor = props.anchorMarker as {
+      lat?: number;
+      lng?: number;
+      label?: string;
+    };
+    if (typeof anchor.lat !== 'number' || typeof anchor.lng !== 'number') {
+      return null;
+    }
+    return {
+      lat: anchor.lat,
+      lng: anchor.lng,
+      label: typeof anchor.label === 'string' ? anchor.label : undefined,
+    };
+  }
+
+  /**
+   * Highlights the matching POI marker and brings it to the front of the stack.
+   */
+  selectMarker(target: {placeId?: string; lat?: number; lng?: number}): void {
+    const targetId = normalizePlaceId(target.placeId);
+    let matchedEntry: TrackedPoiMarker|undefined;
+
+    if (targetId) {
+      matchedEntry = this.poiMarkers.find(
+          (entry) => normalizePlaceId(entry.placeId) === targetId);
+    }
+    if (!matchedEntry && typeof target.lat === 'number' &&
+        typeof target.lng === 'number') {
+      matchedEntry = this.poiMarkers.find(
+          (entry) => Math.abs(entry.lat - target.lat!) < 1e-4 &&
+              Math.abs(entry.lng - target.lng!) < 1e-4);
+    }
+
+    for (const entry of this.poiMarkers) {
+      const isSelected = entry === matchedEntry;
+      const zIndex = isSelected ? SELECTED_MARKER_Z_INDEX : entry.baseZIndex;
+      (entry.element as unknown as {zIndex?: number}).zIndex = zIndex;
+      entry.element.style.zIndex = String(zIndex);
+
+      const markerContentRoot =
+          entry.element.querySelector('.custom-marker') as HTMLElement | null;
+      if (markerContentRoot) {
+        markerContentRoot.classList.toggle(
+            'custom-marker--selected', isSelected);
+        markerContentRoot.style.zIndex = String(zIndex);
+      }
+    }
+  }
+
+  private onMarkerClick(target: {placeId?: string; lat: number; lng: number;}):
+      void {
+    this.selectMarker(target);
+
+    type PlaceListWithHighlight = HTMLElement&{
+      highlightPlace?: (
+          t: {placeId?: string; lat?: number; lng?: number},
+          scroll?: boolean,
+          ) => void;
+    };
+    let listEl: PlaceListWithHighlight|null = null;
+    let ancestor: HTMLElement|null = this.parentElement;
+    while (ancestor && !listEl) {
+      listEl = ancestor.querySelector('a2ui-advancedplacelist') as
+              PlaceListWithHighlight |
+          null;
+      ancestor = ancestor.parentElement;
+    }
+    if (!listEl) {
+      const rootContainer =
+          this.closest('.agent-experimental-split-container') ||
+          this.closest('.agent-bubble-content') ||
+          this.closest('.a2ui-surface-container') || this.parentElement ||
+          document;
+      listEl = rootContainer.querySelector('a2ui-advancedplacelist') as
+              PlaceListWithHighlight |
+          null;
+    }
+    listEl?.highlightPlace?.(target, true);
   }
 
   override updated(changedProperties: PropertyValues): void {
@@ -348,38 +482,66 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     const props = this.controller.props;
     if (!props || !this.map3dElement) return;
 
-    // Clear existing markers
-    this.markers.forEach((marker) => marker.remove());
-    this.markers = [];
-
     const markers = this.resolveMarkers();
     const anchorMarker = props.anchorMarker;
     const destination = props.destination;
     const routes = props.routes || [];
 
-    // Add markers from props.markers
-    for (const {lat, lng, label, placePrimaryType} of markers) {
-      const marker = new PlacePinMarker({
+    this.poiMarkers = [];
+    const elements =
+        markers.map(({lat, lng, label, placeId, placePrimaryType}) => {
+          const marker = new PlacePinMarker({
+                           position: {lat, lng},
+                           label,
+                           placePrimaryType,
+                         }).getElement();
+          const baseZIndex = Number(
+              (marker as unknown as {zIndex?: number}).zIndex ??
+              marker.style.zIndex ?? 0);
+          const handleMarkerClick = (e: Event) => {
+            e.stopPropagation();
+            this.onMarkerClick({placeId, lat, lng});
+          };
+          marker.addEventListener('click', handleMarkerClick);
+          marker.addEventListener('gmp-click', handleMarkerClick);
+          this.poiMarkers.push({
+            element: marker,
+            placeId,
+            lat,
+            lng,
+            label,
+            baseZIndex,
+          });
+          return marker;
+        });
+
+    if (anchorMarker && !routes.length) {
+      const {lat, lng} = anchorMarker as MapPinProps;
+      const anchor = new AnchorMarker({
                        position: {lat, lng},
-                       label,
-                       placePrimaryType,
+                       label: anchorMarker.label as string,
                      }).getElement();
-      this.map3dElement.appendChild(marker);
-      this.markers.push(marker);
+      // <gmp-marker>s stack in DOM order, so place the anchor among the
+      // north-to-south sorted pins.
+      const index = markers.findIndex((pin) => pin.lat <= lat);
+      elements.splice(index === -1 ? elements.length : index, 0, anchor);
     }
 
-    // Add anchor marker if available and no routes
-    if (anchorMarker && !routes.length) {
-      const marker = new AnchorMarker({
+    // Add destination marker if available and no routes
+    if (destination && !routes.length) {
+      const marker = new PlacePinMarker({
                        position: {
-                         lat: anchorMarker.lat as number,
-                         lng: anchorMarker.lng as number
+                         lat: destination.lat as number,
+                         lng: destination.lng as number,
                        },
-                       label: anchorMarker.label as string,
-                       zIndex: 1,
                      }).getElement();
-      this.map3dElement.appendChild(marker);
-      this.markers.push(marker);
+      elements.push(marker);
+    }
+
+    this.markers.forEach((marker) => marker.remove());
+    this.markers = elements;
+    for (const element of elements) {
+      this.map3dElement.appendChild(element);
     }
   }
 
@@ -409,7 +571,6 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     const style = {
       'width': '100%',
       'aspect-ratio': '8 / 5',
-      'margin-bottom': '16px',
       'border-radius': '16px',
       'overflow': 'hidden',
       'border':
@@ -418,10 +579,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
 
     return html`
       <section aria-label="${UIStrings.MAP_VIEW}" style=${styleMap(style)}>
-        ${
-        routes.length > 0 && !this.routesLoaded ?
-            nothing :
-            html`<gmp-map-3d
+        ${routes.length > 0 && !this.routesLoaded ? nothing : html`<gmp-map-3d
           center="${lat},${lng},0"
           tilt="${tilt}"
           mode="${mode}"
@@ -429,20 +587,14 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
           heading="${heading}"
           color-scheme=${this.colorScheme ?? nothing}
           map-id="2d6e1a27a57efe3c9479f6fc"
-          internal-usage-attribution-ids="${
-                (window as any)['A2UI_ATTRIBUTION_ID'] ||
-                'gmp_web_maui_v0.1.10_atoui'}"
-        >${
-                routes.map(
-                    (route: any) => html`
+          internal-usage-attribution-ids="${this.attributionIds}"
+        >${routes.map((route: any) => html`
           <gmp-route-3d
             origin="${route.origin.lat},${route.origin.lng}"
             destination="${route.destination.lat},${route.destination.lng}"
             travel-mode="${props.travelMode || nothing}"
             autofits-camera
-            internal-usage-attribution-ids="${
-                        (window as any)['A2UI_ATTRIBUTION_ID'] ||
-                        'gmp_web_maui_v0.1.10_atoui'}"
+            internal-usage-attribution-ids="${this.attributionIds}"
           ></gmp-route-3d>`)}
         </gmp-map-3d>`}
       </section>

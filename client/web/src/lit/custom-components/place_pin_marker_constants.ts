@@ -161,6 +161,7 @@ export const PLACE_PIN_MARKER_STYLES: CSSResult = css`
     align-items: center;
     flex-direction: column;
     position: relative;
+    cursor: pointer;
   }
   .custom-marker-content {
     position: relative;
@@ -174,6 +175,27 @@ export const PLACE_PIN_MARKER_STYLES: CSSResult = css`
     box-sizing: border-box;
     filter: drop-shadow(0 1px 2px rgba(60, 64, 67, 0.3))
             drop-shadow(0 1px 3px rgba(60, 64, 67, 0.15));
+    transition: transform 0.15s ease, background-color 0.15s ease,
+                filter 0.15s ease;
+  }
+  .custom-marker--selected .custom-marker-content {
+    transform: scale(1.25);
+    transform-origin: bottom center;
+    background-color: light-dark(#1a73e8, #8ab4f8);
+    filter: drop-shadow(0 2px 6px rgba(26, 115, 232, 0.55))
+            drop-shadow(0 1px 3px rgba(60, 64, 67, 0.3));
+  }
+  .custom-marker--selected .custom-marker-content::after {
+    background-color: light-dark(#1a73e8, #8ab4f8);
+  }
+  .custom-marker--selected .custom-marker-label-container {
+    border: 1.5px solid light-dark(#1a73e8, #8ab4f8);
+    box-shadow: 0 2px 6px 0 rgba(26, 115, 232, 0.35),
+                0 1px 3px 1px rgba(0, 0, 0, 0.15);
+  }
+  .custom-marker--selected .custom-marker-label {
+    color: light-dark(#174ea6, #e8f0fe);
+    font-weight: 700;
   }
   .custom-marker-content::after {
     content: "";
