@@ -6,24 +6,25 @@
   "tool_description": "Renders an in-depth nearby places map and curated list UI (2 to 4 places, default 3) with individualized reasoning for each recommendation.",
   "conformance_example": {
     "surface_id": "test-surface",
-    "heading": "Quiet romantic dinner spots near The Plaza Hotel",
-    "center_lat": 40.7644,
-    "center_lng": -73.9745,
-    "zoom": 14,
+    "preamble": "Quiet romantic dinner spots near The Plaza Hotel",
     "places": [
       {
         "placeId": "ChIJ1",
         "name": "Bistro One",
         "lat": 40.765,
         "lng": -73.975,
-        "description": "An intimate candlelit French bistro tucked away on a quiet side street.\n\n* **The vibe**: Hushed banquette seating ideal for unhurried conversation.\n* **Logistics**: Reservations recommended; a 5-minute walk from The Plaza Hotel."
+        "intro": "An intimate candlelit French bistro tucked away on a quiet side street.",
+        "description": "* **The Vibe**: Hushed banquette seating ideal for unhurried conversation.\n* **Proactive Logistics**: Reservations recommended; a 5-minute walk from The Plaza Hotel.",
+        "placePrimaryType": "food_and_drink"
       },
       {
         "placeId": "ChIJ2",
         "name": "Trattoria Two",
         "lat": 40.763,
         "lng": -73.974,
-        "description": "A warm neighborhood trattoria celebrated for handmade pasta and curated regional wines.\n\n* **Standout feature**: Private garden courtyard seating away from street traffic.\n* **Logistics**: Open nightly until 11 PM; just steps away from Fifth Avenue."
+        "intro": "A warm neighborhood trattoria celebrated for handmade pasta and curated regional wines.",
+        "description": "* **Standout Feature**: Private garden courtyard seating away from street traffic.\n* **Proactive Logistics**: Open nightly until 11 PM; just steps away from Fifth Avenue.",
+        "placePrimaryType": "food_and_drink"
       }
     ]
   },

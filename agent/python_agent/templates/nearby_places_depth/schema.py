@@ -40,24 +40,36 @@ class NearbyPlaceItem(BaseModel):
   name: str = Field(description="Name of the place")
   lat: float = Field(description="Latitude coordinates")
   lng: float = Field(description="Longitude coordinates")
-  description: str = Field(
+  intro: str = Field(
       description=(
-          "Individualized markdown description for this single place card."
-          " Start with 1 vivid opening sentence bolding the place name and"
-          " rating (e.g., '**Place Name** (4.8★) offers...'), followed by a"
-          " blank line (\\n\\n) and 2 concise bullet points on separate lines:"
-          " '* **Standout feature**: Specific vibe, specialty, or suitability"
-          " for the prompt' and '* **Logistics**: Street address, **numerical"
-          " distance** (**estimated travel time** from the reference location),"
-          " and operating hours'."
+          "ONE vivid, sensory opening hook sentence rendered directly beneath"
+          " the place heading and above the place card, highlighting the"
+          " place's defining character, unique identity, and why it"
+          " specifically answers the user's constraints. Do NOT repeat the"
+          " numeric star rating (e.g., '4.8★') in the text."
       ),
   )
-  placePrimaryType: PlacePrimaryType | None = Field(  # pylint: disable=invalid-name
-      default=None,
+  description: str = Field(
       description=(
-          "Optional primary POI category type string. Use 'generic' for"
-          " geopolitical or non-POI places (cities, towns, neighborhoods,"
-          " regions, countries, addresses)."
+          "2 to 3 concise markdown bullet points rendered below the place"
+          " card:\n"
+          "1. **Contextual Bullet Points**: 1 to 2 concise markdown bullet"
+          " points (`* **Label**: ...`) using bold, domain-appropriate labels"
+          " (e.g., **The Vibe**, **Standout Feature**, **Pet Suitability**,"
+          " **Timing & Crowds**) that capture what makes the place special and"
+          " how it fits the user's specific request—avoiding generic labels"
+          " like 'Highlights' or 'Details'.\n"
+          "2. **Proactive Logistics**: ALWAYS include at least 1 concise"
+          " markdown bullet covering actionable logistical needs: ticketing or"
+          " fees, operating hours, parking, peak vs. quiet times, leash rules,"
+          " or dress codes."
+      ),
+  )
+  placePrimaryType: PlacePrimaryType = Field(  # pylint: disable=invalid-name
+      description=(
+          "Primary POI category type string so the map pin displays its"
+          " category icon and color. Use 'generic' only when no specific"
+          " category applies."
       ),
   )
 
@@ -66,9 +78,25 @@ class NearbyPlaceItem(BaseModel):
   def normalize_place_item(cls, data: Any) -> Any:
     if isinstance(data, dict):
       normalize_name_and_label(data)
+      if not data.get("placePrimaryType"):
+        data["placePrimaryType"] = "generic"
+      intro = data.get("intro")
       desc = data.get("description")
-      if isinstance(desc, str):
-        data["description"] = normalize_markdown_text(desc)
+      if not intro and isinstance(desc, str):
+        parts = re.split(r"\n+(?=[*-]\s+)", desc.strip(), maxsplit=1)
+        if len(parts) == 2:
+          data["intro"] = parts[0].strip()
+          data["description"] = parts[1].strip()
+        else:
+          data["intro"] = desc.strip()
+      elif isinstance(intro, str) and isinstance(desc, str):
+        parts = re.split(r"\n+(?=[*-]\s+)", desc.strip(), maxsplit=1)
+        if len(parts) == 2 and parts[0].strip() == intro.strip():
+          data["description"] = parts[1].strip()
+      if isinstance(data.get("intro"), str):
+        data["intro"] = re.sub(r"^#+\s*", "", data["intro"]).strip()
+      if isinstance(data.get("description"), str):
+        data["description"] = normalize_markdown_text(data["description"])
     return data
 
 
@@ -77,22 +105,23 @@ class NearbyPlacesDepthExtractorSchema(BaseModel):
 
   clamped_collections: ClassVar[tuple[str, ...]] = ("places",)
 
-  heading: str = Field(
+  preamble: str = Field(
       description=(
-          "A concise, constraint-confirming primary heading in sentence case"
-          " reflecting the prompt and primary reference location (e.g.,"
-          " 'Restaurants perfect for a romantic date night near The Plaza"
-          " Hotel'). Plain text only; do NOT include markdown hashtags or"
-          " conversational filler."
+          "ONE brief, plain sentence that directly answers the prompt and"
+          " clarifies the context of the response: what kind of places these"
+          " are, the primary reference location, and the range or variety"
+          " covered (e.g., 'Try one of these highly-rated spots near the"
+          " Lotte, ranging from casual comfort food to upscale French fare',"
+          " 'Here are family-friendly parks within a short walk of The Little"
+          " Nell, from quiet gardens to a riverside playground'). Only state a"
+          " count or constraint the user asked for. Use only the primary"
+          " reference location without redundant city/state nesting. No"
+          " title-case headline, no markdown, no second sentence."
       ),
-  )
-  center_lat: float = Field(description="Latitude of the center of results")
-  center_lng: float = Field(description="Longitude of the center of results")
-  zoom: int = Field(
-      default=14, description="Recommended map zoom level (typically 14)"
   )
   places: list[NearbyPlaceItem] = Field(
       min_length=1,
+      max_length=4,
       description=(
           "Curated list of grounded places (typically 3 places, or 2 to 4 if"
           " explicitly requested by the user) with individualized descriptions."
@@ -107,13 +136,20 @@ class NearbyPlacesDepthExtractorSchema(BaseModel):
 
   @pydantic.model_validator(mode="before")
   @classmethod
-  def normalize_heading(cls, data: Any) -> Any:
-    """Normalizes markdown headers in heading if present."""
+  def normalize_fields(cls, data: Any) -> Any:
+    """Normalizes legacy heading alias and strips markdown hashtags from preamble."""
     if isinstance(data, dict):
-      heading = data.get("heading")
-      if heading and isinstance(heading, str):
-        data["heading"] = re.sub(r"^#+\s*", "", heading).strip()
+      if "heading" in data:
+        data["preamble"] = data.pop("heading")
+      preamble = data.get("preamble")
+      if preamble and isinstance(preamble, str):
+        data["preamble"] = re.sub(r"^#+\s*", "", preamble).strip()
     return data
+
+  @property
+  def heading(self) -> str:
+    """Backwards-compatible read alias for preamble."""
+    return self.preamble
 
   @pydantic.computed_field
   @property

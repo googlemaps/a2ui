@@ -27,10 +27,7 @@ class NearbyPlacesDepthSchemaTest(unittest.TestCase):
 
   def test_nearby_places_depth_extractor_schema_valid(self):
     schema = NearbyPlacesDepthExtractorSchema(
-        heading="3 hidden gem activities near Seattle Center",
-        center_lat=47.6205,
-        center_lng=-122.3493,
-        zoom=14,
+        preamble="Here are 3 hidden gem activities near Seattle Center.",
         places=[
             NearbyPlaceItem(
                 placeId="ChIJ1",
@@ -39,25 +36,43 @@ class NearbyPlacesDepthSchemaTest(unittest.TestCase):
                 lng=-122.3505,
                 description=(
                     "Vibrant indoor and outdoor glass art exhibition.\n\n*"
-                    " **The vibe**: Immersive botanical glass installations."
+                    " **The Vibe**: Immersive botanical glass installations."
                 ),
             )
         ],
     )
     self.assertEqual(
-        schema.heading, "3 hidden gem activities near Seattle Center"
+        schema.preamble, "Here are 3 hidden gem activities near Seattle Center."
     )
-    self.assertEqual(schema.center_lat, 47.6205)
-    self.assertEqual(schema.center_lng, -122.3493)
-    self.assertEqual(schema.zoom, 14)
+    self.assertEqual(schema.heading, schema.preamble)
     self.assertEqual(len(schema.places), 1)
     self.assertEqual(schema.places[0].name, "Chihuly Garden and Glass")
+    self.assertEqual(
+        schema.places[0].intro,
+        "Vibrant indoor and outdoor glass art exhibition.",
+    )
+    self.assertIn("**The Vibe**", schema.places[0].description)
+    self.assertEqual(schema.places[0].placePrimaryType, "generic")
+
+  def test_nearby_place_item_explicit_intro_and_place_primary_type(self):
+    item = NearbyPlaceItem(
+        placeId="ChIJ1",
+        name="Chihuly Garden and Glass",
+        lat=47.6206,
+        lng=-122.3505,
+        intro="Vibrant indoor and outdoor glass art exhibition.",
+        description="* **The Vibe**: Immersive botanical glass installations.",
+        placePrimaryType="entertainment",
+    )
+    self.assertEqual(
+        item.intro, "Vibrant indoor and outdoor glass art exhibition."
+    )
+    self.assertIn("* **The Vibe**:", item.description)
+    self.assertEqual(item.placePrimaryType, "entertainment")
 
   def test_nearby_places_depth_extractor_schema_computed_markers(self):
     schema = NearbyPlacesDepthExtractorSchema(
-        heading="Quiet romantic dinner spots near The Plaza Hotel",
-        center_lat=40.7644,
-        center_lng=-73.9745,
+        preamble="Quiet romantic dinner spots near The Plaza Hotel",
         places=[
             NearbyPlaceItem(
                 placeId="ChIJ1",
@@ -87,19 +102,18 @@ class NearbyPlacesDepthSchemaTest(unittest.TestCase):
     self.assertEqual(dumped["markers"][1]["placeId"], "ChIJ2")
 
   def test_nearby_places_depth_extractor_schema_strips_markdown_heading(self):
-    schema = NearbyPlacesDepthExtractorSchema(
-        heading="### 3 hidden gem activities near Seattle Center",
-        center_lat=47.6205,
-        center_lng=-122.3493,
-        places=[
-            NearbyPlaceItem(
-                placeId="ChIJ1",
-                name="Chihuly Garden and Glass",
-                lat=47.6206,
-                lng=-122.3505,
-                description="Vibrant glass art exhibition.",
-            )
-        ],
+    schema = NearbyPlacesDepthExtractorSchema.model_validate({
+        "heading": "### 3 hidden gem activities near Seattle Center",
+        "places": [{
+            "placeId": "ChIJ1",
+            "name": "Chihuly Garden and Glass",
+            "lat": 47.6206,
+            "lng": -122.3505,
+            "description": "Vibrant glass art exhibition.",
+        }],
+    })
+    self.assertEqual(
+        schema.preamble, "3 hidden gem activities near Seattle Center"
     )
     self.assertEqual(
         schema.heading, "3 hidden gem activities near Seattle Center"
@@ -120,16 +134,13 @@ class NearbyPlacesDepthSchemaTest(unittest.TestCase):
   ):
     with self.assertRaises(pydantic.ValidationError):
       NearbyPlacesDepthExtractorSchema(
-          heading="Empty",
-          center_lat=47.6,
-          center_lng=-122.3,
+          preamble="Empty",
           places=[],
       )
 
   def test_nearby_places_depth_extractor_schema_requires_mandatory_fields(self):
     with self.assertRaises(pydantic.ValidationError):
       NearbyPlacesDepthExtractorSchema(
-          heading="Missing coordinates",
           places=[
               NearbyPlaceItem(
                   placeId="ChIJ1",
