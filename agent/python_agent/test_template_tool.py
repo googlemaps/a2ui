@@ -82,9 +82,6 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
     args = {
         "heading": "Nearby Places",
         "summary": "Here are 2 coffee shops.",
-        "center_lat": 47.6062,
-        "center_lng": -122.3321,
-        "zoom": 14,
         "places": [
             {
                 "placeId": "ChIJ111",
@@ -136,9 +133,6 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
     args = {
         "heading": "Top Coffee Shops in Seattle",
         "summary": "Here are 2 coffee shops.",
-        "center_lat": 47.6062,
-        "center_lng": -122.3321,
-        "zoom": 14,
         "places": [
             {
                 "placeId": "ChIJ111",
@@ -162,10 +156,10 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
   async def test_render_local_search_template_validation_failure(self):
     tool = _make_bundle_tool("local_search", schema_manager=self.schema_manager)
 
-    # Missing mandatory center_lat and center_lng
+    # Missing mandatory places
     args = {
-        "summary": "Places without center coordinates",
-        "places": [{"placeId": "1", "name": "P1", "lat": 1.0, "lng": 2.0}],
+        "heading": "Places without places list",
+        "summary": "Places without places list",
     }
 
     result = await tool.run_async(args=args, tool_context=self.tool_context)
@@ -180,8 +174,6 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
     # Missing mandatory heading
     args = {
         "summary": "Places without heading",
-        "center_lat": 47.6062,
-        "center_lng": -122.3321,
         "places": [{"placeId": "1", "name": "P1", "lat": 1.0, "lng": 2.0}],
     }
 
@@ -195,9 +187,6 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
     args = {
         "heading": "Driving directions from San Francisco to Oakland",
         "summary": "Commute is 30 minutes.",
-        "center_lat": 37.7749,
-        "center_lng": -122.4194,
-        "zoom": 12,
         "routes": [{
             "origin": {
                 "lat": 37.7749,
@@ -245,9 +234,6 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
 
     args = {
         "summary": "Commute is 30 minutes.",
-        "center_lat": 37.7749,
-        "center_lng": -122.4194,
-        "zoom": 12,
         "routes": [{
             "origin": {"lat": 37.7749, "lng": -122.4194, "label": "A"},
             "destination": {"lat": 37.8044, "lng": -122.2712, "label": "B"},
@@ -264,9 +250,6 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
 
     args = {
         "summary": "Commute",
-        "center_lat": 37.7,
-        "center_lng": -122.4,
-        "zoom": 12,
         "routes": [{
             "origin": {"lat": 37.7, "lng": -122.4, "label": "A"},
             "destination": {"lat": 37.8, "lng": -122.3, "label": "B"},
