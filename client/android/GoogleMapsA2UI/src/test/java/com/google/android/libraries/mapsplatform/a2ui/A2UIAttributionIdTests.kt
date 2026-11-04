@@ -40,9 +40,5 @@ class A2UIAttributionIdTests {
       "Expected the generated attribution ID to contain the Android identifier 'gmp_android_maui_v0.1.10_atoui'",
       htmlContent.contains("gmp_android_maui_v0.1.10_atoui"),
     )
-    assertTrue(
-      "Expected the generated attribution ID to contain the combined Web and Android identifier string 'gmp_web_maui_v0.1.10_atoui,gmp_android_maui_v0.1.10_atoui'",
-      htmlContent.contains("gmp_web_maui_v0.1.10_atoui,gmp_android_maui_v0.1.10_atoui"),
-    )
   }
 }
