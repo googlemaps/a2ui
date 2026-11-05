@@ -206,11 +206,17 @@ def merge_template(
   template_path = templates_dir.joinpath(template_name, "layout.json")
 
   if template_name == _TEXT_ONLY_TEMPLATE:
+    bundle = None
     schema_class = None
     empty_fallback_text = ""
     surface_prefix = "text-only-surface"
   else:
-    bundle = template_registry.TemplateRegistry().get_bundle(template_name)
+    # Callers gate discovery via their own TemplateRegistry; merge_template
+    # still resolves schemas for explicitly named experimental bundles when
+    # enabled or under conformance testing without scanning sibling bundles.
+    bundle = template_registry.load_bundle(
+        template_name, include_experimental=True
+    )
     schema_class = bundle.schema_cls if bundle else None
     empty_fallback_text = bundle.empty_fallback_text if bundle else ""
     surface_prefix = (

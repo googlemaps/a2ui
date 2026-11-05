@@ -20,6 +20,12 @@ on:
   pull_request:
     branches: [ main ]
 
+# Cancel superseded pull_request runs when a newer commit is pushed to the same
+# PR. Other events get a per-commit group, so they are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -28,6 +34,7 @@ jobs:
     name: Web CI / build
     # zizmor: ignore[unpinned-images]
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:

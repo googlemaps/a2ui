@@ -31,8 +31,6 @@ class TestDirectionsSchema(unittest.TestCase):
     data = {
         "heading": "Commute Route",
         "summary": "Commute is 1h.",
-        "center_lat": 37.5,
-        "center_lng": 127.0,
         "routes": [{
             "origin": {"lat": 37.4, "lng": 126.9, "label": "Start"},
             "destination": {"lat": 37.6, "lng": 127.1, "label": "End"},
@@ -47,8 +45,6 @@ class TestDirectionsSchema(unittest.TestCase):
     data = {
         "heading": "Scenic Route",
         "summary": "Scenic route.",
-        "center_lat": 37.5,
-        "center_lng": 127.0,
         "travel_mode": "driving",
         "routes": [
             {
@@ -74,8 +70,6 @@ class TestDirectionsSchema(unittest.TestCase):
     data = {
         "heading": "Directions Route",
         "summary": "Directions summary",
-        "center_lat": 37.5,
-        "center_lng": 127.0,
         "routes": [{
             "origin": {"lat": 37.4, "lng": 126.9, "label": "Start"},
             "destination": {"lat": 37.6, "lng": 127.1, "label": "End"},
@@ -93,8 +87,6 @@ class TestDirectionsSchema(unittest.TestCase):
         data = {
             "heading": "Directions Route",
             "summary": "Directions summary",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
             "routes": [{
                 "origin": {"lat": 37.4, "lng": 126.9, "label": "Start"},
                 "destination": {"lat": 37.6, "lng": 127.1, "label": "End"},
@@ -111,8 +103,6 @@ class TestDirectionsSchema(unittest.TestCase):
         data = {
             "heading": f"Going via {mode}",
             "summary": f"Going via {mode}",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
             "routes": [{
                 "origin": {"lat": 37.4, "lng": 126.9, "label": "Start"},
                 "destination": {"lat": 37.6, "lng": 127.1, "label": "End"},
@@ -189,8 +179,6 @@ class TestDirectionsSchema(unittest.TestCase):
           data = {
               "heading": "Commute",
               "summary": "Commute",
-              "center_lat": 37.5,
-              "center_lng": 127.0,
               "routes": [{
                   "origin": {"lat": 37.4, "lng": 126.9, "label": "Start"},
                   "destination": {"lat": 37.6, "lng": 127.1, "label": "End"},
@@ -205,8 +193,6 @@ class TestDirectionsSchema(unittest.TestCase):
     data = {
         "heading": "Walking route from Seattle Center to Pike Place Market",
         "summary": "Walking takes about 25 minutes (1 mile).",
-        "center_lat": 47.6205,
-        "center_lng": -122.3493,
         "travel_mode": "walking",
         "routes": [{
             "origin": {
@@ -231,8 +217,6 @@ class TestDirectionsSchema(unittest.TestCase):
     data = {
         "heading": "### Driving Route",
         "summary": "About 15 minutes.",
-        "center_lat": 37.5,
-        "center_lng": 127.0,
         "travel_mode": "driving",
         "routes": [{
             "origin": {"lat": 37.5, "lng": 127.0, "label": "Origin"},
@@ -247,8 +231,6 @@ class TestDirectionsSchema(unittest.TestCase):
     data = {
         "heading": "",
         "summary": "About 15 minutes.",
-        "center_lat": 37.5,
-        "center_lng": 127.0,
         "travel_mode": "driving",
         "routes": [{
             "origin": {"lat": 37.5, "lng": 127.0, "label": "Origin"},
@@ -266,8 +248,6 @@ class TestDirectionsSchema(unittest.TestCase):
     """Verifies that omitting heading raises ValidationError."""
     data = {
         "summary": "Walking takes about 25 minutes (1 mile).",
-        "center_lat": 47.6205,
-        "center_lng": -122.3493,
         "travel_mode": "walking",
         "routes": [{
             "origin": {
@@ -295,8 +275,6 @@ class TestDirectionsSchema(unittest.TestCase):
       DirectionsExtractorSchema(
           heading="Directions",
           summary="No route available.",
-          center_lat=47.6205,
-          center_lng=-122.3493,
           travel_mode="walking",
           routes=[],
       )
@@ -306,8 +284,6 @@ class TestDirectionsSchema(unittest.TestCase):
     with self.assertRaises(pydantic.ValidationError):
       DirectionsExtractorSchema(
           heading="Directions",
-          center_lat=47.6205,
-          center_lng=-122.3493,
           travel_mode="walking",
           routes=[{
               "origin": {"lat": 37.4, "lng": 126.9, "label": "Start"},

@@ -75,6 +75,21 @@ return (
 );
 ```
 
+### Usage attribution IDs
+
+MAUI components always send the `gmp_web_maui_v<version>_atoui` Maps JS API
+usage attribution ID. To identify your product as well, pass additional IDs
+either to every component inside `<maui-providers>`:
+
+```html
+<maui-providers additional-attribution-ids="my_product_id">...</maui-providers>
+```
+
+or to a single component through its `additionalAttributionIds` property (or
+`additional-attribution-ids` attribute). The Angular wrappers expose the same
+`additionalAttributionIds` input. IDs are de-duplicated and sent after MAUI's
+own ID.
+
 ### 3. Streaming Responses (`sendStream`)
 `A2UIClient` also supports real-time incremental Server-Sent Events (SSE) streaming via `client.sendStream(messageText)` (`message/stream`). You can use a `useStreaming` boolean flag to switch between streaming (`client.sendStream`) and non-streaming (`client.send`):
 

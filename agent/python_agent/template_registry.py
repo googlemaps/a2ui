@@ -52,12 +52,20 @@ class FewShotExample(pydantic.BaseModel):
     return getattr(self, key, default)
 
 
+class TemplateChannel(str, enum.Enum):
+  """Release channel controlling when a template bundle is exposed."""
+
+  STABLE = "stable"
+  EXPERIMENTAL = "experimental"
+
+
 class TemplateManifest(pydantic.BaseModel):
   """Strongly-typed metadata schema parsed from a bundle's manifest.json."""
 
   model_config = pydantic.ConfigDict(extra="ignore")
 
   intent: str = ""
+  channel: TemplateChannel = TemplateChannel.STABLE
   surface_prefix: str | None = None
   archetype: str = ""
   few_shot_examples: list[FewShotExample] = pydantic.Field(default_factory=list)
@@ -81,11 +89,15 @@ _BUILTIN_FALLBACK_ROUTER_INTENTS: tuple[RouterIntentSpec, ...] = (
         intent=INTENT_OTHER_SPATIAL,
         archetype=(
             "Queries requiring polygon boundaries, raw coordinate plotting,"
-            " or complex navigation combining routes with secondary overlays"
+            " complex navigation combining routes with secondary overlays"
             " (e.g., weather, air quality forecasts, displaying all available"
-            " charging stations along a route). Note: Requests to show one or"
-            " more specific named places, buildings, or addresses on a map"
-            " belong to LOCAL_SEARCH, not OTHER_SPATIAL."
+            " charging stations along a route), or compound multi-intent"
+            " prompts combining two or more distinct questions spanning"
+            " different templates (e.g., directions to a destination plus"
+            " recommendations for places to eat or drink there, or a place"
+            " search combined with an unrelated question). Note: Requests to"
+            " show one or more specific named places, buildings, or addresses"
+            " on a map belong to LOCAL_SEARCH, not OTHER_SPATIAL."
         ),
         few_shot_examples=[
             FewShotExample(
@@ -98,6 +110,13 @@ _BUILTIN_FALLBACK_ROUTER_INTENTS: tuple[RouterIntentSpec, ...] = (
             FewShotExample(
                 user_query=(
                     "show the boundary of Yosemite National Park on the map"
+                ),
+                intent=INTENT_OTHER_SPATIAL,
+            ),
+            FewShotExample(
+                user_query=(
+                    "How do I get from Lafayette to Oakland airport? What are"
+                    " the best places to get a beer inside the airport?"
                 ),
                 intent=INTENT_OTHER_SPATIAL,
             ),
@@ -141,6 +160,7 @@ class TemplateBundle:
   tool_description: str = ""
   empty_fallback_text: str = ""
   skill_instructions: str = ""
+  channel: TemplateChannel = TemplateChannel.STABLE
 
   def __post_init__(self) -> None:
     if not _VALID_BUNDLE_NAME_RE.match(self.name):
@@ -149,6 +169,8 @@ class TemplateBundle:
           f" matching {_VALID_BUNDLE_NAME_RE.pattern} so derived tool names"
           " are valid identifiers."
       )
+    if not isinstance(self.channel, TemplateChannel):
+      object.__setattr__(self, "channel", TemplateChannel(self.channel))
 
   @property
   def render_tool_name(self) -> str:
@@ -228,10 +250,105 @@ def _resolve_schema(bundle_name: str) -> type[pydantic.BaseModel]:
   return schema_cls
 
 
+def _read_bundle_from_dir(
+    bundle_dir: resources_abc.Traversable,
+    *,
+    include_experimental: bool,
+) -> TemplateBundle | None:
+  """Reads and constructs a TemplateBundle from bundle_dir.
+
+  Args:
+    bundle_dir: Directory holding the bundle's manifest, layout, and schema.
+    include_experimental: Whether experimental bundles should be loaded.
+
+  Returns:
+    The constructed TemplateBundle, or None when the bundle is experimental and
+    include_experimental is False.
+
+  Raises:
+    ValueError: The manifest is unreadable or malformed.
+    KeyError: The bundle has no importable schema module.
+    TypeError: The bundle's schema module exports the wrong thing.
+    ImportError: The bundle's schema module does not import.
+  """
+  manifest_path = bundle_dir / "manifest.json"
+  try:
+    manifest_json = manifest_path.read_text(encoding="utf-8")
+    manifest = TemplateManifest.model_validate_json(manifest_json)
+  except (OSError, pydantic.ValidationError, ValueError) as e:
+    # Built-in bundles ship inside this build target, so an unreadable
+    # manifest is a build defect. Booting without the intent would degrade
+    # every query that needed it, with nothing but a log line to say why.
+    raise ValueError(f"Unreadable bundle manifest at {manifest_path}") from e
+
+  if (
+      manifest.channel == TemplateChannel.EXPERIMENTAL
+      and not include_experimental
+  ):
+    logger.info("Skipping experimental template bundle: %s", bundle_dir.name)
+    return None
+
+  name = bundle_dir.name
+  intent = manifest.intent or name.upper()
+
+  surface_prefix = manifest.surface_prefix or f"{name}-surface"
+  schema_cls = _resolve_schema(name)
+
+  return TemplateBundle(
+      name=name,
+      intent=intent,
+      surface_prefix=surface_prefix,
+      archetype=manifest.archetype,
+      few_shot_examples=manifest.few_shot_examples,
+      schema_cls=schema_cls,
+      layout_path=bundle_dir / "layout.json",
+      skill_dir=bundle_dir,
+      bundle_dir=bundle_dir,
+      tool_description=manifest.tool_description,
+      empty_fallback_text=manifest.empty_fallback_text,
+      skill_instructions=_read_skill_instructions(bundle_dir),
+      channel=manifest.channel,
+  )
+
+
+def load_bundle(
+    bundle_name: str,
+    *,
+    include_experimental: bool = False,
+) -> TemplateBundle | None:
+  """Loads a single built-in bundle by name without scanning siblings.
+
+  Args:
+    bundle_name: Directory name of the bundle under templates/.
+    include_experimental: Whether experimental bundles may be loaded.
+
+  Returns:
+    The loaded TemplateBundle, or None if bundle_name is invalid, missing, or
+    excluded because it is experimental and include_experimental is False.
+  """
+  if not _VALID_BUNDLE_NAME_RE.match(bundle_name):
+    return None
+  bundle_dir = importlib.resources.files(__name__).joinpath(
+      "templates", bundle_name
+  )
+  if not (bundle_dir / "manifest.json").is_file():
+    return None
+  return _read_bundle_from_dir(
+      bundle_dir, include_experimental=include_experimental
+  )
+
+
 class TemplateRegistry:
   """Registry for discovering, caching, and querying template bundles."""
 
-  def __init__(self) -> None:
+  def __init__(self, *, include_experimental: bool = False) -> None:
+    """Initializes the instance.
+
+    Args:
+      include_experimental: Whether to load experimental template bundles in
+        addition to stable ones.
+    """
+    self._include_experimental = include_experimental
     self._bundles: dict[str, TemplateBundle] = {}
     self._bundles_by_intent: dict[str, TemplateBundle] = {}
     self._cached_router_classification: type[RouterClassification] | None = None
@@ -244,6 +361,11 @@ class TemplateRegistry:
     )
 
     self._discover_bundles()
+
+  @property
+  def include_experimental(self) -> bool:
+    """Whether experimental template bundles are loaded by this registry."""
+    return self._include_experimental
 
   def _discover_bundles(self) -> None:
     """Loads every built-in bundle directory under templates/."""
@@ -259,48 +381,12 @@ class TemplateRegistry:
         self._load_bundle(item)
 
   def _load_bundle(self, bundle_dir: resources_abc.Traversable) -> None:
-    """Loads one built-in bundle directory.
-
-    Args:
-      bundle_dir: Directory holding the bundle's manifest, layout, and schema.
-
-    Raises:
-      ValueError: The manifest is unreadable or malformed.
-      KeyError: The bundle has no importable schema module.
-      TypeError: The bundle's schema module exports the wrong thing.
-      ImportError: The bundle's schema module does not import.
-    """
-    manifest_path = bundle_dir / "manifest.json"
-    try:
-      manifest_json = manifest_path.read_text(encoding="utf-8")
-      manifest = TemplateManifest.model_validate_json(manifest_json)
-    except (OSError, pydantic.ValidationError, ValueError) as e:
-      # Built-in bundles ship inside this build target, so an unreadable
-      # manifest is a build defect. Booting without the intent would degrade
-      # every query that needed it, with nothing but a log line to say why.
-      raise ValueError(f"Unreadable bundle manifest at {manifest_path}") from e
-
-    name = bundle_dir.name
-    intent = manifest.intent or name.upper()
-
-    surface_prefix = manifest.surface_prefix or f"{name}-surface"
-    schema_cls = _resolve_schema(name)
-
-    bundle = TemplateBundle(
-        name=name,
-        intent=intent,
-        surface_prefix=surface_prefix,
-        archetype=manifest.archetype,
-        few_shot_examples=manifest.few_shot_examples,
-        schema_cls=schema_cls,
-        layout_path=bundle_dir / "layout.json",
-        skill_dir=bundle_dir,
-        bundle_dir=bundle_dir,
-        tool_description=manifest.tool_description,
-        empty_fallback_text=manifest.empty_fallback_text,
-        skill_instructions=_read_skill_instructions(bundle_dir),
+    """Loads one built-in bundle directory."""
+    bundle = _read_bundle_from_dir(
+        bundle_dir, include_experimental=self._include_experimental
     )
-    self.register_bundle(bundle)
+    if bundle is not None:
+      self.register_bundle(bundle)
 
   def register_bundle(self, bundle: TemplateBundle) -> None:
     """Registers a constructed TemplateBundle.
@@ -454,5 +540,11 @@ class TemplateRegistry:
         ' via C") should be classified as DIRECTIONS, unless they require'
         ' searching for stops along the way (e.g., "find coffee shops along'
         ' the route") which requires LOCAL_SEARCH overlays and should be'
-        f" promoted to OTHER_SPATIAL.\n\n## Few-shot Examples\n\n{examples_str}"
+        " promoted to OTHER_SPATIAL.\nCompound Multi-Intent Prompts: If a"
+        " single prompt asks two or more distinct questions that map to"
+        " different intent archetypes (e.g., DIRECTIONS +"
+        " LOCAL_SEARCH/NEARBY_PLACES_DEPTH, or a spatial template + a"
+        " secondary question), you MUST promote the classification to"
+        " OTHER_SPATIAL so the fallback handler can answer all parts of the"
+        f" prompt.\n\n## Few-shot Examples\n\n{examples_str}"
     )
