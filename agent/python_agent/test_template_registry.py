@@ -25,6 +25,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 import pydantic
@@ -569,6 +570,230 @@ class ZipImportedPackageTest(unittest.TestCase):
             unzipped.bundles[name].skill_instructions,
         )
         self.assertEqual(bundle.intent, unzipped.bundles[name].intent)
+
+
+class TemplateChannelTest(unittest.TestCase):
+  """Tests release channel parsing and experimental bundle filtering."""
+
+  def _write_bundle(
+      self,
+      templates_root: pathlib.Path,
+      name: str,
+      manifest_data: dict[str, object],
+  ) -> None:
+    """Writes minimal bundle files under templates_root/name."""
+    bundle_dir = templates_root / name
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "manifest.json").write_text(
+        json.dumps(manifest_data), encoding="utf-8"
+    )
+    (bundle_dir / "layout.json").write_text("[]", encoding="utf-8")
+    (bundle_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: Test\n---\n\n# {name}\n",
+        encoding="utf-8",
+    )
+
+  def _make_manifest(
+      self,
+      intent: str,
+      channel: str | None = None,
+  ) -> dict[str, object]:
+    """Builds a minimal manifest dict with optional channel."""
+    manifest: dict[str, object] = {
+        "intent": intent,
+        "surface_prefix": f"{intent.lower()}-surface",
+        "archetype": f"Archetype for {intent}.",
+        "empty_fallback_text": "No results.",
+        "few_shot_examples": [{"user_query": "query", "intent": intent}],
+    }
+    if channel is not None:
+      manifest["channel"] = channel
+    return manifest
+
+  def test_channel_enum_values(self):
+    """Verifies TemplateChannel enum string values."""
+    self.assertEqual(template_registry.TemplateChannel.STABLE.value, "stable")
+    self.assertEqual(
+        template_registry.TemplateChannel.EXPERIMENTAL.value, "experimental"
+    )
+
+  def test_default_registry_excludes_experimental_bundles(self):
+    """Verifies default registry skips experimental bundles."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+      root = pathlib.Path(tmp_dir)
+      templates_root = root / "templates"
+      self._write_bundle(
+          templates_root,
+          "stable_bundle",
+          self._make_manifest("STABLE_BUNDLE", channel="stable"),
+      )
+      self._write_bundle(
+          templates_root,
+          "implicit_stable",
+          self._make_manifest("IMPLICIT_STABLE"),
+      )
+      self._write_bundle(
+          templates_root,
+          "exp_bundle",
+          self._make_manifest("EXP_BUNDLE", channel="experimental"),
+      )
+
+      with (
+          mock.patch.object(
+              template_registry.importlib.resources,
+              "files",
+              return_value=root,
+              autospec=True,
+          ),
+          mock.patch.object(
+              template_registry,
+              "_resolve_schema",
+              return_value=_StubSchema,
+              autospec=True,
+          ) as mock_resolve,
+      ):
+        registry = template_registry.TemplateRegistry()
+
+      self.assertFalse(registry.include_experimental)
+      self.assertEqual(
+          [b.name for b in registry.list_bundles()],
+          ["implicit_stable", "stable_bundle"],
+      )
+      self.assertIsNone(registry.get_bundle("exp_bundle"))
+      self.assertEqual(
+          mock_resolve.call_args_list,
+          [mock.call("implicit_stable"), mock.call("stable_bundle")],
+      )
+
+  def test_include_experimental_loads_experimental_bundles(self):
+    """Verifies include_experimental=True loads experimental bundles."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+      root = pathlib.Path(tmp_dir)
+      templates_root = root / "templates"
+      self._write_bundle(
+          templates_root,
+          "stable_bundle",
+          self._make_manifest("STABLE_BUNDLE", channel="stable"),
+      )
+      self._write_bundle(
+          templates_root,
+          "exp_bundle",
+          self._make_manifest("EXP_BUNDLE", channel="experimental"),
+      )
+
+      with (
+          mock.patch.object(
+              template_registry.importlib.resources,
+              "files",
+              return_value=root,
+              autospec=True,
+          ),
+          mock.patch.object(
+              template_registry,
+              "_resolve_schema",
+              return_value=_StubSchema,
+              autospec=True,
+          ),
+      ):
+        registry = template_registry.TemplateRegistry(include_experimental=True)
+
+      self.assertTrue(registry.include_experimental)
+      self.assertEqual(
+          [b.name for b in registry.list_bundles()],
+          ["exp_bundle", "stable_bundle"],
+      )
+      self.assertEqual(
+          registry.get_bundle("exp_bundle").channel,
+          template_registry.TemplateChannel.EXPERIMENTAL,
+      )
+      self.assertEqual(
+          registry.get_bundle("stable_bundle").channel,
+          template_registry.TemplateChannel.STABLE,
+      )
+
+  def test_invalid_channel_in_manifest_raises_value_error(self):
+    """Verifies unknown channel values fail manifest validation."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+      root = pathlib.Path(tmp_dir)
+      self._write_bundle(
+          root / "templates",
+          "bad_channel",
+          self._make_manifest("BAD_CHANNEL", channel="beta"),
+      )
+
+      with mock.patch.object(
+          template_registry.importlib.resources,
+          "files",
+          return_value=root,
+          autospec=True,
+      ):
+        with self.assertRaisesRegex(ValueError, "Unreadable bundle manifest"):
+          template_registry.TemplateRegistry(include_experimental=True)
+
+  def test_bundle_normalizes_channel_string(self):
+    """Verifies TemplateBundle coerces string channel to TemplateChannel."""
+    bundle_dir = pathlib.Path("/nonexistent/custom_poi")
+    bundle = template_registry.TemplateBundle(
+        name="custom_poi",
+        intent="CUSTOM_POI",
+        surface_prefix="custom-poi-surface",
+        archetype="Archetype",
+        few_shot_examples=[],
+        schema_cls=_StubSchema,
+        layout_path=bundle_dir / "layout.json",
+        skill_dir=bundle_dir,
+        bundle_dir=bundle_dir,
+        channel="experimental",  # type: ignore[arg-type]
+    )
+    self.assertEqual(
+        bundle.channel, template_registry.TemplateChannel.EXPERIMENTAL
+    )
+
+  def test_load_bundle_gates_experimental_and_rejects_invalid_names(self):
+    """Verifies load_bundle isolates single-bundle lookup and rejects bad names."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+      root = pathlib.Path(tmp_dir)
+      templates_root = root / "templates"
+      self._write_bundle(
+          templates_root,
+          "stable_bundle",
+          self._make_manifest("STABLE_BUNDLE", channel="stable"),
+      )
+      self._write_bundle(
+          templates_root,
+          "exp_bundle",
+          self._make_manifest("EXP_BUNDLE", channel="experimental"),
+      )
+      # Malformed sibling bundle that should never be touched by load_bundle.
+      broken_dir = templates_root / "broken_bundle"
+      broken_dir.mkdir(parents=True, exist_ok=True)
+      (broken_dir / "manifest.json").write_text("{not-json", encoding="utf-8")
+
+      with (
+          mock.patch.object(
+              template_registry.importlib.resources,
+              "files",
+              return_value=root,
+              autospec=True,
+          ),
+          mock.patch.object(
+              template_registry,
+              "_resolve_schema",
+              return_value=_StubSchema,
+              autospec=True,
+          ),
+      ):
+        self.assertIsNotNone(template_registry.load_bundle("stable_bundle"))
+        self.assertIsNone(template_registry.load_bundle("exp_bundle"))
+        exp_loaded = template_registry.load_bundle(
+            "exp_bundle", include_experimental=True
+        )
+        self.assertIsNotNone(exp_loaded)
+        self.assertEqual(
+            exp_loaded.channel, template_registry.TemplateChannel.EXPERIMENTAL
+        )
+        self.assertIsNone(template_registry.load_bundle("../outside"))
+        self.assertIsNone(template_registry.load_bundle("missing_bundle"))
 
 
 if __name__ == "__main__":

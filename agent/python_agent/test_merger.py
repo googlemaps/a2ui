@@ -24,11 +24,15 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
+
+import pydantic
 
 import a2ui
 import agent
 import merger
+import template_registry
 
 merge_template = merger.merge_template
 
@@ -83,17 +87,11 @@ class TestMerger(unittest.TestCase):
     local_search_data = {
         "surface_id": "test-surface",
         "summary": "Two places.",
-        "center_lat": 37.0,
-        "center_lng": -122.0,
-        "zoom": 12,
         "places": [{"name": "A", "lat": 37.0, "lng": -122.0}],
     }
     directions_data = {
         "surface_id": "test-surface",
         "summary": "A route.",
-        "center_lat": 37.0,
-        "center_lng": -122.0,
-        "zoom": 12,
         "routes": [{
             "origin": {"lat": 37.0, "lng": -122.0, "label": "A"},
             "destination": {"lat": 37.1, "lng": -122.1, "label": "B"},
@@ -120,9 +118,6 @@ class TestMerger(unittest.TestCase):
     invalid_local_search = {
         "surface_id": "test-surface",
         "summary": "Short response.",
-        "center_lat": 37.0,
-        "center_lng": 127.0,
-        "zoom": 10,
         "places": "NOT_A_LIST",
     }
     invalid_directions = {
@@ -219,8 +214,6 @@ class TestMerger(unittest.TestCase):
         "surface_id": "local-search-surface",
         "heading": "Top Places",
         "summary": "Places found.",
-        "center_lat": 47.6,
-        "center_lng": -122.3,
         "zoom": 12,
         "places": [{
             "placeId": "places/1",
@@ -261,9 +254,6 @@ class TestMerger(unittest.TestCase):
         "surface_id": "local-search-surface-abc",
         "heading": "Top Coffee Shops in Seattle",
         "summary": "Here are 3 highly-rated coffee shops in Seattle.",
-        "center_lat": "47.6062",
-        "center_lng": -122.3321,
-        "zoom": "14",
         "places": [
             {
                 "placeId": "ChIJ111",
@@ -326,8 +316,6 @@ class TestMerger(unittest.TestCase):
                     {
                         "id": "map",
                         "component": "GoogleMap",
-                        "center": {"lat": 47.6062, "lng": -122.3321},
-                        "zoom": 14,
                         "tilt": 0,
                         "mode": "roadmap",
                         "markers": [
@@ -407,9 +395,6 @@ class TestMerger(unittest.TestCase):
     data = {
         "surface_id": "local-search-surface-abc",
         "summary": "Here are coffee shops.",
-        "center_lat": 47.6062,
-        "center_lng": -122.3321,
-        "zoom": 14,
         "places": [{
             "placeId": "ChIJ111",
             "name": "Espresso Vivace",
@@ -426,9 +411,6 @@ class TestMerger(unittest.TestCase):
     data = {
         "surface_id": "local-search-surface-abc",
         "summary": "Here are coffee shops.",
-        "center_lat": 47.6062,
-        "center_lng": -122.3321,
-        "zoom": 14,
         "places": [{
             "placeId": "ChIJ111",
             "name": "Espresso Vivace",
@@ -470,9 +452,6 @@ class TestMerger(unittest.TestCase):
         "surface_id": "test-surface",
         "heading": "Nearby Places",
         "summary": "Here are some places.",
-        "center_lat": 47.6062,
-        "center_lng": -122.3321,
-        "zoom": 14,
         "places": [
             {"placeId": "1", "name": "P1", "lat": 47.61, "lng": -122.31},
             {"placeId": "2", "name": "P2", "lat": 47.62, "lng": -122.32},
@@ -501,9 +480,6 @@ class TestMerger(unittest.TestCase):
         "surface_id": "test-surface",
         "heading": "### Best Bakeries",
         "summary": "Here are bakeries.",
-        "center_lat": 47.6,
-        "center_lng": -122.3,
-        "zoom": 13,
         "places": [{
             "placeId": "p1",
             "name": "B1",
@@ -520,9 +496,6 @@ class TestMerger(unittest.TestCase):
     data_with_anchor = {
         "surface_id": "test-surface",
         "summary": "Here are bakeries.",
-        "center_lat": 47.6,
-        "center_lng": -122.3,
-        "zoom": 13,
         "anchor_marker": {"lat": 47.6, "lng": -122.3, "label": "Space Needle"},
         "places": [{"placeId": "p1", "name": "B1", "lat": 47.6, "lng": -122.3}],
     }
@@ -534,9 +507,6 @@ class TestMerger(unittest.TestCase):
     data_no_heading = {
         "surface_id": "test-surface",
         "summary": "Here are bakeries.",
-        "center_lat": 47.6,
-        "center_lng": -122.3,
-        "zoom": 13,
         "places": [{"placeId": "p1", "name": "B1", "lat": 47.6, "lng": -122.3}],
     }
     result = merge_template("local_search", data_no_heading)
@@ -549,9 +519,6 @@ class TestMerger(unittest.TestCase):
         "surface_id": "directions-surface-xyz",
         "heading": "Walking Route from Dobong to Gangnam",
         "summary": "Typical commute is 1h 15m.",
-        "center_lat": "37.5665",
-        "center_lng": 126.9780,
-        "zoom": 12,
         "routes": [{
             "origin": {"lat": "37.6700", "lng": "127.0400", "label": "Dobong"},
             "destination": {
@@ -590,8 +557,6 @@ class TestMerger(unittest.TestCase):
                     {
                         "id": "map",
                         "component": "GoogleMap",
-                        "center": {"lat": 37.5665, "lng": 126.978},
-                        "zoom": 12,
                         "routes": [{
                             "origin": {
                                 "lat": 37.67,
@@ -635,9 +600,6 @@ class TestMerger(unittest.TestCase):
         "surface_id": "test-surface",
         "heading": "### Driving Route",
         "summary": "About 15 minutes.",
-        "center_lat": 37.5,
-        "center_lng": 127.0,
-        "zoom": 12,
         "travel_mode": "driving",
         "routes": [{
             "origin": {"lat": 37.5, "lng": 127.0, "label": "Origin"},
@@ -653,9 +615,6 @@ class TestMerger(unittest.TestCase):
     data_missing = {
         "surface_id": "test-surface",
         "summary": "About 15 minutes.",
-        "center_lat": 37.5,
-        "center_lng": 127.0,
-        "zoom": 12,
         "travel_mode": "driving",
         "routes": [{
             "origin": {"lat": 37.5, "lng": 127.0, "label": "Seattle Center"},
@@ -675,9 +634,6 @@ class TestMerger(unittest.TestCase):
     data = {
         "surface_id": "directions-surface-xyz",
         "summary": "Typical commute is 1h 15m.",
-        "center_lat": "37.5665",
-        "center_lng": 126.9780,
-        "zoom": 12,
         "routes": [{
             "origin": {"lat": "37.6700", "lng": "127.0400", "label": "Dobong"},
             "destination": {
@@ -710,13 +666,10 @@ class TestMergerEdgeCases(unittest.TestCase):
     )
 
   def test_invalid_places_with_valid_center_fallback(self):
-    """Verifies that local_search fallback to text_only if places is invalid but center is valid."""
+    """Verifies that local_search fallback to text_only if places is invalid."""
     data = {
         "surface_id": "test-surface",
         "summary": "Short response.",
-        "center_lat": 37.0,
-        "center_lng": 127.0,
-        "zoom": 10,
         "places": "NOT_A_LIST",  # Invalid places
     }
     result = merge_template("local_search", data, max_list_size=3)
@@ -759,9 +712,6 @@ class TestMergerEdgeCases(unittest.TestCase):
         "surface_id": "test-surface",
         "heading": "Directions",
         "summary": "Short response.",
-        "center_lat": 37.0,
-        "center_lng": 127.0,
-        "zoom": 10,
         "routes": [{
             "origin": {"lat": 37.0, "lng": 127.0, "label": "Start"},
             "destination": {"lat": 37.1, "lng": 127.1, "label": "End"},
@@ -781,9 +731,6 @@ class TestMergerEdgeCases(unittest.TestCase):
         "surface_id": "test-surface",
         "heading": "Directions",
         "summary": "Short response.",
-        "center_lat": 37.0,
-        "center_lng": 127.0,
-        "zoom": 10,
         "routes": [{
             "origin": {"lat": 37.0, "lng": 127.0, "label": "Start"},
             "destination": {"lat": 37.1, "lng": 127.1, "label": "End"},
@@ -812,9 +759,6 @@ class TestMergerEdgeCases(unittest.TestCase):
             "surface_id": "test-surface",
             "heading": "Directions",
             "summary": "Commute.",
-            "center_lat": 37.0,
-            "center_lng": 127.0,
-            "zoom": 10,
             "routes": [{
                 "origin": {"lat": 37.0, "lng": 127.0, "label": "Start"},
                 "destination": {"lat": 37.1, "lng": 127.1, "label": "End"},
@@ -833,11 +777,14 @@ class TestMergerEdgeCases(unittest.TestCase):
     """Verifies that coordinates parsing fallback triggers text_only fallback."""
     data = {
         "surface_id": "test-surface",
+        "heading": "Places",
         "summary": "Short response.",
-        "center_lat": "invalid-lat-string",  # Malformed float
-        "center_lng": None,  # Malformed type
-        "zoom": "invalid-zoom",  # Malformed int
-        "places": [{"name": "Dummy Place", "lat": 47.6, "lng": -122.3}],
+        "places": [{
+            "placeId": "ChIJ1",
+            "name": "Dummy Place",
+            "lat": "invalid-lat-string",
+            "lng": -122.3,
+        }],
     }
     result = merge_template("local_search", data, max_list_size=3)
     # Validation failure in mandatory fields must trigger fallback to text_only
@@ -869,9 +816,6 @@ class TestMergerEdgeCases(unittest.TestCase):
         "surface_id": "test-surface",
         "heading": "Top Places",
         "summary": "Results for sushi.",
-        "center_lat": 47.6062,
-        "center_lng": -122.3321,
-        "zoom": 14,
         "places": [{
             "placeId": "ChIJ111",
             "name": "Espresso Vivace",
@@ -896,9 +840,6 @@ class TestMergerEdgeCases(unittest.TestCase):
         "surface_id": "test-surface",
         "heading": "Top Places",
         "summary": "Results for sushi.",
-        "center_lat": 47.6062,
-        "center_lng": -122.3321,
-        "zoom": 14,
         "anchor_marker": None,
         "places": [{
             "placeId": "ChIJ111",
@@ -920,9 +861,6 @@ class TestMergerEdgeCases(unittest.TestCase):
         "surface_id": "test-surface",
         "heading": "Top Places",
         "summary": "Results with custom markers.",
-        "center_lat": 47.6062,
-        "center_lng": -122.3321,
-        "zoom": 14,
         "places": [{
             "placeId": "ChIJ111",
             "name": "Espresso Vivace",
@@ -962,12 +900,11 @@ class TestMergerEdgeCases(unittest.TestCase):
     """Verifies that malformed coordinates in directions trigger text_only fallback."""
     data = {
         "surface_id": "test-surface",
+        "heading": "Directions",
         "summary": "Cannot compute directions.",
-        "center_lat": "invalid-lat",
-        "center_lng": 127.0,
-        "zoom": 10,
+        "travel_mode": "driving",
         "routes": [{
-            "origin": {"lat": 37.0, "lng": 127.0, "label": "Start"},
+            "origin": {"lat": "invalid-lat", "lng": 127.0, "label": "Start"},
             "destination": {"lat": 37.1, "lng": 127.1, "label": "End"},
         }],
     }
@@ -984,9 +921,6 @@ class TestMergerEdgeCases(unittest.TestCase):
         "surface_id": "directions-surface-xyz",
         "heading": "Directions",
         "summary": "Commute is 1h.",
-        "center_lat": 37.5665,
-        "center_lng": 126.9780,
-        "zoom": 12,
         "travel_mode": "driving",
         "routes": [
             {
@@ -1015,9 +949,6 @@ class TestMergerEdgeCases(unittest.TestCase):
     data = {
         "surface_id": "test-surface",
         "summary": "Fallback text.",
-        "center_lat": 37.0,
-        "center_lng": 127.0,
-        "zoom": 10,
         "routes": [{
             "origin": "not-a-dict",
             "destination": {"lat": 37.1, "lng": 127.1, "label": "End"},
@@ -1036,6 +967,143 @@ class TestMergerEdgeCases(unittest.TestCase):
     result = merge_template("local_search", data)
     surface_id = result[0]["createSurface"]["surfaceId"]
     self.assertTrue(surface_id.startswith("fallback-surface_"))
+
+  def test_merge_experimental_bundle_resolves_schema_and_prefix(self):
+    """Verifies merge_template resolves experimental bundle schema and prefix."""
+
+    class _ExpSchema(pydantic.BaseModel):
+      title: str
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+      root = pathlib.Path(tmp_dir)
+      bundle_dir = root / "templates" / "exp_bundle"
+      bundle_dir.mkdir(parents=True, exist_ok=True)
+      (bundle_dir / "manifest.json").write_text(
+          json.dumps({
+              "intent": "EXP_BUNDLE",
+              "channel": "experimental",
+              "surface_prefix": "exp-custom-surface",
+              "archetype": "Experimental archetype.",
+              "empty_fallback_text": "No exp results.",
+          }),
+          encoding="utf-8",
+      )
+      (bundle_dir / "layout.json").write_text(
+          json.dumps([
+              {
+                  "createSurface": {
+                      "surfaceId": "{{surface_id}}",
+                      "catalogId": "{{catalog_id}}",
+                      "root": "root",
+                  }
+              },
+              {
+                  "updateComponents": {
+                      "surfaceId": "{{surface_id}}",
+                      "components": [{
+                          "id": "root",
+                          "component": "Text",
+                          "text": "{{title}}",
+                      }],
+                  }
+              },
+          ]),
+          encoding="utf-8",
+      )
+
+      text_only_dir = root / "templates" / "text_only"
+      text_only_dir.mkdir(parents=True, exist_ok=True)
+      shutil.copy2(
+          pathlib.Path(__file__).parent
+          / "templates"
+          / "text_only"
+          / "layout.json",
+          text_only_dir / "layout.json",
+      )
+
+      with (
+          mock.patch.object(
+              importlib.resources,
+              "files",
+              return_value=root,
+              autospec=True,
+          ),
+          mock.patch.object(
+              template_registry,
+              "_resolve_schema",
+              return_value=_ExpSchema,
+              autospec=True,
+          ),
+      ):
+        result = merge_template(
+            "exp_bundle",
+            {"title": "Preview", "surface_id": "exp-custom-surface"},
+        )
+        fallback_result = merge_template("exp_bundle", {})
+
+      self.assertTrue(
+          result[0]["createSurface"]["surfaceId"].startswith(
+              "exp-custom-surface_"
+          )
+      )
+      self.assertEqual(
+          result[1]["updateComponents"]["components"][0]["text"], "Preview"
+      )
+      self.assertEqual(
+          fallback_result[1]["updateComponents"]["components"][1]["text"],
+          "No exp results.",
+      )
+
+  def test_merge_ignores_broken_sibling_experimental_bundle(self):
+    """Verifies merge_template does not fail on broken sibling WIP bundles."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+      root = pathlib.Path(tmp_dir)
+      broken_dir = root / "templates" / "wip_experimental"
+      broken_dir.mkdir(parents=True, exist_ok=True)
+      (broken_dir / "manifest.json").write_text(
+          json.dumps({
+              "intent": "WIP_EXPERIMENTAL",
+              "channel": "experimental",
+              "surface_prefix": "wip-surface",
+              "archetype": "WIP.",
+              "empty_fallback_text": "No WIP.",
+          }),
+          encoding="utf-8",
+      )
+
+      text_only_dir = root / "templates" / "text_only"
+      text_only_dir.mkdir(parents=True, exist_ok=True)
+      shutil.copy2(
+          pathlib.Path(__file__).parent
+          / "templates"
+          / "text_only"
+          / "layout.json",
+          text_only_dir / "layout.json",
+      )
+
+      local_search_src = (
+          pathlib.Path(__file__).parent / "templates" / "local_search"
+      )
+      local_search_dst = root / "templates" / "local_search"
+      shutil.copytree(local_search_src, local_search_dst)
+
+      with mock.patch.object(
+          importlib.resources,
+          "files",
+          return_value=root,
+          autospec=True,
+      ):
+        result = merge_template(
+            "local_search",
+            {
+                "summary": "Coffee nearby.",
+                "places": [{"name": "Cafe", "lat": 47.6, "lng": -122.3}],
+            },
+        )
+        with self.assertRaises(FileNotFoundError):
+          merge_template("non_existent_bundle", {})
+
+      self.assertTrue(result)
 
 
 class TestMergerZipImportedPackage(unittest.TestCase):
@@ -1104,18 +1172,12 @@ class TestMergerZipImportedPackage(unittest.TestCase):
         "text_only": {"text": "hello"},
         "local_search": {
             "summary": "Coffee near the market.",
-            "center_lat": 47.6097,
-            "center_lng": -122.3422,
-            "zoom": 14,
             "places": [
                 {"name": "Storyville", "lat": 47.6092, "lng": -122.3418}
             ],
         },
         "directions": {
             "summary": "About 50 minutes via US-101 S.",
-            "center_lat": 37.55,
-            "center_lng": -122.15,
-            "zoom": 10,
             "travel_mode": "driving",
             "routes": [{
                 "origin": {"lat": 37.7749, "lng": -122.4194, "label": "SF"},

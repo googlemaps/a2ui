@@ -186,10 +186,22 @@ class MAUIAgentWithGrounding(MAUIAgent):
     self._vertex_extractor: VertexGroundingExtractor | None = None
     self._registry: TemplateRegistry | None = None
 
+  @property
+  def template_registry(self) -> TemplateRegistry:
+    """Returns the lazily initialized TemplateRegistry for this agent."""
+    return self._get_template_registry()
+
   def _get_template_registry(self) -> TemplateRegistry:
     """Lazily initializes and caches the TemplateRegistry."""
     if self._registry is None:
-      self._registry = TemplateRegistry()
+      include_experimental = (
+          self.template_config.include_experimental_templates
+          if self.template_config is not None
+          else False
+      )
+      self._registry = TemplateRegistry(
+          include_experimental=include_experimental
+      )
     return self._registry
 
   def _get_genai_client(self) -> genai.Client:

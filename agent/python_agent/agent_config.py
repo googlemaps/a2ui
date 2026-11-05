@@ -39,6 +39,8 @@ class AgentConfig:
       extractor_thinking_budget: Thinking budget for extraction model.
       fallback_mode: Fallback strategy when specialized template extraction is
         not used or fails (e.g. for unsupported intents or validation failures).
+      include_experimental_templates: Whether to load experimental template
+        bundles in addition to stable ones.
   """
 
   max_list_size: int = 5
@@ -48,6 +50,7 @@ class AgentConfig:
   router_thinking_budget: int = 0
   extractor_thinking_budget: int = 0
   fallback_mode: FallbackMode = FallbackMode.TEXT
+  include_experimental_templates: bool = False
 
   def __post_init__(self):
     if not isinstance(self.fallback_mode, FallbackMode):
