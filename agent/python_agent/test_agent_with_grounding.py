@@ -72,6 +72,17 @@ class MAUIAgentWithGroundingTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(
         agent.template_config.template_model, "gemini/gemini-3.5-flash-lite"
     )
+    self.assertFalse(agent.template_registry.include_experimental)
+
+  def test_template_registry_respects_include_experimental_templates(self):
+    default_agent = MAUIAgentWithGrounding(base_url=self.base_url)
+    self.assertFalse(default_agent.template_registry.include_experimental)
+
+    exp_agent = MAUIAgentWithGrounding(
+        base_url=self.base_url,
+        template_config=AgentConfig(include_experimental_templates=True),
+    )
+    self.assertTrue(exp_agent.template_registry.include_experimental)
 
   def test_get_genai_client_missing_project_id_raises_value_error(self):
     """Verifies ValueError when GOOGLE_CLOUD_PROJECT is unset."""
@@ -191,8 +202,6 @@ class MAUIAgentWithGroundingTest(unittest.IsolatedAsyncioTestCase):
         return_value=LocalSearchExtractorSchema(
             heading="Coffee Shops in Seattle",
             summary="Found coffee shops.",
-            center_lat=47.6,
-            center_lng=-122.3,
             places=[
                 PlacePin(
                     name="Coffee Shop A",
@@ -236,8 +245,6 @@ class MAUIAgentWithGroundingTest(unittest.IsolatedAsyncioTestCase):
     mock_extractor.extract = mock.AsyncMock(
         return_value=DirectionsExtractorSchema(
             summary="Directions from Times Sq to Central Park.",
-            center_lat=40.77,
-            center_lng=-73.97,
             travel_mode="walking",
             heading="Walking Directions",
             routes=[

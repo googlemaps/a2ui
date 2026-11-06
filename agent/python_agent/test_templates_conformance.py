@@ -62,6 +62,9 @@ class BundleManifestModel(pydantic.BaseModel):
   model_config = pydantic.ConfigDict(extra="forbid")
 
   intent: str = pydantic.Field(min_length=1)
+  channel: template_registry.TemplateChannel = (
+      template_registry.TemplateChannel.STABLE
+  )
   surface_prefix: str = pydantic.Field(min_length=1)
   archetype: str = pydantic.Field(min_length=1)
   empty_fallback_text: str = pydantic.Field(min_length=1)
@@ -113,9 +116,11 @@ class TestTemplatesConformance(unittest.TestCase):
     )
     cls.validator = schema_manager.get_selected_catalog().validator
 
-    # Discover through the production registry so this suite validates the
-    # bundles the agent will actually serve, not a parallel reimplementation.
-    cls.bundles = template_registry.TemplateRegistry().list_bundles()
+    # Discover through the production registry with experimental bundles
+    # included so conformance tests validate all bundles on disk.
+    cls.bundles = template_registry.TemplateRegistry(
+        include_experimental=True
+    ).list_bundles()
 
   def _load_bundle_manifest(
       self, bundle: template_registry.TemplateBundle
@@ -141,7 +146,8 @@ class TestTemplatesConformance(unittest.TestCase):
     """Verifies manifest.json contains required metadata and examples."""
     for bundle in self.bundles:
       with self.subTest(bundle=bundle.name):
-        self._load_bundle_manifest(bundle)
+        manifest = self._load_bundle_manifest(bundle)
+        self.assertEqual(bundle.channel, manifest.channel)
 
         # `clamped_collections` is optional, but when a bundle declares it
         # every name must be a real field, or the extractor prompt would tell

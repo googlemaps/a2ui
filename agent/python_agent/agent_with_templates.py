@@ -78,7 +78,9 @@ class MAUIAgentWithTemplates(MAUIAgent):
   def __init__(self, base_url: str, config: AgentConfig | None = None) -> None:
     self.config = config or AgentConfig()
     super().__init__(base_url=base_url, model_name=self.config.generic_model)
-    self.template_registry = TemplateRegistry()
+    self.template_registry = TemplateRegistry(
+        include_experimental=self.config.include_experimental_templates
+    )
     self.router_client = LiteLlm(model=self.config.router_model)
     self.extractor_client = LiteLlm(model=self.config.template_model)
     self.fallback_client = LiteLlm(model=self.config.generic_model)
