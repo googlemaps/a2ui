@@ -38,13 +38,13 @@ class PlaceAnswerFactualExtractorSchema(BaseModel):
   )
   summary: str = Field(
       description=(
-          "A scannable factual answer for this place. Start with a concise"
-          " direct answer bolding '**Place Name**' and key facts, followed by a"
-          " blank line (\\n\\n) and 2 to 3 concise markdown bullet points ('*"
-          " **Label**: Detail') covering street address (with **distance** and"
-          " **travel time** if a reference point is given), operating hours,"
-          " and practical visitor logistics (pricing, accessibility, or"
-          " parking)."
+          "A scannable factual answer that directly addresses the user's"
+          " specific question about this place in the opening sentence"
+          " (bolding '**Place Name**' and key facts), followed by a blank"
+          " line (\\n\\n) and 2 to 3 concise markdown bullet points ('*"
+          " **Label**: Detail') covering the requested details, street"
+          " address (with **distance** and **travel time** if a reference"
+          " point is given), operating hours, and practical visitor logistics."
       ),
   )
   placeId: str = Field(  # pylint: disable=invalid-name
