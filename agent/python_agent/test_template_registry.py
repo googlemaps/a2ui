@@ -321,6 +321,12 @@ class CompileRouterInstructionTest(unittest.TestCase):
     self.assertIn("- **OTHER_SPATIAL**", self.instruction)
     self.assertIn("- **TEXT_ONLY**", self.instruction)
     self.assertIn("Conservative Routing", self.instruction)
+    self.assertIn("Compound Multi-Intent Prompts:", self.instruction)
+    self.assertIn(
+        "How do I get from Lafayette to Oakland airport? What are the best"
+        " places to get a beer inside the airport?",
+        self.instruction,
+    )
 
   def test_contains_bundle_few_shot_examples(self):
     self.assertIn("Find coffee shops near Central Park", self.instruction)
