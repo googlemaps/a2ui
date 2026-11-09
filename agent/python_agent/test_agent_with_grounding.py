@@ -22,9 +22,9 @@ from a2a.types import DataPart
 from google import genai
 
 from a2ui.a2a.parts import create_a2ui_part
-from a2ui.schema.constants import VERSION_0_9
 import agent_config
 import agent_with_grounding
+from agent import VERSION_0_9
 from router import VertexIntentClassifier
 from template_registry import INTENT_OTHER_SPATIAL, INTENT_TEXT_ONLY
 from templates.common import Pin
@@ -191,8 +191,6 @@ class MAUIAgentWithGroundingTest(unittest.IsolatedAsyncioTestCase):
         return_value=LocalSearchExtractorSchema(
             heading="Coffee Shops in Seattle",
             summary="Found coffee shops.",
-            center_lat=47.6,
-            center_lng=-122.3,
             places=[
                 PlacePin(
                     name="Coffee Shop A",
@@ -236,8 +234,6 @@ class MAUIAgentWithGroundingTest(unittest.IsolatedAsyncioTestCase):
     mock_extractor.extract = mock.AsyncMock(
         return_value=DirectionsExtractorSchema(
             summary="Directions from Times Sq to Central Park.",
-            center_lat=40.77,
-            center_lng=-73.97,
             travel_mode="walking",
             heading="Walking Directions",
             routes=[
