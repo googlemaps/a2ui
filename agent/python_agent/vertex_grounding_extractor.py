@@ -76,8 +76,7 @@ class VertexGroundingExtractor:
     schema_json = json.dumps(schema_cls.model_json_schema(), indent=2)
 
     return f"""You are an expert location specialist.
-You MUST call the Google Maps tool to answer the user's location request.
-Do not rely on your internal knowledge.
+You MUST call the Google Maps tool to answer the user's location request and follow the Grounding & Tool-Calling Policy.
 
 Respond in TWO parts, in this order.
 
