@@ -19,13 +19,20 @@ import {customElement} from 'lit/decorators.js';
 
 import {A2UICoreShell} from './core-shell';
 
-(window as any)['A2UI_ATTRIBUTION_ID'] =
-    'gmp_web_maui_v0.1.10_atoui,gmp_android_maui_v0.1.10_atoui';
+/**
+ * Maps JS API usage attribution ID identifying the Android SDK. MAUI components
+ * send it in addition to their own web ID. Bump on release.
+ */
+export const MAUI_ANDROID_ATTRIBUTION_ID = 'gmp_android_maui_v0.1.11_atoui';
 
 const PLACE_CARD_THUMBNAIL_MIN_WIDTH = 350;
 
 @customElement('a2ui-shell')
 export class AndroidA2UIShell extends A2UICoreShell {
+  protected override readonly platformAttributionIds = [
+    MAUI_ANDROID_ATTRIBUTION_ID,
+  ];
+
   protected override notifyWebpageResized(height: number): void {
     window.Android?.onWebpageResized?.(height);
   }
