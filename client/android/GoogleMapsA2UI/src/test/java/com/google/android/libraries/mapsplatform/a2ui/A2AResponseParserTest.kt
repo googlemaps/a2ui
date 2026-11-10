@@ -656,8 +656,102 @@ class A2AResponseParserTest {
     val events = A2AResponseParser.parse(payload)
     assertThat(events).hasSize(1)
     val dataEvent = events[0] as ParsedA2AEvent.Data
+    assertThat(dataEvent.metadata?.mimeType).isEqualTo("application/json+a2ui")
     val arr = JSONArray(dataEvent.data)
     assertThat(arr.length()).isEqualTo(1)
     assertThat(arr.getJSONObject(0).has("createSurface")).isTrue()
+  }
+
+  @Test
+  fun parse_dataPartWithV1A2uiMimeType_normalizesMimeTypeAndBatches() {
+    val payload =
+      """
+      {
+        "parts": [
+          {
+            "kind": "data",
+            "data": {"updateComponents": {"surfaceId": "sushi-seattle", "components": []}},
+            "metadata": {"mimeType": "application/a2ui+json"}
+          }
+        ]
+      }
+      """
+        .trimIndent()
+
+    val events = A2AResponseParser.parse(payload)
+    assertThat(events).hasSize(1)
+    val dataEvent = events[0] as ParsedA2AEvent.Data
+    assertThat(dataEvent.metadata?.mimeType).isEqualTo("application/json+a2ui")
+    val arr = JSONArray(dataEvent.data)
+    assertThat(arr.length()).isEqualTo(1)
+    assertThat(arr.getJSONObject(0).has("updateComponents")).isTrue()
+  }
+
+  @Test
+  fun parse_embeddedA2UIJSON_populatesMetadataMimeType() {
+    val payload =
+      """
+      {
+        "parts": [
+          {"text": "<a2ui-json>{\"createSurface\": {\"surfaceId\": \"s1\"}}</a2ui-json>"}
+        ]
+      }
+      """
+        .trimIndent()
+
+    val events = A2AResponseParser.parse(payload)
+    assertThat(events).hasSize(1)
+    val dataEvent = events[0] as ParsedA2AEvent.Data
+    assertThat(dataEvent.metadata?.mimeType).isEqualTo("application/json+a2ui")
+  }
+
+  @Test
+  fun parse_nonA2uiDataPart_preservesPayloadAndMimeTypeWithoutDeduplication() {
+    val payload =
+      """
+      {
+        "parts": [
+          {
+            "kind": "data",
+            "data": {"createSurface": {"surfaceId": "non-a2ui"}, "custom": 1},
+            "metadata": {"mimeType": "application/json"}
+          },
+          {
+            "kind": "data",
+            "data": {"createSurface": {"surfaceId": "non-a2ui"}, "custom": 2},
+            "metadata": {"mimeType": "application/json"}
+          }
+        ]
+      }
+      """
+        .trimIndent()
+
+    val events = A2AResponseParser.parse(payload)
+    assertThat(events).hasSize(2)
+    val first = events[0] as ParsedA2AEvent.Data
+    val second = events[1] as ParsedA2AEvent.Data
+    assertThat(first.metadata?.mimeType).isEqualTo("application/json")
+    assertThat(second.metadata?.mimeType).isEqualTo("application/json")
+    assertThat(JSONObject(first.data).getInt("custom")).isEqualTo(1)
+    assertThat(JSONObject(second.data).getInt("custom")).isEqualTo(2)
+  }
+
+  @Test
+  fun models_equalsAndHashCode_matchStructuralValues() {
+    val m1 = ParsedA2AEventMetadata("application/json+a2ui")
+    val m2 = ParsedA2AEventMetadata("application/json+a2ui")
+    assertThat(m1).isEqualTo(m2)
+    assertThat(m1.hashCode()).isEqualTo(m2.hashCode())
+    assertThat(m1.toString()).contains("application/json+a2ui")
+
+    val t1 = ParsedA2AEvent.Text("hi")
+    val t2 = ParsedA2AEvent.Text("hi")
+    assertThat(t1).isEqualTo(t2)
+    assertThat(t1.hashCode()).isEqualTo(t2.hashCode())
+
+    val d1 = ParsedA2AEvent.Data("[]", m1)
+    val d2 = ParsedA2AEvent.Data("[]", m2)
+    assertThat(d1).isEqualTo(d2)
+    assertThat(d1.hashCode()).isEqualTo(d2.hashCode())
   }
 }

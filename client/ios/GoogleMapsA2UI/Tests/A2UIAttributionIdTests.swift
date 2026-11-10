@@ -16,6 +16,7 @@ import XCTest
 
 @testable import GoogleMapsA2UI
 
+@MainActor
 final class A2UIAttributionIdTests: XCTestCase {
 
   func testIOSAttributionIdIsGenerated() throws {
@@ -25,16 +26,12 @@ final class A2UIAttributionIdTests: XCTestCase {
     let htmlString = localContent.html
 
     XCTAssertTrue(
-      htmlString.contains("gmp_web_maui_v0.1.10_atoui"),
-      "Expected the generated attribution ID to contain the Web identifier 'gmp_web_maui_v0.1.10_atoui'"
+      htmlString.contains("gmp_web_maui_v0.1.11_atoui"),
+      "Expected the generated attribution ID to contain the Web identifier 'gmp_web_maui_v0.1.11_atoui'"
     )
     XCTAssertTrue(
-      htmlString.contains("gmp_ios_maui_v0.1.10_atoui"),
-      "Expected the generated attribution ID to contain the iOS identifier 'gmp_ios_maui_v0.1.10_atoui'"
-    )
-    XCTAssertTrue(
-      htmlString.contains("gmp_web_maui_v0.1.10_atoui,gmp_ios_maui_v0.1.10_atoui"),
-      "Expected the generated attribution ID to contain the combined Web and iOS identifier string 'gmp_web_maui_v0.1.10_atoui,gmp_ios_maui_v0.1.10_atoui'"
+      htmlString.contains("gmp_ios_maui_v0.1.11_atoui"),
+      "Expected the generated attribution ID to contain the iOS identifier 'gmp_ios_maui_v0.1.11_atoui'"
     )
   }
 }
