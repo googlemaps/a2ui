@@ -24,7 +24,7 @@ from google.adk import features as adk_features
 from google.adk import skills as adk_skills
 import pydantic
 
-import a2ui
+from a2ui.inference_formats.direct_json import DirectJsonParser
 import agent
 import template_registry
 from merger import (
@@ -97,21 +97,10 @@ class TestTemplatesConformance(unittest.TestCase):
     extension_path = (
         cls.package_dir / "shared" / "schema" / "maps_catalog_extension.json"
     )
-    schema_manager = a2ui.schema.manager.A2uiSchemaManager(
-        version=a2ui.schema.constants.VERSION_0_9,
-        catalogs=[
-            a2ui.schema.catalog.CatalogConfig(
-                name="maps-agentic-ui-catalog",
-                provider=agent.MergedCatalogProvider(
-                    a2ui.schema.constants.VERSION_0_9, str(extension_path)
-                ),
-            )
-        ],
-        schema_modifiers=[
-            a2ui.schema.common_modifiers.remove_strict_validation
-        ],
-    )
-    cls.validator = schema_manager.get_selected_catalog().validator
+    catalog = agent.MergedCatalogProvider(
+        agent.VERSION_0_9, str(extension_path)
+    ).load()
+    cls.parser = DirectJsonParser([catalog])
 
     # Discover through the production registry so this suite validates the
     # bundles the agent will actually serve, not a parallel reimplementation.
@@ -261,7 +250,7 @@ class TestTemplatesConformance(unittest.TestCase):
         merged_messages = merge_template(
             bundle.name, manifest.conformance_example
         )
-        self.validator.validate(merged_messages)
+        self.parser.parse_response(json.dumps(merged_messages), wrapped=False)
 
   def test_merged_output_matches_golden(self):
     """Verifies rendered layouts match checked-in golden A2UI wire messages."""

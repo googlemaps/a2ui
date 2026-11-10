@@ -316,11 +316,22 @@ class CompileRouterInstructionTest(unittest.TestCase):
   def test_contains_registered_archetypes(self):
     self.assertIn("- **LOCAL_SEARCH**", self.instruction)
     self.assertIn("- **DIRECTIONS**", self.instruction)
+    self.assertIn("- **PLACE_ANSWER_FACTUAL**", self.instruction)
+    self.assertIn(
+        "Do NOT use when the prompt mentions two or more distinct places",
+        self.instruction,
+    )
 
   def test_contains_pinned_non_template_archetypes(self):
     self.assertIn("- **OTHER_SPATIAL**", self.instruction)
     self.assertIn("- **TEXT_ONLY**", self.instruction)
     self.assertIn("Conservative Routing", self.instruction)
+    self.assertIn("Compound Multi-Intent Prompts:", self.instruction)
+    self.assertIn(
+        "How do I get from Lafayette to Oakland airport? What are the best"
+        " places to get a beer inside the airport?",
+        self.instruction,
+    )
 
   def test_contains_bundle_few_shot_examples(self):
     self.assertIn("Find coffee shops near Central Park", self.instruction)
