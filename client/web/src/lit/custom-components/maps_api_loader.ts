@@ -21,8 +21,8 @@ export interface MapsJsApiOptions {
   /** Maps JS API key. */
   apiKey: string;
   /**
-   * Maps JS API version or release channel, e.g. `'alpha'`. The `maps3d`
-   * library used by `GoogleMap` currently requires `'alpha'`, which is the
+   * Maps JS API version or release channel, e.g. `'beta'`. The `maps3d`
+   * library used by `GoogleMap` currently requires `'beta'`, which is the
    * default.
    */
   version?: string;
@@ -50,7 +50,7 @@ export function configureMapsJsApi(options: MapsJsApiOptions): void {
        document.querySelector(MAPS_JS_API_SCRIPT_SELECTOR))) {
     return;
   }
-  const version = options.version ?? 'alpha';
+  const version = options.version ?? 'beta';
   configuredImportLibrary = bootstrapMapsJsApi(options.apiKey, version);
 }
 

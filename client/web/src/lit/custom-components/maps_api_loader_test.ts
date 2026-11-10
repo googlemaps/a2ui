@@ -98,6 +98,7 @@ describe('maps_api_loader', () => {
 
     it('injects the API on first import and resolves once it has loaded',
        async () => {
+         // Intentionally use a non-default version.
          configureMapsJsApi({apiKey: 'test-key', version: 'alpha'});
 
          const promise = loadMapsLibrary('maps3d');
@@ -118,7 +119,7 @@ describe('maps_api_loader', () => {
          expect(importLibrarySpy).toHaveBeenCalledWith('maps3d');
        });
 
-    it('defaults to the alpha channel when no version is given', async () => {
+    it('defaults to the beta channel when no version is given', async () => {
       const options = {apiKey: 'test-key'};
       configureMapsJsApi(options);
 
@@ -127,7 +128,7 @@ describe('maps_api_loader', () => {
 
       expect(appendedScripts.length).toBe(1);
       expect(new URL(appendedScripts[0].src).searchParams.get('v'))
-          .toBe('alpha');
+          .toBe('beta');
       expect(options).toEqual({apiKey: 'test-key'});
     });
 
