@@ -29,11 +29,6 @@
         {
           "id": "map",
           "component": "GoogleMap",
-          "center": {
-            "lat": 37.5,
-            "lng": 127.0
-          },
-          "zoom": 12,
           "routes": [
             {
               "origin": {
