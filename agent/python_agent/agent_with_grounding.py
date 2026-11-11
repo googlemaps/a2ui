@@ -30,12 +30,13 @@ from google.adk.tools.function_tool import FunctionTool
 from google.genai import types
 
 from a2ui.a2a.parts import create_a2ui_part
-from a2ui.schema.catalog import CatalogConfig
-from a2ui.schema.common_modifiers import remove_strict_validation
-from a2ui.schema.constants import VERSION_0_9
-from a2ui.schema.manager import A2uiSchemaManager
+from a2ui.inference_formats.direct_json import DirectJsonFormatFactory
+from a2ui.processor import A2uiRequestProcessor
 import merger
-from agent import AGENT_INSTRUCTION, MAUIAgent, MergedCatalogProvider
+from agent import AGENT_INSTRUCTION
+from agent import MAUIAgent
+from agent import MergedCatalogProvider
+from agent import VERSION_0_9
 from agent_config import AgentConfig, FallbackMode
 from router import VertexIntentClassifier
 from template_registry import INTENT_OTHER_SPATIAL, INTENT_TEXT_ONLY, TemplateRegistry
@@ -105,25 +106,14 @@ async def query_vertex_map(
         / "maps_catalog_extension.json"
     )
 
-  schema_manager = A2uiSchemaManager(
-      version=VERSION_0_9,
-      catalogs=[
-          CatalogConfig(
-              name="maps-agentic-ui-catalog",
-              provider=MergedCatalogProvider(VERSION_0_9, str(extension_path)),
-          )
-      ],
-      schema_modifiers=[remove_strict_validation],
+  catalog = MergedCatalogProvider(VERSION_0_9, str(extension_path)).load()
+  processor = A2uiRequestProcessor(
+      catalogs=[catalog],
+      format_factory=DirectJsonFormatFactory(),
   )
+  generated_prompt = f"{base_instruction}\n\n{processor.prompt_snippet}"
 
-  generated_prompt = schema_manager.generate_system_prompt(
-      role_description=base_instruction,
-      include_schema=True,
-      include_examples=False,
-      validate_examples=False,
-  )
-
-  final_instruction = """You MUST use the Google Maps tool to answer the user's query. Do not rely on your internal knowledge.
+  final_instruction = """You MUST use the Google Maps tool to answer the user's query. Always use the tool output as the source of truth for places, routes, and any attributes it provides; only when a requested detail is absent from the tool output, answer using general knowledge with a brief caveat if not confident.
     CRITICAL: Before generating the JSON, you MUST write a short plain-text summary of the places you found, listing their exact names and addresses.
     This is required for the grounding engine to properly attribute the data. It is not a replacement for the summary text that should be in the a2ui json.
     IMPORTANT: When generating the A2UI JSON response, you MUST include the "<a2ui-json> ...content... </a2ui-json>" tags immediately around the JSON content.
@@ -392,7 +382,7 @@ class MAUIAgentWithGrounding(MAUIAgent):
     return await query_vertex_map(query, model_id=model_id)
 
   def _build_llm_agent(
-      self, schema_manager: A2uiSchemaManager | None = None
+      self, processor: A2uiRequestProcessor | None = None
   ) -> LlmAgent:
     """Builds the LLM agent for the MAUI agent with grounding."""
 
@@ -419,13 +409,8 @@ class MAUIAgentWithGrounding(MAUIAgent):
 
         CRITICAL: Return the output of the query_vertex_map tool EXACTLY as it is received, without any summarization, explanation, or modification. Your final response should be just the output of the tool."""
 
-    if schema_manager:
-      instruction = schema_manager.generate_system_prompt(
-          role_description=agent_instruction,
-          include_schema=True,
-          include_examples=False,
-          validate_examples=False,
-      )
+    if processor:
+      instruction = f"{agent_instruction}\n\n{processor.prompt_snippet}"
     else:
       instruction = agent_instruction
 
