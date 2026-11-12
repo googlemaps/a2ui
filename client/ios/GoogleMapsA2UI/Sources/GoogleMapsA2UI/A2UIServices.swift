@@ -23,19 +23,40 @@ import OSLog
 /// and caches the resolved HTML template to avoid redundant disk reads and string replacements.
 public enum A2UIServices {
   private static let logger = Logger(subsystem: "com.google.maps.a2ui", category: "Configuration")
-  private static var apiKey: String?
-  private static var cachedContent: String?
-  private static var cachedForApiKey: String?
+  /// The configured Google Maps API key, or `nil` if `provideAPIKey(_:)` has not been called yet.
+  @MainActor public private(set) static var apiKey: String?
+  @MainActor private static var cachedContent: String?
+  @MainActor private static var cachedForApiKey: String?
 
   /// Provides the Google Maps API key to be used by the A2UI SDK.
   ///
-  /// Note: This method is not thread-safe and should only be called from the main thread.
+  /// Must be called on the main actor with a non-empty key before rendering `A2UIView`.
+  /// Subsequent calls after initialization are ignored and return `false`.
   ///
   /// - Parameter apiKey: The Google Maps API key string.
-  public static func provideApiKey(_ apiKey: String) {
-    assert(
-      Thread.isMainThread, "A2UIServices.provideApiKey(_:) must be called from the main thread.")
+  /// - Returns: `true` if the key was accepted; `false` if blank or already initialized.
+  @discardableResult
+  @MainActor
+  public static func provideAPIKey(_ apiKey: String) -> Bool {
+    if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      logger.error("A2UIServices.provideAPIKey(_:) requires a non-empty API key.")
+      return false
+    }
+    if self.apiKey != nil {
+      logger.error("A2UIServices.provideAPIKey(_:) should be called at most once.")
+      return false
+    }
     self.apiKey = apiKey
+    self.cachedContent = nil
+    self.cachedForApiKey = nil
+    return true
+  }
+
+  @MainActor
+  internal static func resetForTesting() {
+    self.apiKey = nil
+    self.cachedContent = nil
+    self.cachedForApiKey = nil
   }
 
   /// Reads the local HTML template from the bundle and injects the Maps API key.
@@ -44,10 +65,14 @@ public enum A2UIServices {
   /// Note: This method is not thread-safe and should only be called from the main thread.
   ///
   /// - Returns: A tuple containing the HTML string and the base URL, or `nil` on failure.
+  @MainActor
   static func getLocalHTMLContent() -> (html: String, baseURL: URL?)? {
     assert(
       Thread.isMainThread, "A2UIServices.getLocalHTMLContent() must be called from the main thread."
     )
+    if self.apiKey == nil {
+      logger.error("A2UIServices.provideAPIKey(_:) was not called before rendering A2UIView.")
+    }
     let currentKey = self.apiKey ?? ""
     // Return the cached HTML if we've already resolved it for the current API key
     if let cached = self.cachedContent, self.cachedForApiKey == currentKey {

@@ -14,11 +14,42 @@
 
 package com.google.android.libraries.mapsplatform.a2ui
 
+import androidx.annotation.VisibleForTesting
+
+/** Global services and configuration for the GoogleMapsA2UI SDK. */
 object A2UIServices {
-  var apiKey: String = ""
+  /** The configured Google Maps API key, or `null` if [provideApiKey] has not been called yet. */
+  @get:JvmStatic
+  @Volatile
+  var apiKey: String? = null
     private set
 
-  fun provideAPIKey(key: String) {
-    apiKey = key
+  /**
+   * Configures the Google Maps API key used by [A2UIView].
+   *
+   * Must be called with a non-blank key before rendering any [A2UIView]. Repeated calls with the
+   * identical key are idempotent no-ops.
+   *
+   * @throws IllegalArgumentException if [apiKey] is blank.
+   * @throws IllegalStateException if already initialized with a different key.
+   */
+  @Synchronized
+  @JvmStatic
+  fun provideApiKey(apiKey: String) {
+    require(apiKey.isNotBlank()) { "API key must not be blank." }
+    val existingKey = this.apiKey
+    if (existingKey != null) {
+      check(existingKey == apiKey) {
+        "A2UIServices has already been initialized with a different API key."
+      }
+      return
+    }
+    this.apiKey = apiKey
+  }
+
+  @Synchronized
+  @VisibleForTesting
+  internal fun resetForTesting() {
+    apiKey = null
   }
 }

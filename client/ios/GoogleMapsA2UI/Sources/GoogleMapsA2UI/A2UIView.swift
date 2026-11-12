@@ -14,42 +14,93 @@
 // limitations under the License.
 //
 
+import OSLog
 import SwiftUI
 import WebKit
+
+/// Protocol implemented by views that accept `A2UIView` modifier callbacks.
+public protocol A2UIViewModifiable {}
+
+private struct A2UIOnUserActionKey: EnvironmentKey {
+  static let defaultValue: ((String) -> Void)? = nil
+}
+
+private struct A2UIOnRenderCompleteKey: EnvironmentKey {
+  static let defaultValue: ((TimeInterval) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+  fileprivate var a2uiOnUserAction: ((String) -> Void)? {
+    get { self[A2UIOnUserActionKey.self] }
+    set { self[A2UIOnUserActionKey.self] = newValue }
+  }
+
+  fileprivate var a2uiOnRenderComplete: ((TimeInterval) -> Void)? {
+    get { self[A2UIOnRenderCompleteKey.self] }
+    set { self[A2UIOnRenderCompleteKey.self] = newValue }
+  }
+}
+
+private struct A2UIUserActionModifier: ViewModifier {
+  let action: (String) -> Void
+
+  func body(content: Content) -> some View {
+    content.environment(\.a2uiOnUserAction, action)
+  }
+}
+
+private struct A2UIRenderCompleteModifier: ViewModifier {
+  let action: (TimeInterval) -> Void
+
+  func body(content: Content) -> some View {
+    content.environment(\.a2uiOnRenderComplete, action)
+  }
+}
+
+extension View where Self: A2UIViewModifiable {
+  /// Registers a handler called when the user triggers an action inside the A2UI surface.
+  ///
+  /// - Parameter action: Closure invoked with the action JSON string.
+  public func onUserAction(_ action: @escaping (_ actionJSON: String) -> Void)
+    -> some View & A2UIViewModifiable
+  {
+    modifier(A2UIUserActionModifier(action: action))
+  }
+
+  /// Registers a handler called once when the A2UI surface finishes its initial render.
+  ///
+  /// - Parameter action: Closure invoked with the render latency in seconds (`TimeInterval`).
+  public func onRenderComplete(_ action: @escaping (_ latency: TimeInterval) -> Void)
+    -> some View & A2UIViewModifiable
+  {
+    modifier(A2UIRenderCompleteModifier(action: action))
+  }
+}
+
+/// :nodoc:
+extension ModifiedContent: A2UIViewModifiable
+where Content: View & A2UIViewModifiable, Modifier: ViewModifier {}
 
 /// Main entry point for rendering GoogleMapsA2UI message parts.
 /// Renders the parsed A2UI event using a WKWebView wrapper.
 /// The WKWebView is used to securely execute the `a2ui-shell` web component,
 /// which interprets the declarative JSON payload and renders interactive maps and UI elements.
-public struct A2UIView: View {
+public struct A2UIView: View, A2UIViewModifiable {
+  @Environment(\.a2uiOnUserAction) private var onUserAction
+  @Environment(\.a2uiOnRenderComplete) private var onRenderComplete
   private let part: ParsedA2AEvent
-  private let id: String
-  private let onUserAction: (String) -> Void
-  private let onRenderComplete: ((String, Double, String) -> Void)?
 
-  /// Initializes the A2UIView.
-  /// - Parameters:
-  ///   - part: The parsed A2A event containing the declarative UI payload.
-  ///   - id: A unique identifier for this view or web component instance.
-  ///   - onUserAction: Callback invoked when the user interacts with the UI (e.g., clicks a button).
-  ///   - onRenderComplete: Optional callback invoked when rendering is complete.
-  public init(
-    part: ParsedA2AEvent,
-    id: String,
-    onUserAction: @escaping (String) -> Void,
-    onRenderComplete: ((String, Double, String) -> Void)? = nil
-  ) {
+  /// Initializes the `A2UIView`.
+  ///
+  /// - Parameter part: The parsed A2A event containing the declarative UI payload.
+  public init(part: ParsedA2AEvent) {
     self.part = part
-    self.id = id
-    self.onUserAction = onUserAction
-    self.onRenderComplete = onRenderComplete
   }
 
   public var body: some View {
-    if case .data(let payloadData, _) = part {
+    if case .data(let payloadJSON, _) = part {
       A2UIMessageInnerWrapper(
-        webViewID: id,
-        payload: payloadData,
+        payload: payloadJSON,
         onUserAction: onUserAction,
         onRenderComplete: onRenderComplete
       )
@@ -59,19 +110,16 @@ public struct A2UIView: View {
   }
 }
 
-/// An internal wrapper View that manages the dynamic height state of the WKWebView
-/// and applies standard styling like shadows and rounded corners to the message container.
+/// An internal wrapper View that manages the dynamic height state of the WKWebView.
 struct A2UIMessageInnerWrapper: View {
-  let webViewID: String
-  let payload: Any
-  let onUserAction: (String) -> Void
-  let onRenderComplete: ((String, Double, String) -> Void)?
+  let payload: String
+  let onUserAction: ((String) -> Void)?
+  let onRenderComplete: ((TimeInterval) -> Void)?
 
   @State private var height: CGFloat = 100  // Default height
 
   var body: some View {
     A2UIMessageRepresentableView(
-      webViewID: webViewID,
       payload: payload,
       dynamicHeight: $height,
       onUserAction: onUserAction,
@@ -79,19 +127,18 @@ struct A2UIMessageInnerWrapper: View {
     )
     .frame(maxWidth: .infinity)
     .frame(height: height)
-    .clipShape(RoundedRectangle(cornerRadius: 16))
-    .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
   }
 }
 
 /// Internal UIViewRepresentable view to construct and manage the lifecycle of the WKWebView.
 /// This acts as the bridge between SwiftUI and the underlying UIKit/WebKit components.
 struct A2UIMessageRepresentableView: UIViewRepresentable {
-  let webViewID: String
-  let payload: Any
+  private static let logger = Logger(subsystem: "com.google.maps.a2ui", category: "A2UIView")
+
+  let payload: String
   @Binding var dynamicHeight: CGFloat
-  let onUserAction: (String) -> Void
-  let onRenderComplete: ((String, Double, String) -> Void)?
+  let onUserAction: ((String) -> Void)?
+  let onRenderComplete: ((TimeInterval) -> Void)?
 
   /// Creates the WKWebView instance and configures its bridge to the web component.
   /// - Parameter context: The SwiftUI context.
@@ -147,16 +194,18 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
     }
 
     let webView = WKWebView(frame: UIScreen.main.bounds, configuration: config)
-    if #available(iOS 16.4, *) {
-      webView.isInspectable = true
-    }
+    #if DEBUG
+      if #available(iOS 16.4, *) {
+        webView.isInspectable = true
+      }
+    #endif
 
     webView.navigationDelegate = coordinator
     webView.uiDelegate = coordinator
     webView.scrollView.isScrollEnabled = false  // Prevent double scrolling inside the chat list
 
     // Fix for the gray background sometimes seen at the boundaries of WKWebViews.
-    // Setting the view and its scroll view to clear ensures our SwiftUI styling (shadows/corners) looks correct.
+    // Setting the view and its scroll view to clear ensures external SwiftUI styling looks clean.
     webView.isOpaque = false
     webView.backgroundColor = .clear
     webView.scrollView.backgroundColor = .clear
@@ -168,14 +217,14 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
     if let localContent = A2UIServices.getLocalHTMLContent() {
       webView.loadHTMLString(localContent.html, baseURL: localContent.baseURL)
     } else {
-      print("ERROR: Failed to load local HTML content from bundle")
+      Self.logger.error("Failed to load local HTML content from bundle")
     }
 
     return webView
   }
 
   /// Updates the WKWebView when SwiftUI state changes.
-  /// Injects the latest payload if the JavaScript context is ready.
+  /// Refreshes the coordinator's parent reference and injects the latest payload if JS is ready.
   /// - Parameters:
   ///   - uiView: The WKWebView instance to update.
   ///   - context: The SwiftUI context.
@@ -183,11 +232,20 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
     updateWebView(uiView, coordinator: context.coordinator)
   }
 
-  /// Pushes the latest JSON payload to the WebView if the JavaScript bridge is ready.
+  /// Removes registered `WKScriptMessageHandler`s and delegates to break retain cycles on teardown.
+  static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+    uiView.configuration.userContentController.removeScriptMessageHandler(forName: "iOS")
+    uiView.configuration.userContentController.removeScriptMessageHandler(forName: "heightObserver")
+    uiView.navigationDelegate = nil
+    uiView.uiDelegate = nil
+  }
+
+  /// Refreshes the coordinator's parent snapshot and pushes the latest JSON payload when JS is ready.
   /// - Parameters:
   ///   - uiView: The WKWebView instance to update.
   ///   - coordinator: The coordinator tracking the JavaScript ready state.
   func updateWebView(_ uiView: WKWebView, coordinator: Coordinator) {
+    coordinator.parent = self
     if coordinator.isJSReady {
       coordinator.injectJSON(uiView, payload: payload)
     }
@@ -250,27 +308,18 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
       return nil
     }
 
-    /// Safely serializes and injects the JSON payload into the `a2ui-shell` web component.
+    /// Safely escapes and injects the JSON payload string into the `a2ui-shell` web component.
     /// - Parameters:
     ///   - webView: The web view hosting the component.
-    ///   - payload: The dictionary payload to serialize and inject.
-    func injectJSON(_ webView: WKWebView, payload: Any) {
-      // Use JSONSerialization to safely escape the native Swift object for inclusion in JavaScript.
-      let jsonString: String
-      if JSONSerialization.isValidJSONObject(payload),
-        let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
-        let str = String(data: jsonData, encoding: .utf8)
-      {
-        jsonString = str
-      } else {
-        jsonString = "[]"
-      }
+    ///   - payload: The UTF-8 JSON string payload to inject.
+    func injectJSON(_ webView: WKWebView, payload: String) {
+      let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+      let jsonString = trimmed.isEmpty ? "[]" : payload
 
       if jsonString == lastInjectedPayload { return }
       lastInjectedPayload = jsonString
 
-      // Use https://developer.apple.com/documentation/foundation/jsonencoder to safely escape
-      // the JSON string as a JavaScript string literal.
+      // Use JSONEncoder to safely escape the JSON string as a JavaScript string literal.
       let encodedString: String
       if let encodedData = try? JSONEncoder().encode(jsonString),
         let str = String(data: encodedData, encoding: .utf8)
@@ -311,9 +360,11 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
           // Only update if difference > 5 to prevent infinite SwiftUI layout loops
           if abs(parent.dynamicHeight - targetHeight) > 5 {
             parent.dynamicHeight = targetHeight
-            let latency = startTime != nil ? (CFAbsoluteTimeGetCurrent() - startTime!) : 0.0
-            parent.onRenderComplete?(parent.webViewID, latency, "success")
-            startTime = nil
+            if let startTime {
+              let latency = CFAbsoluteTimeGetCurrent() - startTime
+              parent.onRenderComplete?(latency)
+              self.startTime = nil
+            }
           }
         }
       } else if message.name == "iOS",
@@ -323,11 +374,11 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
       {
         switch action {
         case "log":
-          print("JS LOG: \(data)")
+          A2UIMessageRepresentableView.logger.debug("JS LOG: \(data, privacy: .public)")
         case "error":
-          print("JS ERROR: \(data)")
+          A2UIMessageRepresentableView.logger.error("JS ERROR: \(data, privacy: .public)")
         case "onGetDirections":
-          parent.onUserAction(data)
+          parent.onUserAction?(data)
         case "onJsReady":
           isJSReady = true
           if let webView = message.webView {

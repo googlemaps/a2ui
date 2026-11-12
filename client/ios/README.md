@@ -19,7 +19,7 @@ To quickly get started, we recommend using the iOS sample project located in the
 *   **Protocol Version:** This library is built based on the **v0.9 A2UI protocol** and is **not backward compatible** with the v0.8 protocol. Ensure your backend server uses the v0.9 protocol format.
 *   **Xcode:** Xcode 15 or later (requires Swift 5.9+).
 *   **iOS Target:** iOS 16.0 or later.
-*   **Google Maps API Key:** You must have a Google Maps Platform API key to render the maps inside the A2UI web views. You can create one and enable the Maps JavaScript API in the [Google Cloud Console](https://mapsplatform.google.com/).
+*   **Google Maps API Key:** You must have a Google Maps Platform API key to render the maps inside the A2UI web views. Create one and enable **Maps JavaScript API**, **Places UI Kit**, and **Routes API** in the [Google Cloud Console](https://mapsplatform.google.com/).
 
 ---
 
@@ -30,10 +30,18 @@ This package provides the core iOS components for the Maps Agentic UI Toolkit. I
 ### File Structure / Architecture
 
 * **`A2AResponseParser`**: A utility that standardizes backend responses into an array of `ParsedA2AEvent` objects.
-* **`ParsedA2AEvent`**: An enum representing an extracted payload chunk (`.text` or `.data`).
-* **Single-File Web Bundle (`index.html`)**: The library uses a compiled, single-file HTML bundle. This bundle executes a lightweight React application that orchestrates the rendering of the underlying Lit web components.
-* **`A2UIView`**: A custom SwiftUI view that wraps an underlying `WKWebView`. It mounts the single-file web bundle, dynamically resizes to fit the rendered content, and bridges native JavaScript callbacks back to Swift.
-* **`A2UIServices`**: A global configuration enum used to provide the Maps API key. It efficiently reads the local web bundle, injects your API key directly into the HTML string, and caches the result for high-performance rendering.
+* **`ParsedA2AEvent`**: An enum representing an extracted payload chunk (`.text(String)` or `.data(String, metadata: ParsedA2AEventMetadata?)`).
+* **Single-File Web Bundle (`index.html`)**: The library uses a compiled,
+  single-file HTML bundle powered by **Lit** (`A2UICoreShell`) that
+  orchestrates rendering of the underlying A2UI web components.
+* **`A2UIView`**: A custom SwiftUI view that wraps an underlying `WKWebView`. It
+  mounts the single-file web bundle, dynamically resizes to fit the rendered
+  content, and bridges native JavaScript callbacks back to Swift via
+  `.onUserAction` and `.onRenderComplete`.
+* **`A2UIServices`**: A global configuration enum used to provide the Maps API
+  key (`provideAPIKey(_:)`). It efficiently reads the local web bundle, injects
+  your API key directly into the HTML string, and caches the result for
+  high-performance rendering.
 
 ### How to Integrate
 
@@ -53,14 +61,15 @@ If you are building your own Swift Package or using a modular architecture, add 
 ```swift
 dependencies: [
     // Replace with actual local path
-    .package(path: "path/to/a2ui/client/ios/GoogleMapsA2UI") 
+    .package(path: "path/to/a2ui/client/ios/GoogleMapsA2UI")
 ]
 ```
 
 ### Usage
 
 #### 1. Global Initialization
-Call `A2UIServices.provideApiKey()` at application startup to configure your Google Maps API Key.
+Call `A2UIServices.provideAPIKey(_:)` at application startup to configure your
+Google Maps API Key.
 
 ```swift
 import SwiftUI
@@ -69,7 +78,7 @@ import GoogleMapsA2UI
 @main
 struct MyApp: App {
     init() {
-        A2UIServices.provideApiKey("YOUR_GOOGLE_MAPS_API_KEY")
+        A2UIServices.provideAPIKey("YOUR_GOOGLE_MAPS_API_KEY")
     }
 
     var body: some Scene {
@@ -83,7 +92,11 @@ struct MyApp: App {
 #### 2. Parse the Response
 Pass the raw response text to `A2AResponseParser.parse(_:)` to get an array of strictly typed events. The input is the JSON text of one server response: the body of a `message/send` call, or the payload of one `message/stream` SSE `data:` line (with the `data: ` prefix removed).
 
-The parser unwraps the JSON-RPC `result` envelope and, for `task` and `status-update` events, the agent reply in `status.message`. It then searches for the message parts array at the following paths:
+The parser unwraps the JSON-RPC `result` envelope and, for `task` and
+`status-update` events, the agent reply in `status.message`. It then searches
+for message parts at the following paths:
+
+* `history` (agent replies following the last user message)
 * `parts`
 * `content.parts`
 * `status.message.parts`
@@ -105,7 +118,9 @@ do {
 ```
 
 #### 3. Render the UI
-Feed the parsed events into your SwiftUI layout. The library provides an `A2UIView` that automatically renders rich map interfaces for `.data` events containing an A2UI payload.
+Feed the parsed events into your SwiftUI layout. The library provides
+`A2UIView(part:)` along with `.onUserAction(_:)` and `.onRenderComplete(_:)`
+modifiers to handle user interactions and render timing.
 
 ```swift
 import SwiftUI
@@ -113,10 +128,10 @@ import GoogleMapsA2UI
 
 struct ChatMessageView: View {
     let parsedParts: [ParsedA2AEvent]
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(parsedParts.enumerated()), id: \.offset) { index, part in
+            ForEach(Array(parsedParts.enumerated()), id: \.offset) { _, part in
                 switch part {
                 case .text(let text):
                     // Render plain conversational text in your native chat bubbles
@@ -124,17 +139,17 @@ struct ChatMessageView: View {
                         .padding()
                         .background(Color.blue.opacity(0.1))
                         .cornerRadius(8)
-                        
+
                 case .data(_, let metadata):
                     if metadata?.mimeType == "application/json+a2ui" {
                         // Let the library render the rich map UI
-                        A2UIView(
-                            part: part,
-                            id: "unique-message-id-\(index)",
-                            onUserAction: { actionData in
+                        A2UIView(part: part)
+                            .onUserAction { actionData in
                                 print("User interacted with the map: \(actionData)")
                             }
-                        )
+                            .onRenderComplete { latency in
+                                print("Rendered in \(latency)s")
+                            }
                     }
                 }
             }
@@ -144,4 +159,11 @@ struct ChatMessageView: View {
 ```
 
 #### 4. Streaming Updates (`message/stream`)
-When consuming real-time Server-Sent Events (`message/stream`), pass a stable `id` (such as `"\(message.id)-\(index)"`) to `A2UIView`. Whenever `part` updates with incremental A2UI payload data, `A2UIView` automatically pushes the update to the mounted web component via its JavaScript bridge (`updateA2UIData`) without reloading the underlying `WKWebView`. You can switch between `message/stream` and `message/send` in your networking service using a `useStreaming` boolean flag (see `ChatService.swift` in the iOS sample app).
+When consuming real-time Server-Sent Events (`message/stream`), maintain a
+stable SwiftUI identity (such as `.id(message.id)`) on the message container
+hosting `A2UIView(part:)`. Whenever `part` updates with incremental A2UI payload
+data, `A2UIView` automatically pushes the update to the mounted web component
+via its JavaScript bridge (`shell.processA2uiMessages`) without reloading the
+underlying `WKWebView`. You can switch between `message/stream` and
+`message/send` in your networking service using a `useStreaming` boolean flag
+(see `ChatService.swift` in the iOS sample app).

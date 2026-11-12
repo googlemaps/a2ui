@@ -410,6 +410,114 @@ final class A2AResponseParserTests: XCTestCase {
     let unknownEvents = try A2AResponseParser.parse(jsonString(unknownPartsPayload))
     XCTAssertEqual(unknownEvents.count, 0)
   }
+
+  /// Tests that `history` payloads extract only agent parts appearing after the last user message.
+  func testParse_historyPayload_resolvesAgentPartsAfterLastUser() throws {
+    let payload: [String: Any] = [
+      "history": [
+        ["role": "user", "parts": [["text": "First query"]]],
+        ["role": "agent", "parts": [["text": "First answer"]]],
+        ["role": "user", "parts": [["text": "Show me Seattle maps"]]],
+        ["role": "agent", "parts": [["text": "Here is Seattle!"]]],
+      ]
+    ]
+
+    let events = try A2AResponseParser.parse(jsonString(payload))
+    XCTAssertEqual(events, [.text("Here is Seattle!")])
+  }
+
+  /// Tests that a history payload with only user messages produces an empty list.
+  func testParse_historyPayloadWithNoAgentResponse_returnsEmptyList() throws {
+    let payload: [String: Any] = [
+      "history": [
+        ["role": "user", "parts": [["text": "Hello, agent!"]]]
+      ]
+    ]
+
+    let events = try A2AResponseParser.parse(jsonString(payload))
+    XCTAssertTrue(events.isEmpty)
+  }
+
+  /// Tests that for a task snapshot with status.message, status.message is parsed instead of history.
+  func testParse_taskWithStatusMessage_parsesStatusMessageOnly() throws {
+    let payload: [String: Any] = [
+      "result": [
+        "kind": "task",
+        "history": [
+          ["role": "user", "parts": [["text": "Find sushi"]]],
+          ["role": "agent", "parts": [["text": "Searching..."]]],
+        ],
+        "status": [
+          "message": ["role": "agent", "parts": [["text": "Here is sushi."]]]
+        ],
+      ]
+    ]
+
+    let events = try A2AResponseParser.parse(jsonString(payload))
+    XCTAssertEqual(events, [.text("Here is sushi.")])
+  }
+
+  /// Tests that duplicate `createSurface` messages with identical `surfaceId` are deduplicated.
+  func testParse_duplicateSurfaceIds_deduplicatesSurfaces() throws {
+    let payload: [String: Any] = [
+      "parts": [
+        ["data": ["createSurface": ["surfaceId": "dup-surface"]]],
+        ["data": ["createSurface": ["surfaceId": "dup-surface"]]],
+      ]
+    ]
+
+    let events = try A2AResponseParser.parse(jsonString(payload))
+    XCTAssertEqual(events.count, 1)
+    let array = try XCTUnwrap(events[0].dataDictionaries)
+    XCTAssertEqual(array.count, 1)
+  }
+
+  /// Tests that non-A2UI data parts are preserved as sorted JSON strings without deduplication.
+  func testParse_nonA2UIDataPart_preservesPayloadAndMimeType() throws {
+    let payload: [String: Any] = [
+      "parts": [
+        [
+          "kind": "data",
+          "data": ["custom": 1, "createSurface": ["surfaceId": "non-a2ui"]],
+          "metadata": ["mimeType": "application/json"],
+        ],
+        [
+          "kind": "data",
+          "data": ["custom": 2, "createSurface": ["surfaceId": "non-a2ui"]],
+          "metadata": ["mimeType": "application/json"],
+        ],
+      ]
+    ]
+
+    let events = try A2AResponseParser.parse(jsonString(payload))
+    XCTAssertEqual(events.count, 2)
+    XCTAssertEqual(events[0].metadataMimeType, "application/json")
+    XCTAssertEqual(events[1].metadataMimeType, "application/json")
+    if case .data(let json0, _) = events[0], case .data(let json1, _) = events[1] {
+      XCTAssertTrue(json0.contains("\"custom\":1"))
+      XCTAssertTrue(json1.contains("\"custom\":2"))
+    } else {
+      XCTFail("Expected .data events")
+    }
+  }
+
+  /// Tests Equatable, Hashable, and Sendable conformance on parser model and error types.
+  func testModelsAndErrors_conformToEquatableHashableSendable() async {
+    let event1 = ParsedA2AEvent.data(
+      #"[{"createSurface":{"surfaceId":"s1"}}]"#,
+      metadata: ParsedA2AEventMetadata(mimeType: "application/json+a2ui"))
+    let event2 = ParsedA2AEvent.data(
+      #"[{"createSurface":{"surfaceId":"s1"}}]"#,
+      metadata: ParsedA2AEventMetadata(mimeType: "application/json+a2ui"))
+    let eventSet: Set<ParsedA2AEvent> = [event1, event2]
+    XCTAssertEqual(eventSet.count, 1)
+
+    let errorSet: Set<A2AParserError> = [.invalidJSONFormat, .invalidJSONFormat]
+    XCTAssertEqual(errorSet.count, 1)
+
+    let transferred = await Task.detached { event1 }.value
+    XCTAssertEqual(transferred, event2)
+  }
 }
 
 // MARK: - Test Helpers
@@ -427,13 +535,16 @@ extension ParsedA2AEvent {
   }
 
   fileprivate var dataArray: [Any]? {
-    guard case .data(let data, _) = self else { return nil }
-    return data as? [Any]
+    guard case .data(let jsonString, _) = self,
+      let data = jsonString.data(using: .utf8)
+    else {
+      return nil
+    }
+    return try? JSONSerialization.jsonObject(with: data) as? [Any]
   }
 
   fileprivate var dataDictionaries: [[String: Any]]? {
-    guard case .data(let data, _) = self else { return nil }
-    return data as? [[String: Any]]
+    return dataArray as? [[String: Any]]
   }
 
   fileprivate var metadataMimeType: String? {

@@ -24,50 +24,76 @@ import XCTest
 @MainActor
 final class A2UIServicesTests: XCTestCase {
 
-  override func tearDown() {
-    super.tearDown()
-    A2UIServices.provideApiKey("")
+  override func setUp() {
+    super.setUp()
+    A2UIServices.resetForTesting()
   }
 
-  /// Tests that providing an API key injects the key into the resolved HTML content template.
-  func testProvideApiKey_SetsKeyAndInjectsIntoHtml() throws {
-    A2UIServices.provideApiKey("AIzaSyTestKey123")
+  override func tearDown() {
+    A2UIServices.resetForTesting()
+    super.tearDown()
+  }
+
+  /// Tests that `apiKey` defaults to `nil` before initialization.
+  func testDefaultState_ApiKeyIsNil() {
+    XCTAssertNil(A2UIServices.apiKey)
+  }
+
+  /// Tests that providing an API key stores it and injects it into the resolved HTML template.
+  func testProvideAPIKey_SetsKeyAndInjectsIntoHtml() throws {
+    XCTAssertTrue(A2UIServices.provideAPIKey("AIzaSyTestKey123"))
+    XCTAssertEqual(A2UIServices.apiKey, "AIzaSyTestKey123")
     let content = try XCTUnwrap(A2UIServices.getLocalHTMLContent())
     XCTAssertTrue(content.html.contains("AIzaSyTestKey123"))
     XCTAssertFalse(content.html.contains("$GOOGLE_MAPS_API_KEY"))
   }
 
-  /// Tests that providing an empty API key clears the placeholder without crashing.
-  func testProvideApiKey_SetsEmptyKey_RemovesPlaceholder() throws {
-    A2UIServices.provideApiKey("")
+  /// Tests that blank or whitespace-only keys are rejected without overwriting state.
+  func testProvideAPIKey_RejectsEmptyAndWhitespaceKeys() {
+    XCTAssertFalse(A2UIServices.provideAPIKey(""))
+    XCTAssertFalse(A2UIServices.provideAPIKey("   "))
+    XCTAssertNil(A2UIServices.apiKey)
+  }
+
+  /// Tests that repeat calls after initialization return false and preserve the first key.
+  func testProvideAPIKey_RepeatCallReturnsFalseAndPreservesFirstKey() {
+    XCTAssertTrue(A2UIServices.provideAPIKey("FirstKey"))
+    XCTAssertFalse(A2UIServices.provideAPIKey("FirstKey"))
+    XCTAssertFalse(A2UIServices.provideAPIKey("SecondKey"))
+    XCTAssertEqual(A2UIServices.apiKey, "FirstKey")
+  }
+
+  /// Tests that missing API key falls back to an empty placeholder without crashing.
+  func testGetLocalHTMLContent_WhenApiKeyNil_RemovesPlaceholder() throws {
     let content = try XCTUnwrap(A2UIServices.getLocalHTMLContent())
     XCTAssertFalse(content.html.contains("$GOOGLE_MAPS_API_KEY"))
   }
 
   /// Tests that getLocalHTMLContent returns the module bundle's resourceURL as baseURL.
   func testGetLocalHTMLContent_ReturnsModuleBaseURL() throws {
-    A2UIServices.provideApiKey("TestKey")
+    XCTAssertTrue(A2UIServices.provideAPIKey("TestKey"))
     let content = try XCTUnwrap(A2UIServices.getLocalHTMLContent())
     XCTAssertEqual(content.baseURL, Bundle.module.resourceURL)
   }
 
   /// Tests that the resolved HTML template is cached when the API key does not change,
-  /// and invalidated/recalculated when a new key is provided.
-  func testGetLocalHTMLContent_CachesResultWhenKeyUnchanged() throws {
-    A2UIServices.provideApiKey("KeyAlpha")
+  /// and invalidated when resetForTesting() is called.
+  func testGetLocalHTMLContent_CachesResultAndResetsOnResetForTesting() throws {
+    XCTAssertTrue(A2UIServices.provideAPIKey("KeyAlpha"))
     let first = try XCTUnwrap(A2UIServices.getLocalHTMLContent())
     let second = try XCTUnwrap(A2UIServices.getLocalHTMLContent())
     XCTAssertEqual(first.html, second.html)
 
-    A2UIServices.provideApiKey("KeyBeta")
+    A2UIServices.resetForTesting()
+    XCTAssertTrue(A2UIServices.provideAPIKey("KeyBeta"))
     let third = try XCTUnwrap(A2UIServices.getLocalHTMLContent())
     XCTAssertTrue(third.html.contains("KeyBeta"))
     XCTAssertFalse(third.html.contains("KeyAlpha"))
   }
 
   /// Tests that an API key containing special characters is injected verbatim without breaking HTML template resolution.
-  func testProvideApiKey_SpecialCharacters_InjectsVerbatim() throws {
-    A2UIServices.provideApiKey("AIzaSyTest-Key_123$!@#")
+  func testProvideAPIKey_SpecialCharacters_InjectsVerbatim() throws {
+    XCTAssertTrue(A2UIServices.provideAPIKey("AIzaSyTest-Key_123$!@#"))
     let content = try XCTUnwrap(A2UIServices.getLocalHTMLContent())
     XCTAssertTrue(content.html.contains("AIzaSyTest-Key_123$!@#"))
   }

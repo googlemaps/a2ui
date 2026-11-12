@@ -17,7 +17,7 @@
 import Foundation
 
 /// Metadata associated with a message part.
-public struct ParsedA2AEventMetadata {
+public struct ParsedA2AEventMetadata: Equatable, Hashable, Sendable {
   public let mimeType: String?
 
   /// Initializes the metadata.
@@ -29,13 +29,13 @@ public struct ParsedA2AEventMetadata {
 }
 
 /// Represents the parsed output chunk extracted from the raw server JSON.
-public enum ParsedA2AEvent {
+public enum ParsedA2AEvent: Equatable, Hashable, Sendable {
   /// A conversational text block.
   case text(String)
 
   /// A structured data payload to be fed into A2UIView.
-  /// When `metadata?.mimeType` is `"application/json+a2ui"`, the payload is guaranteed
-  /// to be an Array containing one or more A2UI JSON components (e.g., `[[String: Any]]`),
-  /// ensuring a consistent structure for downstream UI rendering.
-  case data(Any, metadata: ParsedA2AEventMetadata? = nil)
+  /// When `metadata?.mimeType` is `"application/json+a2ui"`, the payload is a UTF-8 JSON string
+  /// encoding an array containing one or more A2UI JSON messages, ensuring a consistent structure
+  /// for downstream UI rendering.
+  case data(String, metadata: ParsedA2AEventMetadata? = nil)
 }

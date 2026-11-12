@@ -16,6 +16,7 @@ package com.google.android.libraries.mapsplatform.a2ui
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.After
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -31,44 +32,55 @@ class A2UIServicesTest {
 
   @Before
   fun setUp() {
-    A2UIServices.provideAPIKey("")
+    A2UIServices.resetForTesting()
   }
 
   @After
   fun tearDown() {
-    A2UIServices.provideAPIKey("")
+    A2UIServices.resetForTesting()
   }
 
-  /** Verifies that the default API key is empty when initialized/reset. */
+  /** Verifies that the default API key is null when initialized/reset. */
   @Test
-  fun defaultState_apiKeyIsEmpty() {
-    assertThat(A2UIServices.apiKey).isEmpty()
+  fun defaultState_apiKeyIsNull() {
+    assertThat(A2UIServices.apiKey).isNull()
   }
 
-  /** Verifies that provideAPIKey() correctly sets the static apiKey property. */
+  /** Verifies that provideApiKey() correctly sets the static apiKey property. */
   @Test
-  fun provideAPIKey_setsApiKey() {
-    A2UIServices.provideAPIKey("AIzaSyTestApiKey")
+  fun provideApiKey_setsApiKey() {
+    A2UIServices.provideApiKey("AIzaSyTestApiKey")
     assertThat(A2UIServices.apiKey).isEqualTo("AIzaSyTestApiKey")
   }
 
-  /** Verifies that subsequent calls to provideAPIKey() override previous keys. */
+  /** Verifies that repeated calls with the identical key are idempotent no-ops. */
   @Test
-  fun provideAPIKey_consecutiveUpdates_overridesKey() {
-    A2UIServices.provideAPIKey("FirstKey")
-    assertThat(A2UIServices.apiKey).isEqualTo("FirstKey")
-
-    A2UIServices.provideAPIKey("SecondKey")
-    assertThat(A2UIServices.apiKey).isEqualTo("SecondKey")
+  fun provideApiKey_identicalKey_isIdempotent() {
+    A2UIServices.provideApiKey("SameKey")
+    A2UIServices.provideApiKey("SameKey")
+    assertThat(A2UIServices.apiKey).isEqualTo("SameKey")
   }
 
-  /** Verifies that blank or special character keys are stored verbatim. */
+  /** Verifies that calling provideApiKey() with a different key throws IllegalStateException. */
   @Test
-  fun provideAPIKey_blankOrSpecialCharacters_storesExactString() {
-    A2UIServices.provideAPIKey("AIzaSyTest-Key_123$!@#")
-    assertThat(A2UIServices.apiKey).isEqualTo("AIzaSyTest-Key_123$!@#")
+  fun provideApiKey_differentKey_throwsIllegalStateException() {
+    A2UIServices.provideApiKey("FirstKey")
+    assertThrows(IllegalStateException::class.java) { A2UIServices.provideApiKey("SecondKey") }
+    assertThat(A2UIServices.apiKey).isEqualTo("FirstKey")
+  }
 
-    A2UIServices.provideAPIKey("")
-    assertThat(A2UIServices.apiKey).isEmpty()
+  /** Verifies that empty or whitespace-only keys throw IllegalArgumentException. */
+  @Test
+  fun provideApiKey_blankKey_throwsIllegalArgumentException() {
+    assertThrows(IllegalArgumentException::class.java) { A2UIServices.provideApiKey("") }
+    assertThrows(IllegalArgumentException::class.java) { A2UIServices.provideApiKey("   ") }
+    assertThat(A2UIServices.apiKey).isNull()
+  }
+
+  /** Verifies that special character keys are stored verbatim. */
+  @Test
+  fun provideApiKey_specialCharacters_storesExactString() {
+    A2UIServices.provideApiKey("AIzaSyTest-Key_123$!@#")
+    assertThat(A2UIServices.apiKey).isEqualTo("AIzaSyTest-Key_123$!@#")
   }
 }

@@ -27,13 +27,12 @@ import XCTest
 @MainActor
 final class A2UIViewTests: XCTestCase {
 
-  /// Tests that the coordinator's injectJSON method correctly serializes complex native payloads
-  /// containing special characters, quotes, and newlines into the lastInjectedPayload cache.
+  /// Tests that the coordinator's injectJSON method correctly preserves complex JSON string
+  /// payloads containing special characters, quotes, and newlines into lastInjectedPayload.
   func testCoordinator_InjectJSON_SerializesComplexPayload() throws {
     var height: CGFloat = 100
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-view",
-      payload: [],
+      payload: "[]",
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
@@ -41,12 +40,8 @@ final class A2UIViewTests: XCTestCase {
     let coordinator = A2UIMessageRepresentableView.Coordinator(parent)
     let webView = WKWebView()
 
-    let payload: [String: Any] = [
-      "createSurface": [
-        "surfaceId": "sushi-1",
-        "description": "Text with \"double quotes\" and 'single' and \n newline.",
-      ]
-    ]
+    let payload =
+      #"[{"createSurface":{"description":"Text with \"double quotes\" and 'single' and \n newline.","surfaceId":"sushi-1"}}]"#
 
     coordinator.injectJSON(webView, payload: payload)
 
@@ -59,8 +54,7 @@ final class A2UIViewTests: XCTestCase {
   func testCoordinator_InjectJSON_DeduplicatesIdenticalPayload() throws {
     var height: CGFloat = 100
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-view",
-      payload: [],
+      payload: "[]",
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
@@ -68,7 +62,7 @@ final class A2UIViewTests: XCTestCase {
     let coordinator = A2UIMessageRepresentableView.Coordinator(parent)
     let webView = WKWebView()
 
-    let payload = ["surfaceId": "test-dedupe"]
+    let payload = #"[{"surfaceId":"test-dedupe"}]"#
     coordinator.injectJSON(webView, payload: payload)
     let firstInjected = try XCTUnwrap(coordinator.lastInjectedPayload)
 
@@ -80,15 +74,11 @@ final class A2UIViewTests: XCTestCase {
   /// Tests that initializing `A2UIView` with an A2UI Data event produces a non-empty SwiftUI View body.
   func testA2UIView_BodyStructure_WithDataEvent() {
     let event = ParsedA2AEvent.data(
-      [["createSurface": ["surfaceId": "test"]]],
+      #"[{"createSurface":{"surfaceId":"test"}}]"#,
       metadata: ParsedA2AEventMetadata(mimeType: "application/json+a2ui")
     )
 
-    let view = A2UIView(
-      part: event,
-      id: "test-id",
-      onUserAction: { _ in }
-    )
+    let view = A2UIView(part: event)
 
     let mirror = Mirror(reflecting: view.body)
     let bodyDesc = String(describing: mirror.children.first?.value ?? "")
@@ -98,11 +88,7 @@ final class A2UIViewTests: XCTestCase {
   /// Tests that initializing `A2UIView` with a Text event safely defaults to an EmptyView.
   func testA2UIView_BodyStructure_WithTextEvent() {
     let event = ParsedA2AEvent.text("Just text")
-    let view = A2UIView(
-      part: event,
-      id: "text-id",
-      onUserAction: { _ in }
-    )
+    let view = A2UIView(part: event)
 
     let mirror = Mirror(reflecting: view.body)
     let bodyDesc = String(describing: mirror.children.first?.value ?? "")
@@ -114,8 +100,7 @@ final class A2UIViewTests: XCTestCase {
     var receivedAction: String?
     var height: CGFloat = 100
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-view",
-      payload: [],
+      payload: "[]",
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { action in receivedAction = action },
       onRenderComplete: nil
@@ -131,32 +116,36 @@ final class A2UIViewTests: XCTestCase {
     XCTAssertEqual(receivedAction, "{\"placeId\": \"123\"}")
   }
 
-  /// Tests that heightObserver updates the dynamic height and fires onRenderComplete when delta > 5.
-  func testCoordinator_UserContentController_HeightObserver_UpdatesHeight() {
+  /// Tests that heightObserver updates dynamic height and fires onRenderComplete once on first resize.
+  func testCoordinator_UserContentController_HeightObserver_FiresOnRenderCompleteOnce() {
     var height: CGFloat = 100
-    var renderCompletedId: String?
-    var renderStatus: String?
-    var renderLatency: Double?
+    var renderCallCount = 0
+    var renderLatency: TimeInterval?
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-height-view",
-      payload: [],
+      payload: "[]",
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
-      onRenderComplete: { id, latency, status in
-        renderCompletedId = id
+      onRenderComplete: { latency in
+        renderCallCount += 1
         renderLatency = latency
-        renderStatus = status
       }
     )
     let coordinator = A2UIMessageRepresentableView.Coordinator(parent)
-    let message = MockScriptMessage(name: "heightObserver", body: CGFloat(250))
+    let firstMessage = MockScriptMessage(name: "heightObserver", body: CGFloat(250))
 
-    coordinator.userContentController(WKUserContentController(), didReceive: message)
+    coordinator.userContentController(WKUserContentController(), didReceive: firstMessage)
 
     XCTAssertEqual(height, 250)
-    XCTAssertEqual(renderCompletedId, "test-height-view")
-    XCTAssertEqual(renderStatus, "success")
+    XCTAssertEqual(renderCallCount, 1)
     XCTAssertNotNil(renderLatency)
+    XCTAssertGreaterThanOrEqual(renderLatency ?? -1, 0)
+
+    // Subsequent height delta > 5 updates height without firing a redundant 0.0 callback.
+    let secondMessage = MockScriptMessage(name: "heightObserver", body: CGFloat(400))
+    coordinator.userContentController(WKUserContentController(), didReceive: secondMessage)
+
+    XCTAssertEqual(height, 400)
+    XCTAssertEqual(renderCallCount, 1)
   }
 
   /// Tests that heightObserver ignores small height changes (<= 5) to prevent layout thrashing.
@@ -164,11 +153,10 @@ final class A2UIViewTests: XCTestCase {
     var height: CGFloat = 100
     var renderCalled = false
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-suppress-view",
-      payload: [],
+      payload: "[]",
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
-      onRenderComplete: { _, _, _ in renderCalled = true }
+      onRenderComplete: { _ in renderCalled = true }
     )
     let coordinator = A2UIMessageRepresentableView.Coordinator(parent)
     let message = MockScriptMessage(name: "heightObserver", body: CGFloat(103))
@@ -183,8 +171,7 @@ final class A2UIViewTests: XCTestCase {
   func testCoordinator_UserContentController_HeightObserver_IgnoresSmallHeights() {
     var height: CGFloat = 100
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-view",
-      payload: [],
+      payload: "[]",
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
@@ -202,8 +189,7 @@ final class A2UIViewTests: XCTestCase {
     var height: CGFloat = 100
     let webView = WKWebView()
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-view",
-      payload: [["createSurface": ["surfaceId": "ready-test"]]],
+      payload: #"[{"createSurface":{"surfaceId":"ready-test"}}]"#,
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
@@ -222,12 +208,11 @@ final class A2UIViewTests: XCTestCase {
     XCTAssertNotNil(coordinator.lastInjectedPayload)
   }
 
-  /// Tests that injectJSON falls back safely to "[]" when given an un-serializable payload.
-  func testCoordinator_InjectJSON_NonSerializablePayload_FallsBackSafely() {
+  /// Tests that injectJSON falls back safely to "[]" when given an empty payload string.
+  func testCoordinator_InjectJSON_EmptyPayload_FallsBackSafely() {
     var height: CGFloat = 100
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-view",
-      payload: [],
+      payload: "[]",
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
@@ -235,9 +220,7 @@ final class A2UIViewTests: XCTestCase {
     let coordinator = A2UIMessageRepresentableView.Coordinator(parent)
     let webView = WKWebView()
 
-    // Pass a non-serializable object
-    let invalidPayload: [String: Any] = ["invalid": NSObject()]
-    coordinator.injectJSON(webView, payload: invalidPayload)
+    coordinator.injectJSON(webView, payload: "   ")
 
     XCTAssertEqual(coordinator.lastInjectedPayload, "[]")
   }
@@ -246,8 +229,7 @@ final class A2UIViewTests: XCTestCase {
   func testCoordinator_UserContentController_LogAndErrorMessages() {
     var height: CGFloat = 100
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-view",
-      payload: [],
+      payload: "[]",
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
@@ -271,8 +253,7 @@ final class A2UIViewTests: XCTestCase {
   func testCoordinator_UserContentController_MalformedMessages_HandledGracefully() {
     var height: CGFloat = 100
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-view",
-      payload: [],
+      payload: "[]",
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
@@ -307,8 +288,7 @@ final class A2UIViewTests: XCTestCase {
   func testCoordinator_DecidePolicyForNavigationAction_ExternalLink_CancelsPolicy() {
     var height: CGFloat = 100
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-view",
-      payload: [],
+      payload: "[]",
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
@@ -334,8 +314,7 @@ final class A2UIViewTests: XCTestCase {
   func testCoordinator_DecidePolicyForNavigationAction_OtherNavigation_AllowsPolicy() {
     var height: CGFloat = 100
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-view",
-      payload: [],
+      payload: "[]",
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
@@ -361,8 +340,7 @@ final class A2UIViewTests: XCTestCase {
   func testCoordinator_CreateWebViewWith_ReturnsNil() {
     var height: CGFloat = 100
     let parent = A2UIMessageRepresentableView(
-      webViewID: "test-view",
-      payload: [],
+      payload: "[]",
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
@@ -387,24 +365,31 @@ final class A2UIViewTests: XCTestCase {
     XCTAssertNil(createdView)
   }
 
-  /// Tests that mounting A2UIView in a UIHostingController triggers makeCoordinator and makeUIView without crashing.
-  func testA2UIView_UIHostingController_MountsViewHierarchyAndInitializesWebView() {
-    let event = ParsedA2AEvent.data(
-      [["createSurface": ["surfaceId": "mount-test"]]],
+  /// Tests that mounting A2UIView with modifiers in a UIHostingController updates cleanly.
+  func testA2UIView_UIHostingController_MountsWithModifiersAndUpdatesRootView() {
+    let event1 = ParsedA2AEvent.data(
+      #"[{"createSurface":{"surfaceId":"mount-test"}}]"#,
       metadata: ParsedA2AEventMetadata(mimeType: "application/json+a2ui")
     )
-    let view = A2UIView(
-      part: event,
-      id: "mount-test-id",
-      onUserAction: { _ in },
-      onRenderComplete: { _, _, _ in }
-    )
+    let view1 = A2UIView(part: event1)
+      .onUserAction { _ in }
+      .onRenderComplete { _ in }
 
     let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 375, height: 667))
-    let hostingController = UIHostingController(rootView: view)
+    let hostingController = UIHostingController(rootView: AnyView(view1))
     window.rootViewController = hostingController
     window.makeKeyAndVisible()
     hostingController.loadViewIfNeeded()
+    hostingController.view.layoutIfNeeded()
+
+    let event2 = ParsedA2AEvent.data(
+      #"[{"updateComponents":{"surfaceId":"mount-test","components":[]}}]"#,
+      metadata: ParsedA2AEventMetadata(mimeType: "application/json+a2ui")
+    )
+    let view2 = A2UIView(part: event2)
+      .onRenderComplete { _ in }
+      .onUserAction { _ in }
+    hostingController.rootView = AnyView(view2)
     hostingController.view.layoutIfNeeded()
 
     XCTAssertNotNil(hostingController.view)
@@ -413,11 +398,7 @@ final class A2UIViewTests: XCTestCase {
   /// Tests that mounting A2UIView with a Text event renders an EmptyView inside a UIHostingController.
   func testA2UIView_UIHostingController_WithTextEvent_MountsEmptyView() {
     let event = ParsedA2AEvent.text("mount text test")
-    let view = A2UIView(
-      part: event,
-      id: "mount-text-id",
-      onUserAction: { _ in }
-    )
+    let view = A2UIView(part: event)
 
     let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 375, height: 667))
     let hostingController = UIHostingController(rootView: view)
@@ -433,15 +414,14 @@ final class A2UIViewTests: XCTestCase {
   func testA2UIMessageRepresentableView_MakeCoordinator_InitializesCorrectly() {
     var height: CGFloat = 100
     let view = A2UIMessageRepresentableView(
-      webViewID: "coordinator-test-id",
-      payload: ["surfaceId": "test"],
+      payload: #"[{"surfaceId":"test"}]"#,
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
     )
 
     let coordinator = view.makeCoordinator()
-    XCTAssertEqual(coordinator.parent.webViewID, "coordinator-test-id")
+    XCTAssertEqual(coordinator.parent.payload, #"[{"surfaceId":"test"}]"#)
     XCTAssertFalse(coordinator.isJSReady)
   }
 
@@ -449,8 +429,7 @@ final class A2UIViewTests: XCTestCase {
   func testA2UIMessageRepresentableView_ConfigureWebView_InitializesConfigurationAndDelegates() {
     var height: CGFloat = 100
     let view = A2UIMessageRepresentableView(
-      webViewID: "configure-test-id",
-      payload: ["surfaceId": "test"],
+      payload: #"[{"surfaceId":"test"}]"#,
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
@@ -463,14 +442,36 @@ final class A2UIViewTests: XCTestCase {
     XCTAssertFalse(webView.scrollView.isScrollEnabled)
     XCTAssertTrue(webView.navigationDelegate === coordinator)
     XCTAssertTrue(webView.uiDelegate === coordinator)
+    #if DEBUG
+      if #available(iOS 16.4, *) {
+        XCTAssertTrue(webView.isInspectable)
+      }
+    #endif
+  }
+
+  /// Tests that dismantleUIView unregisters message handlers and clears delegates.
+  func testA2UIMessageRepresentableView_DismantleUIView_ClearsDelegates() {
+    var height: CGFloat = 100
+    let view = A2UIMessageRepresentableView(
+      payload: "[]",
+      dynamicHeight: Binding(get: { height }, set: { height = $0 }),
+      onUserAction: nil,
+      onRenderComplete: nil
+    )
+    let coordinator = view.makeCoordinator()
+    let webView = view.configureWebView(coordinator: coordinator)
+
+    A2UIMessageRepresentableView.dismantleUIView(webView, coordinator: coordinator)
+
+    XCTAssertNil(webView.navigationDelegate)
+    XCTAssertNil(webView.uiDelegate)
   }
 
   /// Tests that updateWebView injects JSON when JS is ready, and skips when not ready.
   func testA2UIMessageRepresentableView_UpdateWebView_InjectsWhenJSReady() {
     var height: CGFloat = 100
     let view = A2UIMessageRepresentableView(
-      webViewID: "update-test-id",
-      payload: ["surfaceId": "update-test"],
+      payload: #"[{"surfaceId":"update-test"}]"#,
       dynamicHeight: Binding(get: { height }, set: { height = $0 }),
       onUserAction: { _ in },
       onRenderComplete: nil
@@ -487,6 +488,37 @@ final class A2UIViewTests: XCTestCase {
     coordinator.isJSReady = true
     view.updateWebView(webView, coordinator: coordinator)
     XCTAssertNotNil(coordinator.lastInjectedPayload)
+  }
+
+  /// Tests that updating the representable view refreshes `coordinator.parent` payload and callbacks.
+  func testA2UIMessageRepresentableView_UpdateWebView_RefreshesCoordinatorParent() {
+    var height: CGFloat = 100
+    var firstCallbackCalled = false
+    var secondCallbackCalled = false
+    let initialView = A2UIMessageRepresentableView(
+      payload: #"[{"surfaceId":"initial"}]"#,
+      dynamicHeight: Binding(get: { height }, set: { height = $0 }),
+      onUserAction: { _ in firstCallbackCalled = true },
+      onRenderComplete: nil
+    )
+    let coordinator = initialView.makeCoordinator()
+    let webView = WKWebView()
+
+    let updatedView = A2UIMessageRepresentableView(
+      payload: #"[{"surfaceId":"updated"}]"#,
+      dynamicHeight: Binding(get: { height }, set: { height = $0 }),
+      onUserAction: { _ in secondCallbackCalled = true },
+      onRenderComplete: nil
+    )
+    updatedView.updateWebView(webView, coordinator: coordinator)
+
+    XCTAssertEqual(coordinator.parent.payload, #"[{"surfaceId":"updated"}]"#)
+    coordinator.userContentController(
+      WKUserContentController(),
+      didReceive: MockScriptMessage(
+        name: "iOS", body: ["action": "onGetDirections", "data": "{}"]))
+    XCTAssertFalse(firstCallbackCalled)
+    XCTAssertTrue(secondCallbackCalled)
   }
 }
 

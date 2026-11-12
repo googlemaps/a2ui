@@ -17,7 +17,7 @@
 import Foundation
 
 /// Errors that can occur during A2UI response parsing.
-public enum A2AParserError: Error, Equatable {
+public enum A2AParserError: Error, Equatable, Hashable, Sendable {
   /// The raw JSON response lacks a recognized message parts structure.
   case invalidPayloadStructure
   /// The input is not valid JSON text, or its top-level value is not a JSON object.
@@ -53,11 +53,12 @@ public enum A2AResponseParser {
   /// is parsed. Streaming events that carry no message parts, such as an initial `task` snapshot
   /// or a final `status-update`, produce an empty list.
   ///
-  /// The parser checks multiple possible JSON paths (`parts`, `content.parts`, `status.message.parts`)
-  /// to support varying response structures from different server backends (e.g. standalone JSON-RPC vs. ADK Web Server).
+  /// The parser checks multiple possible JSON paths (`history`, `parts`, `content.parts`,
+  /// `status.message.parts`) to support varying response structures from different server backends
+  /// (e.g. standalone JSON-RPC vs. ADK Web Server).
   ///
-  /// Note: Any extracted A2UI JSON payloads (mime type `application/json+a2ui`) will always be batched
-  /// and returned as an array (`[Any]`) inside `ParsedA2AEvent.data`, providing a consistent format.
+  /// Note: Any extracted A2UI JSON payloads (mime type `application/json+a2ui`) are serialized as a
+  /// UTF-8 JSON array string inside `ParsedA2AEvent.data`, providing a consistent format.
   ///
   /// - Parameter rawJSON: The raw JSON text received from the server.
   /// - Returns: An array of `ParsedA2AEvent` objects extracted from the payload.
@@ -92,24 +93,55 @@ public enum A2AResponseParser {
     throw A2AParserError.serverError(code: errorDict?["code"] as? Int, message: message)
   }
 
-  private static func parsePayload(_ rawJSON: [String: Any]) throws -> [ParsedA2AEvent] {
-    let partsArray: [[String: Any]]?
+  private static func extractPartsArray(_ rawJSON: [String: Any]) -> [[String: Any]]? {
+    var finalParts: [[String: Any]] = []
+    var hasRecognizedStructure = false
+
+    if let history = rawJSON["history"] as? [[String: Any]] {
+      hasRecognizedStructure = true
+      var lastUserIndex = -1
+      for (index, msg) in history.enumerated() {
+        if (msg["role"] as? String) == "user" {
+          lastUserIndex = index
+        }
+      }
+      if lastUserIndex + 1 < history.count {
+        for msg in history[(lastUserIndex + 1)...] {
+          if (msg["role"] as? String) == "agent",
+            let parts = msg["parts"] as? [[String: Any]]
+          {
+            finalParts.append(contentsOf: parts)
+          }
+        }
+      }
+    }
+
+    let additionalParts: [[String: Any]]?
     if let parts = rawJSON["parts"] as? [[String: Any]] {
-      partsArray = parts
+      additionalParts = parts
     } else if let content = rawJSON["content"] as? [String: Any],
       let parts = content["parts"] as? [[String: Any]]
     {
-      partsArray = parts
+      additionalParts = parts
     } else if let status = rawJSON["status"] as? [String: Any],
       let message = status["message"] as? [String: Any],
       let parts = message["parts"] as? [[String: Any]]
     {
-      partsArray = parts
+      additionalParts = parts
     } else {
-      partsArray = nil
+      additionalParts = nil
     }
 
-    guard let parts = partsArray else {
+    if let additionalParts {
+      hasRecognizedStructure = true
+      finalParts.append(contentsOf: additionalParts)
+    }
+
+    return hasRecognizedStructure ? finalParts : nil
+  }
+
+  private static func parsePayload(_ rawJSON: [String: Any]) throws -> [ParsedA2AEvent] {
+    guard let parts = extractPartsArray(rawJSON) else {
       if let kind = rawJSON["kind"] as? String, partlessEventKinds.contains(kind) {
         return []
       }
@@ -118,40 +150,51 @@ public enum A2AResponseParser {
 
     var sdkParts: [ParsedA2AEvent] = []
     var a2uiPayloads: [Any] = []
+    var seenSurfaces: Set<String> = []
 
-    // flushA2UI() batches consecutive A2UI JSON payloads together into a single ParsedA2AEvent.
+    // flushA2UI() deduplicates surfaces and batches consecutive A2UI JSON payloads into one event.
     func flushA2UI() {
-      if !a2uiPayloads.isEmpty {
+      let filtered = filterDuplicateSurfaces(a2uiPayloads, seenSurfaces: &seenSurfaces)
+      if !filtered.isEmpty, let jsonString = serializeJSON(filtered) {
         let event = ParsedA2AEvent.data(
-          a2uiPayloads,
+          jsonString,
           metadata: ParsedA2AEventMetadata(mimeType: a2uiJsonMimeType)
         )
         sdkParts.append(event)
-        a2uiPayloads.removeAll()
       }
+      a2uiPayloads.removeAll()
     }
 
     for part in parts {
       if let textPart = part["text"] as? String {
         flushA2UI()
-        let subEvents = splitTextParts(textPart)
+        let subEvents = splitTextParts(textPart, seenSurfaces: &seenSurfaces)
         sdkParts.append(contentsOf: subEvents)
       } else if let dataPayload = part["data"] as? [String: Any] {
         let metadata = part["metadata"] as? [String: Any]
-        let mimeType = part["mimeType"] as? String ?? metadata?["mimeType"] as? String
-        let resolvedMimeType =
-          mimeType
-          ?? (isA2UIPayload(dataPayload) ? a2uiJsonMimeType : nil)
+        let rawMimeType =
+          (part["mimeType"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+          ?? (metadata?["mimeType"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let resolvedMimeType: String?
+        if rawMimeType == a2uiV1MimeType {
+          resolvedMimeType = a2uiJsonMimeType
+        } else if let rawMimeType {
+          resolvedMimeType = rawMimeType
+        } else {
+          resolvedMimeType = isA2UIPayload(dataPayload) ? a2uiJsonMimeType : nil
+        }
 
-        if resolvedMimeType == a2uiJsonMimeType || resolvedMimeType == a2uiV1MimeType {
+        if resolvedMimeType == a2uiJsonMimeType {
           a2uiPayloads.append(dataPayload)
         } else {
           flushA2UI()
-          let event = ParsedA2AEvent.data(
-            dataPayload,
-            metadata: ParsedA2AEventMetadata(mimeType: resolvedMimeType)
-          )
-          sdkParts.append(event)
+          if let jsonString = serializeJSON(dataPayload) {
+            let event = ParsedA2AEvent.data(
+              jsonString,
+              metadata: ParsedA2AEventMetadata(mimeType: resolvedMimeType)
+            )
+            sdkParts.append(event)
+          }
         }
       }
     }
@@ -173,6 +216,39 @@ public enum A2AResponseParser {
     return dict.keys.contains { a2uiKeys.contains($0) }
   }
 
+  /// Drops duplicate `createSurface` messages with the same non-empty `surfaceId`.
+  private static func filterDuplicateSurfaces(
+    _ elements: [Any],
+    seenSurfaces: inout Set<String>
+  ) -> [Any] {
+    var filtered: [Any] = []
+    for element in elements {
+      if let dict = element as? [String: Any],
+        let createSurface = dict["createSurface"] as? [String: Any],
+        let surfaceId = createSurface["surfaceId"] as? String,
+        !surfaceId.isEmpty
+      {
+        if seenSurfaces.contains(surfaceId) {
+          continue
+        }
+        seenSurfaces.insert(surfaceId)
+      }
+      filtered.append(element)
+    }
+    return filtered
+  }
+
+  /// Serializes a JSON array or object into a deterministic sorted-keys UTF-8 JSON string.
+  private static func serializeJSON(_ object: Any) -> String? {
+    guard JSONSerialization.isValidJSONObject(object),
+      let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+      let str = String(data: data, encoding: .utf8)
+    else {
+      return nil
+    }
+    return str
+  }
+
   /// Parses a JSON string into a dictionary or array.
   ///
   /// - Parameter jsonStr: The JSON string to parse.
@@ -186,7 +262,10 @@ public enum A2AResponseParser {
   ///
   /// - Parameter textPart: The string containing text and potentially embedded JSON.
   /// - Returns: An array of `ParsedA2AEvent`s representing the separated text and data parts.
-  private static func splitTextParts(_ textPart: String) -> [ParsedA2AEvent] {
+  private static func splitTextParts(
+    _ textPart: String,
+    seenSurfaces: inout Set<String>
+  ) -> [ParsedA2AEvent] {
     var parts: [ParsedA2AEvent] = []
     if textPart.contains(a2uiJsonTagOpen) {
       var remainingText = textPart
@@ -208,11 +287,14 @@ public enum A2AResponseParser {
         let trimmedJSON = jsonStr.trimmingCharacters(in: .whitespacesAndNewlines)
         if let dataValue = parseJSON(trimmedJSON) {
           let arrayPayload: [Any] = (dataValue as? [Any]) ?? [dataValue]
-          let event = ParsedA2AEvent.data(
-            arrayPayload,
-            metadata: ParsedA2AEventMetadata(mimeType: a2uiJsonMimeType)
-          )
-          parts.append(event)
+          let filtered = filterDuplicateSurfaces(arrayPayload, seenSurfaces: &seenSurfaces)
+          if !filtered.isEmpty, let jsonString = serializeJSON(filtered) {
+            let event = ParsedA2AEvent.data(
+              jsonString,
+              metadata: ParsedA2AEventMetadata(mimeType: a2uiJsonMimeType)
+            )
+            parts.append(event)
+          }
         } else {
           let rawTag = "\(a2uiJsonTagOpen)\(jsonStr)\(a2uiJsonTagClose)"
           parts.append(.text(rawTag))

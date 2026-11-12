@@ -3,7 +3,11 @@
 ![Alpha](https://img.shields.io/badge/release-alpha-orange)
 
 ## Overview
-The **GoogleMapsA2UI** library is an Android SDK designed to encapsulate the parsing and rendering of Google Maps Platform Agent-to-UI (A2UI) payloads. It seamlessly converts complex A2A JSON responses into native-friendly, rich map interfaces using a specialized WebView-based component.
+The **GoogleMapsA2UI** library is an Android SDK designed to encapsulate the
+parsing and rendering of Google Maps Platform Agent-to-UI (A2UI) payloads. It
+seamlessly converts complex A2A JSON responses into native-friendly, rich map
+interfaces using an `A2UIView` (`FrameLayout`) hosting an encapsulated
+`WebView`.
 
 It makes use of the following technologies:
 *   **Google Maps Platform** for rendering maps and places.
@@ -17,7 +21,7 @@ It makes use of the following technologies:
     *   **Library:** API Level 24 or later.
     *   **Sample App:** API Level 26 or later.
 *   **Java:** JDK 17.
-*   **Google Maps API Key:** Required for rendering map components.
+*   **Google Maps API Key:** Required for rendering map components, with **Maps JavaScript API**, **Places UI Kit**, and **Routes API** enabled in Google Cloud Console.
 
 ## Build the Library
 
@@ -38,19 +42,19 @@ Before building any sample applications that depend on this library, you must bu
 Configure the Google Maps API Key once at the application level (e.g., in `MainActivity.onCreate` or a custom `Application` class) before any A2UI components are rendered.
 
 ```kotlin
-import com.google.android.gms.maps.a2ui.A2UIServices
+import com.google.android.libraries.mapsplatform.a2ui.A2UIServices
 
 // Initialize the SDK configuration globally once
-A2UIServices.provideAPIKey("YOUR_GOOGLE_MAPS_API_KEY")
+A2UIServices.provideApiKey("YOUR_GOOGLE_MAPS_API_KEY")
 ```
 
 ### 2. Parse the Server Response
 Pass the raw response text to `A2AResponseParser.parse()` to get an ordered list of `ParsedA2AEvent` objects. This preserves the sequential order of conversational text and rich UI. The input is the JSON text of one server response: the body of a `message/send` call, or the payload of one `message/stream` SSE `data:` line. The parser unwraps the JSON-RPC `result` envelope and, for `task` and `status-update` events, the agent reply in `status.message`. Streaming events that carry no message parts produce an empty list. *(Note: The snippet below is simplified pseudocode. For the complete implementation handling streaming aggregation, refer to `MainActivity.kt` in the sample app).*
 
 ```kotlin
-import com.google.android.gms.maps.a2ui.A2AParserException
-import com.google.android.gms.maps.a2ui.A2AResponseParser
-import com.google.android.gms.maps.a2ui.ParsedA2AEvent
+import com.google.android.libraries.mapsplatform.a2ui.A2AParserException
+import com.google.android.libraries.mapsplatform.a2ui.A2AResponseParser
+import com.google.android.libraries.mapsplatform.a2ui.ParsedA2AEvent
 
 // SDK parses the raw response text into an ordered list of parts
 val parsedParts =
@@ -72,8 +76,10 @@ for (part in parsedParts) {
             chatAdapter.addTextMessage(part.text)
         }
         is ParsedA2AEvent.Data -> {
-            // Feed the structured data into A2UIView
-            chatAdapter.addGmpA2UIViewMessage(part.data)
+            if (part.metadata?.mimeType == "application/json+a2ui") {
+                // Feed the structured data into A2UIView
+                chatAdapter.addGmpA2UIViewMessage(part.data)
+            }
         }
     }
 }
@@ -88,7 +94,10 @@ for (part in parsedParts) {
 | `InvalidPayloadStructure` | No message parts structure was found. |
 
 ### 3. Rendering the View
-The library provides `A2UIView`, a custom component that manages the rendering of rich map interfaces. It handles dynamic height resizing and user interaction callbacks automatically.
+The library provides `A2UIView`, a custom `FrameLayout` component that manages
+the rendering of rich map interfaces. It handles dynamic height resizing and
+user interaction callbacks via `setOnUserActionListener` and
+`setOnRenderCompleteListener`.
 
 **XML Layout:**
 ```xml
@@ -104,6 +113,12 @@ class GmpA2UIViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
     val gmpA2UIView: A2UIView = itemView.findViewById(R.id.gmpA2UIView)
 
     fun bind(a2uiJson: String) {
+        gmpA2UIView.setOnRenderCompleteListener { latencyMs ->
+            Log.d("A2UI", "Rendered in ${latencyMs}ms")
+        }
+        gmpA2UIView.setOnUserActionListener { actionJson ->
+            // Forward actionJson to your agent ViewModel
+        }
         gmpA2UIView.render(a2uiJson)
     }
 
@@ -119,19 +134,28 @@ In Compose or View-based apps, `A2UIView` supports both real-time SSE streaming 
 
 ## Architecture Deep Dive
 
-The SDK encapsulates all complex parsing and rendering logic into four core components:
+The SDK encapsulates parsing and rendering logic behind three public
+touchpoints (`A2UIServices`, `A2AResponseParser`/`ParsedA2AEvent`, and
+`A2UIView`), backed by an internal WebView JS bridge:
 
-1.  **Data Model (`ParsedA2AEvent`)**: A standardized, ordered sealed interface outputting plain text and extracted JSON (data), supporting sequential rendering for the host app.
-2.  **The Parser (`A2AResponseParser`)**: A static utility that navigates complex JSON trees, uses Regex to extract payloads from Markdown blocks, and handles deduplication of redundant UI commands.
-3.  **Core Visual Component (`A2UIView`)**: A custom WebView-based component that handles local asset loading, API key injection, and URL interception (launching the native Maps app).
-4.  **JS Communication Bridge (`WebAppInterface`)**: Manages bidirectional communication. It sends data from Android to JS and receives callbacks for events like webpage resizing and user actions.
+1.  **Global Services (`A2UIServices`)**: Holds the globally configured Google Maps API key via `provideApiKey(apiKey)`.
+2.  **Data Model & Parser (`A2AResponseParser`, `ParsedA2AEvent`)**: Navigates
+    A2A JSON trees (`parts`, `content.parts`, `status.message.parts`,
+    `history`), extracts `<a2ui-json>...</a2ui-json>` blocks and `data` parts
+    into ordered `ParsedA2AEvent.Text` and `ParsedA2AEvent.Data` events, and
+    deduplicates redundant `createSurface` commands.
+3.  **Core Visual Component (`A2UIView`)**: A `FrameLayout` hosting a private
+    `WebView` that loads the embedded Lit web bundle (`A2UICoreShell`), injects
+    the API key, forwards JS console messages in debuggable builds, intercepts
+    external HTTP/Maps links, and handles dynamic resizing and user actions via
+    an internal `WebAppInterface` bridge.
 
 
 ## Customizing the Web Components
 
 The `GoogleMapsA2UI` library relies on a pre-built HTML bundle (`index.html`) which is shipped inside its `assets` folder. This bundle compiles the core A2UI web components together with the Android platform-specific shell logic at `a2ui/client/android/web_build/`.
 
-If you have customized your `internal-usage-attribution-ids` or modified the underlying web components, you must recompile the HTML payload and bundle it back into this Android Library.
+If you have customized the usage attribution IDs (`platformAttributionIds` in `a2ui/client/android/web_build/src/main.ts`) or modified the underlying web components, you must recompile the HTML payload and bundle it back into this Android Library.
 
 Steps to update the web components with your customizations:
 

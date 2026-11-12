@@ -18,66 +18,26 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
-import android.webkit.ValueCallback
-import android.webkit.WebView
-import org.json.JSONObject
+import androidx.annotation.RestrictTo
 
-class WebAppInterface(private val webView: WebView, private val a2uiView: A2UIView) {
-  private val TAG = "A2UIWebAppInterface"
-  var resized = false
-
-  @JavascriptInterface
-  fun sendA2uiMessages(jsonMessages: String) {
-    Log.d(TAG, "sendA2uiMessages called with: $jsonMessages")
-    resized = false
-    webView.post {
-      val escapedJson = JSONObject.quote(jsonMessages)
-      val script =
-        """
-            try {
-              const shell = document.querySelector('a2ui-shell');
-              if (shell) {
-                console.log('WebAppInterface: Calling processA2uiMessages');
-                shell.processA2uiMessages($escapedJson);
-              } else {
-                console.error('WebAppInterface: a2ui-shell element not found.');
-              }
-            } catch (e) {
-              console.error('WebAppInterface: Error in evaluateJavascript: ' + e.message);
-            }
-            """
-          .trimIndent()
-      webView.evaluateJavascript(
-        script,
-        ValueCallback { value -> Log.d(TAG, "JavaScript evaluation result: $value") },
-      )
-    }
-  }
+@RestrictTo(RestrictTo.Scope.LIBRARY)
+internal class WebAppInterface(private val a2uiView: A2UIView) {
+  private val mainHandler = Handler(Looper.getMainLooper())
+  internal var resized = false
 
   @JavascriptInterface
   fun onGetDirections(jsonString: String) {
     Log.d(TAG, "onGetDirections: $jsonString")
-    a2uiView.onUserAction?.invoke(jsonString)
+    mainHandler.post { a2uiView.onUserActionInternal(jsonString) }
   }
 
   @JavascriptInterface
   fun onWebpageResized(height: Int) {
     Log.d(TAG, "onWebpageResized: $height")
-    webView.post {
-      val layoutParams = webView.layoutParams
-      if (layoutParams != null) {
-        val newHeight = (height * webView.resources.displayMetrics.density).toInt()
-        if (layoutParams.height != newHeight) {
-          layoutParams.height = newHeight
-          webView.layoutParams = layoutParams
-          Log.d("A2UIViewDebug", "WebView height updated to: $newHeight")
-        }
-        if (!resized) {
-          resized = true
-          a2uiView.onRenderCompleteInternal()
-        }
-      } else {
-        Log.e("A2UIViewDebug", "WebView LayoutParams is null.")
+    mainHandler.post {
+      if (a2uiView.onWebpageResizedInternal(height) && !resized) {
+        resized = true
+        a2uiView.onRenderCompleteInternal()
       }
     }
   }
@@ -85,6 +45,10 @@ class WebAppInterface(private val webView: WebView, private val a2uiView: A2UIVi
   @JavascriptInterface
   fun onJsReady() {
     Log.d(TAG, "onJsReady")
-    Handler(Looper.getMainLooper()).post { a2uiView.onJsReadyInternal() }
+    mainHandler.post { a2uiView.onJsReadyInternal() }
+  }
+
+  private companion object {
+    const val TAG = "A2UIWebAppInterface"
   }
 }
