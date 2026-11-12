@@ -324,6 +324,15 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
     self.assertEqual(agent.config.generic_model, "gemini/gemini-3.7-flash")
     self.assertEqual(agent.config.fallback_mode, FallbackMode.TEXT)
+    self.assertFalse(agent.config.include_experimental_templates)
+    self.assertFalse(agent.template_registry.include_experimental)
+
+  def test_init_forwards_include_experimental_templates(self):
+    config = AgentConfig(include_experimental_templates=True)
+    maui_agent = MAUIAgentWithTemplates(
+        base_url="http://test-url", config=config
+    )
+    self.assertTrue(maui_agent.template_registry.include_experimental)
 
   @mock.patch(_LITELLM_PATH)
   async def test_agent_directions_flow(self, mock_lite_llm_class):
@@ -343,9 +352,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Directions from home to work",
             "summary": "Typical commute is 45 mins.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -392,7 +398,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     )
 
     map_comp = self._get_component_by_id(parts, "map")
-    self.assertEqual(map_comp["center"], {"lat": 37.5, "lng": 127.0})
+    self.assertNotIn("center", map_comp)
     self.assertEqual(map_comp["travelMode"], "driving")
 
     route = map_comp["routes"][0]
@@ -470,9 +476,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Bus directions to work",
             "summary": "Take bus 10 to work.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -523,9 +526,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Walking route to park",
             "summary": "Walk for 15 minutes.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -578,9 +578,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Biking route to work",
             "summary": "Bike for 25 minutes.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -636,9 +633,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Directions to work",
             "summary": "Typical commute is 45 mins.",
-            "center_lat": 37.5,
-            "center_lng": 127.0,
-            "zoom": 12,
             "routes": [{
                 "origin": {
                     "lat": 37.4,
@@ -714,9 +708,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         args={
             "heading": "Top Sushi Places in Seattle",
             "summary": "Here are some sushi places.",
-            "center_lat": 47.6062,
-            "center_lng": -122.3321,
-            "zoom": 13,
             "places": [{
                 "placeId": "ChIJ111",
                 "name": "Shiki Sushi",
@@ -788,9 +779,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         name="render_nearby_places_depth_template",
         args={
             "heading": "Quiet romantic dinner spots near The Plaza Hotel",
-            "center_lat": 40.7644,
-            "center_lng": -73.9745,
-            "zoom": 14,
             "places": [{
                 "placeId": "ChIJ111",
                 "name": "Bistro One",
@@ -844,7 +832,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     map_comp = next(
         comp for comp in update_components["components"] if comp["id"] == "map"
     )
-    self.assertEqual(map_comp["zoom"], 14)
+    self.assertNotIn("zoom", map_comp)
 
     update_data_model = parts[2].root.data["updateDataModel"]
     self.assertEqual(update_data_model["path"], "/")
@@ -934,7 +922,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     mock_runner = mock.MagicMock()
 
-    # Mock invalid render_local_search_template arguments (missing required center_lat)
+    # Mock invalid render_local_search_template arguments (empty places)
     invalid_args = {"summary": "Invalid data", "places": []}
     mock_fc = MockFunctionCall("render_local_search_template", invalid_args)
     mock_event_fc = MockEvent(function_calls=[mock_fc])
@@ -993,8 +981,6 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
         {
             "heading": "Coffee Shops",
             "summary": "Coffee",
-            "center_lat": 47.6,
-            "center_lng": -122.3,
             "places": [{
                 "placeId": "1",
                 "name": "Starbucks",
@@ -1009,28 +995,22 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
     agent = self._setup_agent(fallback_mode="TEXT")
 
-    # Mock schema manager to return a catalog that fails validation (generic Exception)
-    mock_catalog = mock.MagicMock()
-    mock_catalog.validator.validate.side_effect = Exception(
-        "Mock validation error"
-    )
-    mock_schema_manager = mock.MagicMock()
-    mock_schema_manager.get_selected_catalog.return_value = mock_catalog
-    agent._schema_managers = {"0.9": mock_schema_manager}
-    for agent_inst in agent._extractor_agents.values():
-      for t in agent_inst.tools:
-        if hasattr(t, "schema_manager"):
-          t.schema_manager = mock_schema_manager
-
     mock_fallback_runner = mock.MagicMock()
     mock_fallback_runner.run_async.return_value = MockAsyncIterator(
         [MockEvent(content=MockContent([MockPart("Fallback text from LLM.")]))]
     )
 
+    # pylint: disable=protected-access
     agent._extractor_runners["0.9"] = mock_runner
     agent._fallback_text_runner = mock_fallback_runner
+    # pylint: enable=protected-access
 
-    results = await self._collect_stream(agent, "coffee")
+    with mock.patch.object(
+        template_tool.DirectJsonParser,
+        "parse_response",
+        side_effect=template_tool.A2uiError("Mock validation error"),
+    ):
+      results = await self._collect_stream(agent, "coffee")
 
     self.assertEqual(len(results), 1)
     self.assertTrue(results[0]["is_task_complete"])
@@ -1358,22 +1338,15 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     self.assertIn(expected_workflow_rules, instruction)
 
   def test_build_unified_extractor_agent_bypasses_schema_instructions(self):
-    """Verifies schema instructions are bypassed and tools receive schema_manager."""
+    """Verifies schema instructions are bypassed and tools receive catalog."""
     maui_agent = MAUIAgentWithTemplates(base_url="http://test-url")
-    mock_schema_manager = mock.MagicMock(
-        spec=agent_with_templates.A2uiSchemaManager
-    )
-    mock_schema_manager.generate_system_prompt.return_value = (
-        "Each A2UI JSON block MUST be wrapped in <a2ui-json> and </a2ui-json>"
-        " tags."
-    )
+    mock_catalog = mock.MagicMock()
     # pylint: disable=protected-access
     extractor_agent = maui_agent._build_unified_extractor_agent(
-        schema_manager=mock_schema_manager
+        catalog=mock_catalog
     )
     expected_instruction = maui_agent._build_unified_extractor_instruction()
     # pylint: enable=protected-access
-    mock_schema_manager.generate_system_prompt.assert_not_called()
     self.assertNotIn(
         "Each A2UI JSON block MUST be wrapped",
         extractor_agent.instruction,
@@ -1389,7 +1362,7 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
     ]
     self.assertTrue(template_tools)
     for tool in template_tools:
-      self.assertEqual(tool.schema_manager, mock_schema_manager)
+      self.assertEqual(tool.catalog, mock_catalog)
 
   def test_template_registry_definitions(self):
     """Verifies that template_registry entries are consistent and valid."""
@@ -1440,12 +1413,16 @@ class TestAgentOrchestration(unittest.IsolatedAsyncioTestCase):
 
   def test_normalize_version(self):
     """Verifies version strings collapse to the unprefixed schema key."""
-    normalize = agent_with_templates._normalize_version  # pylint: disable=protected-access
+    # pylint: disable-next=protected-access
+    normalize = agent_with_templates._normalize_version
     self.assertEqual(normalize("0.9"), "0.9")
     self.assertEqual(normalize("v0.9"), "0.9")
     self.assertEqual(normalize("v0.9.1"), "0.9.1")
-    self.assertEqual(normalize(None), agent_with_templates.VERSION_0_9)
-    self.assertEqual(normalize(""), agent_with_templates.VERSION_0_9)
+    self.assertEqual(normalize(None), "0.9")
+    self.assertEqual(normalize(""), "0.9")
+    maui_agent = MAUIAgentWithTemplates(base_url="http://test-url")
+    # pylint: disable-next=protected-access
+    self.assertIn(normalize(None), maui_agent._extractor_agents)
 
 
 if __name__ == "__main__":
