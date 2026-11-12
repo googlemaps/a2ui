@@ -8,9 +8,6 @@
     "surface_id": "test-surface",
     "heading": "Top Places",
     "summary": "Here are 2 places.",
-    "center_lat": 47.6,
-    "center_lng": -122.3,
-    "zoom": 13,
     "places": [
       {"placeId": "ChIJ1", "name": "P1", "lat": 47.6, "lng": -122.3},
       {"placeId": "ChIJ2", "name": "P2", "lat": 47.61, "lng": -122.31}
