@@ -93,9 +93,6 @@ def _create_local_search_payload(
   return {
       "heading": heading,
       "summary": summary,
-      "center_lat": 40.78,
-      "center_lng": -73.96,
-      "zoom": 13,
       "places": places,
   }
 
@@ -111,9 +108,6 @@ def _create_directions_payload(
   return {
       "heading": heading,
       "summary": f"Directions from {origin_label} to {destination_label}.",
-      "center_lat": 40.77,
-      "center_lng": -73.97,
-      "zoom": 13,
       "travel_mode": "walking",
       "routes": [{
           "origin": {
@@ -319,7 +313,11 @@ class VertexGroundingExtractorTest(unittest.IsolatedAsyncioTestCase):
     self.assertIn('"heading"', instruction)
     self.assertNotIn("PLACE_ID_FOR_", instruction)
     self.assertIn("at most 3 places", instruction)
-    self.assertIn("Do not rely on your internal knowledge.", instruction)
+    self.assertIn(
+        "You MUST call the Google Maps tool to answer the user's location"
+        " request and follow the Grounding & Tool-Calling Policy.",
+        instruction,
+    )
     self.assertIn("Conversational Text Style Guidelines", instruction)
 
   async def test_extract_instruction_includes_skill_instructions(self):

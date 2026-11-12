@@ -73,8 +73,6 @@ class TestLocalSearchSchema(unittest.TestCase):
     data = {
         "heading": "5 Transit Stops Near Seattle Center",
         "summary": "Here are 5 transit stops.",
-        "center_lat": 47.6205,
-        "center_lng": -122.3493,
         "places": [{
             "placeId": "ChIJ111",
             "name": "Stop 1",
@@ -92,8 +90,6 @@ class TestLocalSearchSchema(unittest.TestCase):
     data = {
         "heading": "### Best Bakeries",
         "summary": "Here are bakeries.",
-        "center_lat": 47.6,
-        "center_lng": -122.3,
         "places": [{"placeId": "p1", "name": "B1", "lat": 47.6, "lng": -122.3}],
     }
     schema = LocalSearchExtractorSchema(**data)
@@ -103,8 +99,6 @@ class TestLocalSearchSchema(unittest.TestCase):
     """Verifies that omitting heading raises ValidationError."""
     data = {
         "summary": "Here are 5 transit stops.",
-        "center_lat": 47.6205,
-        "center_lng": -122.3493,
         "places": [{
             "placeId": "ChIJ111",
             "name": "Stop 1",
@@ -120,8 +114,6 @@ class TestLocalSearchSchema(unittest.TestCase):
     data = {
         "heading": "Coffee places",
         "summary": "Here are 2 coffee places.",
-        "center_lat": 47.62,
-        "center_lng": -122.35,
         "places": [
             {
                 "placeId": "ChIJ111",
@@ -169,8 +161,6 @@ class TestLocalSearchSchema(unittest.TestCase):
     data = {
         "heading": "No places",
         "summary": "No places found.",
-        "center_lat": 47.62,
-        "center_lng": -122.35,
         "places": [],
     }
     with self.assertRaises(pydantic.ValidationError):
@@ -181,8 +171,6 @@ class TestLocalSearchSchema(unittest.TestCase):
     data = {
         "heading": "Coffee places",
         "summary": "Here are coffee places.",
-        "center_lat": 47.62,
-        "center_lng": -122.35,
         "places": [{
             "name": "Coffee Shop Without ID",
             "lat": 47.62,
