@@ -31,11 +31,6 @@
         {
           "id": "map",
           "component": "GoogleMap",
-          "center": {
-            "lat": "{{center_lat}}",
-            "lng": "{{center_lng}}"
-          },
-          "zoom": "{{zoom}}",
           "tilt": 0,
           "mode": "roadmap",
           "anchorMarker": "{{anchor_marker}}",

@@ -17,11 +17,13 @@
 import {A2uiController, A2uiLitElement} from '@a2ui/lit/v0_9';
 import {structuralStyles} from '@a2ui/web_core/v0_8';
 import {ComponentApi, DynamicStringSchema} from '@a2ui/web_core/v0_9';
+import {ContextConsumer} from '@lit/context';
 import {css, html, LitElement, nothing} from 'lit';
-import {customElement} from 'lit/decorators.js';
+import {customElement, property} from 'lit/decorators.js';
 import {styleMap} from 'lit/directives/style-map.js';
 import {z} from 'zod';
 
+import {attributionIdsContext, attributionIdsConverter, resolveAttributionIds} from './attribution';
 import {loadMapsLibrary} from './maps_api_loader';
 
 const sheet = new CSSStyleSheet();
@@ -66,6 +68,22 @@ export class PlaceDetailsCompact extends
     ...LitElement.shadowRootOptions,
     mode: 'closed',
   };
+
+  /**
+   * Maps JS API usage attribution IDs to send in addition to MAUI's own ID,
+   * e.g. to identify the product embedding MAUI.
+   */
+  @property({
+    attribute: 'additional-attribution-ids',
+    converter: attributionIdsConverter,
+  })
+  additionalAttributionIds: readonly string[] = [];
+
+  /** Attribution IDs provided by an ancestor `<maui-providers>`. */
+  private readonly attributionIdsConsumer = new ContextConsumer(this, {
+    context: attributionIdsContext,
+    subscribe: true,
+  });
 
   protected override createController() {
     return new A2uiController(this, PlaceDetailsCompactApi);
@@ -116,13 +134,17 @@ export class PlaceDetailsCompact extends
       return nothing;
     }
 
+    const attributionIds = resolveAttributionIds(
+                               this.attributionIdsConsumer.value,
+                               this.additionalAttributionIds,
+                               )
+                               .join(',');
+
     return html`
       <section aria-label="${UIStrings.PLACE_DETAILS}" style=${styleMap(style)}>
         <gmp-place-details-compact orientation="${orientation}"
             place="${placeId}"
-            internal-usage-attribution-ids="${
-        (window as any)['A2UI_ATTRIBUTION_ID'] ||
-        'gmp_web_maui_v0.1.10_atoui'}">
+            internal-usage-attribution-ids="${attributionIds}">
           <gmp-place-details-place-request place="${placeId}">
           </gmp-place-details-place-request>
             <gmp-place-content-config>
