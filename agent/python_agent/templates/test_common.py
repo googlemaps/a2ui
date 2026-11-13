@@ -158,5 +158,87 @@ class NormalizationHelpersTest(unittest.TestCase):
     )
 
 
+class ParseUserCoordinatesTest(unittest.TestCase):
+  """Unit tests for parse_user_coordinates."""
+
+  def test_priority1_explicit_tags_valid(self):
+    """Verifies explicit location tags parse valid decimal coordinate pairs."""
+    test_cases = [
+        (
+            "Coffee shops near me (my location: 37.7749, -122.4194)",
+            (37.7749, -122.4194),
+        ),
+        ("my location is 37.7749, -122.4194", (37.7749, -122.4194)),
+        ("current location: 40.7128, -74.0060", (40.7128, -74.0060)),
+        ("user location = 51.5074, -0.1278", (51.5074, -0.1278)),
+        ("user's location: -33.8688, 151.2093", (-33.8688, 151.2093)),
+        ("my coordinates: 35.6762, 139.6503", (35.6762, 139.6503)),
+        ("my coordinates are: 37.7749, -122.4194", (37.7749, -122.4194)),
+        ("i am at 37.7749, -122.4194", (37.7749, -122.4194)),
+        ("i am at: (37.7749, -122.4194)", (37.7749, -122.4194)),
+        ("MY LOCATION: 37.7749, -122.4194", (37.7749, -122.4194)),
+    ]
+    for query, expected in test_cases:
+      with self.subTest(query=query):
+        coords = common.parse_user_coordinates(query)
+        self.assertIsNotNone(coords)
+        self.assertAlmostEqual(coords[0], expected[0], places=4)
+        self.assertAlmostEqual(coords[1], expected[1], places=4)
+
+  def test_priority1_rejects_integer_street_numbers(self):
+    """Verifies street numbers like 'I am at 35, 37 West 44th St' return None."""
+    query = "I am at 35, 37 West 44th St"
+    self.assertIsNone(common.parse_user_coordinates(query))
+
+  def test_priority1_continues_past_non_numeric_tag_to_valid_tag(self):
+    """Verifies continues checking finditer matches when first tag is non-numeric."""
+    query = (
+        "I am at O'Hare, find deep dish (my location is: 41.9867507,"
+        " -87.8721602)"
+    )
+    coords = common.parse_user_coordinates(query)
+    self.assertIsNotNone(coords)
+    self.assertAlmostEqual(coords[0], 41.9867507, places=4)
+    self.assertAlmostEqual(coords[1], -87.8721602, places=4)
+
+  def test_priority1_short_circuits_when_explicit_tag_has_no_coords(self):
+    """Verifies that if explicit metadata tags are present without coords, returns None."""
+    query = "Coffee near me (my location is: Ha-Dekel St 2, Jerusalem)"
+    self.assertIsNone(common.parse_user_coordinates(query))
+
+    query2 = "Find parks near current location: Main Street 123, New York"
+    self.assertIsNone(common.parse_user_coordinates(query2))
+
+  def test_priority2_unlabeled_single_coordinate_pair(self):
+    self.assertEqual(
+        common.parse_user_coordinates("Find coffee near 37.7749, -122.4194"),
+        (37.7749, -122.4194),
+    )
+
+  def test_priority1_conversational_prefix_falls_through_to_priority2(self):
+    """Verifies 'I am at Landmark' falls through to Priority 2 coordinates."""
+    query = "I am at Pike Place Market, find coffee near 47.6085, -122.3400"
+    coords = common.parse_user_coordinates(query)
+    self.assertIsNotNone(coords)
+    self.assertAlmostEqual(coords[0], 47.6085, places=4)
+    self.assertAlmostEqual(coords[1], -122.3400, places=4)
+
+  def test_priority2_rejects_multiple_coordinate_pairs(self):
+    query = "Directions from 37.7749, -122.4194 to 37.8044, -122.2712"
+    self.assertIsNone(common.parse_user_coordinates(query))
+
+  def test_priority2_rejects_insufficient_fractional_digits(self):
+    self.assertIsNone(common.parse_user_coordinates("near 37.77, -122.41"))
+    self.assertIsNone(common.parse_user_coordinates("near 37.7, -122.4"))
+
+  def test_validation_bounds_and_null_island(self):
+    self.assertIsNone(
+        common.parse_user_coordinates("my location: 95.0000, 10.0000")
+    )
+    self.assertIsNone(
+        common.parse_user_coordinates("my location: 0.0000, 0.0000")
+    )
+
+
 if __name__ == "__main__":
   unittest.main()
