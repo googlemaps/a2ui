@@ -25,6 +25,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 import pydantic
@@ -316,11 +317,22 @@ class CompileRouterInstructionTest(unittest.TestCase):
   def test_contains_registered_archetypes(self):
     self.assertIn("- **LOCAL_SEARCH**", self.instruction)
     self.assertIn("- **DIRECTIONS**", self.instruction)
+    self.assertIn("- **PLACE_ANSWER_FACTUAL**", self.instruction)
+    self.assertIn(
+        "Do NOT use when the prompt mentions two or more distinct places",
+        self.instruction,
+    )
 
   def test_contains_pinned_non_template_archetypes(self):
     self.assertIn("- **OTHER_SPATIAL**", self.instruction)
     self.assertIn("- **TEXT_ONLY**", self.instruction)
     self.assertIn("Conservative Routing", self.instruction)
+    self.assertIn("Compound Multi-Intent Prompts:", self.instruction)
+    self.assertIn(
+        "How do I get from Lafayette to Oakland airport? What are the best"
+        " places to get a beer inside the airport?",
+        self.instruction,
+    )
 
   def test_contains_bundle_few_shot_examples(self):
     self.assertIn("Find coffee shops near Central Park", self.instruction)
@@ -484,6 +496,34 @@ class EffectiveToolDescriptionTest(unittest.TestCase):
               ),
           ],
       )
+
+
+class DefaultRegistryTest(unittest.TestCase):
+  """Tests for the shared, lazily built default registry."""
+
+  def setUp(self):
+    super().setUp()
+    template_registry.default_registry.cache_clear()
+    self.addCleanup(template_registry.default_registry.cache_clear)
+
+  def test_returns_built_in_bundles(self):
+    registry = template_registry.default_registry()
+
+    self.assertIsInstance(registry, template_registry.TemplateRegistry)
+    self.assertIn("local_search", registry.bundles)
+    self.assertIn("directions", registry.bundles)
+
+  def test_discovers_bundles_once_per_process(self):
+    with mock.patch.object(
+        template_registry,
+        "TemplateRegistry",
+        wraps=template_registry.TemplateRegistry,
+    ) as registry_cls:
+      first = template_registry.default_registry()
+      second = template_registry.default_registry()
+
+    self.assertIs(first, second)
+    registry_cls.assert_called_once_with()
 
 
 class ZipImportedPackageTest(unittest.TestCase):

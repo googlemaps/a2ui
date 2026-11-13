@@ -25,6 +25,7 @@ never here.
 """
 
 import copy
+import functools
 import importlib.resources
 import json
 import logging
@@ -171,11 +172,41 @@ def _merge_fallback(
   )
 
 
+@functools.cache
+def _read_packaged_layout(template_name: str) -> str | None:
+  """Returns the text of a template's packaged `layout.json`, or None.
+
+  Templates ship as package data. They are resolved through
+  `importlib.resources` rather than a `__file__`-relative filesystem path
+  because the agent is also served from a zip-imported archive, where
+  `__file__` names an entry inside the archive that never exists on disk and
+  every `os.path` probe against it reports missing. Each probe and read inside
+  such an archive is slow, and the layouts ship with the build, so read each
+  one once per process. The text is cached rather than the parsed JSON so that
+  every merge starts from a fresh, unshared object.
+
+  Args:
+    template_name: Name of the template directory under `templates/`.
+  """
+  # Anchor on this module, not `__package__`, which is empty when the module is
+  # imported top-level (e.g. the GitHub export).
+  template_path = (
+      importlib.resources.files(__name__)
+      .joinpath("templates")
+      .joinpath(template_name, "layout.json")
+  )
+  if not template_path.is_file():
+    return None
+  return template_path.read_text(encoding="utf-8")
+
+
 def merge_template(
     template_name: str,
     data: dict[str, Any],
     max_list_size: int = 5,
     catalog_id: str = DEFAULT_CATALOG_ID,
+    *,
+    bundle: template_registry.TemplateBundle | None = None,
 ) -> list[MergedMessage]:
   """Populates a layout skeleton with extracted parameters.
 
@@ -187,6 +218,9 @@ def merge_template(
       catalog_id: Catalog the created surface binds to. Defaults to the Maps
         catalog; hosts that register the Maps components under a catalog of
         their own pass that id.
+      bundle: The bundle for `template_name`, when the caller already holds it
+        (template tools do). When omitted, the bundle is looked up in the
+        process-wide registry of built-in bundles.
 
   Returns:
       A list of message dictionaries for A2UI transmission.
@@ -194,31 +228,24 @@ def merge_template(
   Raises:
       FileNotFoundError: If the template or its layout file cannot be found.
   """
-  # Templates ship as package data. They are resolved through
-  # `importlib.resources` rather than a `__file__`-relative filesystem path
-  # because the agent is also served from a zip-imported archive, where
-  # `__file__` names an entry inside the archive that never exists on disk and
-  # every `os.path` probe against it reports missing.
-  # Anchor on this module, not `__package__`, which is empty when the module is
-  # imported top-level (e.g. the GitHub export).
-  templates_dir = importlib.resources.files(__name__).joinpath("templates")
   resource_path = f"templates/{template_name}/layout.json"
-  template_path = templates_dir.joinpath(template_name, "layout.json")
 
   if template_name == _TEXT_ONLY_TEMPLATE:
     schema_class = None
     empty_fallback_text = ""
     surface_prefix = "text-only-surface"
   else:
-    bundle = template_registry.TemplateRegistry().get_bundle(template_name)
+    if bundle is None:
+      bundle = template_registry.default_registry().get_bundle(template_name)
     schema_class = bundle.schema_cls if bundle else None
     empty_fallback_text = bundle.empty_fallback_text if bundle else ""
     surface_prefix = (
         bundle.surface_prefix if bundle else f"{template_name}-surface"
     )
 
-  if template_path.is_file():
-    template_json = json.loads(template_path.read_text(encoding="utf-8"))
+  layout_text = _read_packaged_layout(template_name)
+  if layout_text is not None:
+    template_json = json.loads(layout_text)
   elif bundle is not None and bundle.layout_path.is_file():
     template_json = json.loads(bundle.layout_path.read_text(encoding="utf-8"))
   else:
