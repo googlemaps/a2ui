@@ -7,9 +7,6 @@
   "conformance_example": {
     "surface_id": "test-surface",
     "heading": "Quiet romantic dinner spots near The Plaza Hotel",
-    "center_lat": 40.7644,
-    "center_lng": -73.9745,
-    "zoom": 14,
     "places": [
       {
         "placeId": "ChIJ1",

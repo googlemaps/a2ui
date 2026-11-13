@@ -77,12 +77,24 @@ For more information about the environment variables, see the **Google API Key C
 
 ## MAUI Python Agent Package (`maui-a2ui-python`)
 
-This package provides the core Python agent implementations for the Agentic UI Toolkit (MAUI). It includes the base `MAUIAgent` and the extended `MAUIAgentWithGrounding` that uses Vertex Grounding.
+This package provides the core Python agent implementations for the Agentic UI
+Toolkit (MAUI). It includes the base dynamic `MAUIAgent`, the low-latency
+`MAUIAgentWithTemplates`, and the extended `MAUIAgentWithGrounding` combining
+Grounding with Google Maps and Google Search via Vertex AI.
 
 ### File Structure
 
-*   `agent.py`: Contains the `MAUIAgent` class, which handles session management, LLM interaction, and A2UI schema loading.
-*   `agent_with_grounding.py`: Contains `MAUIAgentWithGrounding`, extending the base agent with Vertex Grounding capabilities.
+*   `agent.py`: Contains the `MAUIAgent` class, which handles session management, LLM interaction, and unconstrained dynamic A2UI schema validation.
+*   `agent_with_templates.py`: Contains `MAUIAgentWithTemplates`, a fast template-driven agent utilizing intent classification (`LOCAL_SEARCH`, `DIRECTIONS`, `PLACE_ANSWER_FACTUAL`, `NEARBY_PLACES_DEPTH`) and structured parameter extraction for low latency.
+*   `agent_with_grounding.py`: Contains `MAUIAgentWithGrounding`, extending the
+    base agent with Vertex AI Grounding with Google Maps and Google Search
+    capabilities (and supporting template-based routing via `template_config:
+    AgentConfig`).
+*   `agent_config.py`: Contains `AgentConfig` and `FallbackMode` configurations
+    (`TEXT` vs `DYNAMIC`, plus `enable_search_grounding: bool = True` to toggle
+    Google Search grounding alongside Google Maps in Vertex AI).
+*   `template_tool.py`: Contains standard ADK `BaseTool` implementations (`BaseTemplateTool`, `RenderTextOnlyTemplateTool`, and `TemplateToolset`) for template rendering.
+*   `templates/<intent>/`: Self-contained template bundles (`LOCAL_SEARCH`, `DIRECTIONS`, `PLACE_ANSWER_FACTUAL`, `NEARBY_PLACES_DEPTH`). Each holds `manifest.json` (routing and render policy), `layout.json` (the A2UI skeleton), `schema.py` (extraction schema), and `SKILL.md` (extraction prompt).
 *   `streaming_request_handler.py`: Contains `StreamingRequestHandler` (extending `DefaultRequestHandler`), enabling the A2A server to handle both incremental SSE streaming (`message/stream`) and non-streaming (`message/send`) JSON-RPC requests.
 *   `shared/`: Contains schema extensions (e.g., `maps_catalog_extension.json`).
 *   `skills/`: Contains specific skill definitions used by the agents.
@@ -106,7 +118,16 @@ maui-a2ui-python = { path = "path/to/a2ui/agent/python_agent" }
 
 #### 2. Import and Use
 
-The Agentic UI Toolkit includes two agents, one that uses Grounding Lite and one that uses Grounding with Google Maps. The Python integration steps are the same for each, but if you use Grounding with Google Maps, you must follow the instructions to configure your local environment. See the [Accessing Google Maps grounding data](#accessing-google-maps-grounding-data) section below for more information on configuring these services.
+The Agentic UI Toolkit includes three agent architectures:
+
+1.  **Template-driven Agent (`MAUIAgentWithTemplates`)**: Recommended for low-latency spatial queries (`LOCAL_SEARCH`, `DIRECTIONS`, `PLACE_ANSWER_FACTUAL`, `NEARBY_PLACES_DEPTH`) with structured parameter extraction merged into pre-compiled server layout templates.
+2.  **Standard Agent (`MAUIAgent`)**: Uses Grounding Lite MCP with dynamic A2UI schema generation. Recommended when preferring maximum response flexibility over low latency.
+3.  **Grounding Agent (`MAUIAgentWithGrounding`)**: Combines Grounding with
+    Google Maps and Google Search via Vertex AI by default (set
+    `enable_search_grounding=False` on `AgentConfig` or
+    `MAUIAgentWithGrounding` for Maps-only grounding). Can be run in
+    unconstrained dynamic mode or configured with
+    `template_config: AgentConfig` for low-latency templated responses.
 
 Tip: See the [agent_executor.py](https://github.com/googlemaps-samples/a2ui/blob/main/agent/python/agent_executor.py) example in the Agentic UI Toolkit Samples repository for a working example.
 
@@ -446,7 +467,7 @@ External contributions are not accepted for this repository. See [contributing g
 
 ## Terms of Service
 
-This library uses Google Maps Platform services. Use of Google Maps Platform services through this library is subject to the Google Maps Platform [Terms of Service]. Some APIs and backend services, such as [Grounding Lite](https://developers.google.com/maps/ai/grounding-lite/attribution) and [Grounding with Google Maps](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/grounding/grounding-with-google-maps#google-maps-attribution-guidelines), have additional Terms of Service requirements which must also be met.
+This library uses Google Maps Platform services. Use of Google Maps Platform services through this library is subject to the Google Maps Platform [Terms of Service]. Some APIs and backend services, such as [Grounding Lite](https://developers.google.com/maps/ai/grounding-lite/attribution), [Grounding with Google Maps](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/grounding/grounding-with-google-maps#google-maps-attribution-guidelines), and [Grounding with Google Search](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/grounding/grounding-with-google-search), have additional Terms of Service requirements which must also be met.
 
 This library is not a Google Maps Platform Core Service. Therefore, the Google Maps Platform Terms of Service (e.g. Technical Support Services, Service Level Agreements, and Deprecation Policy) do not apply to the code in this library.
 

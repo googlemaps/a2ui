@@ -17,12 +17,14 @@
 import {A2uiController, A2uiLitElement} from '@a2ui/lit/v0_9';
 import {structuralStyles} from '@a2ui/web_core';
 import {ComponentApi, DynamicNumberSchema, DynamicStringSchema} from '@a2ui/web_core/v0_9';
+import {ContextConsumer} from '@lit/context';
 import {css, html, LitElement, nothing, PropertyValues} from 'lit';
-import {customElement} from 'lit/decorators.js';
+import {customElement, property} from 'lit/decorators.js';
 import {styleMap} from 'lit/directives/style-map.js';
 import {z} from 'zod';
 
 import {AnchorMarker} from './anchor_marker';
+import {attributionIdsContext, attributionIdsConverter, resolveAttributionIds} from './attribution';
 import {loadMapsLibrary} from './maps_api_loader';
 import {MarkerElementOptions, PLACE_PIN_MARKER_STYLES, PlacePinMarker} from './place_pin_marker';
 
@@ -149,6 +151,31 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     ...LitElement.shadowRootOptions,
     mode: 'closed',
   };
+
+  /**
+   * Maps JS API usage attribution IDs to send in addition to MAUI's own ID,
+   * e.g. to identify the product embedding MAUI.
+   */
+  @property({
+    attribute: 'additional-attribution-ids',
+    converter: attributionIdsConverter,
+  })
+  additionalAttributionIds: readonly string[] = [];
+
+  /** Attribution IDs provided by an ancestor `<maui-providers>`. */
+  private readonly attributionIdsConsumer = new ContextConsumer(this, {
+    context: attributionIdsContext,
+    subscribe: true,
+  });
+
+  /** The comma-separated `internal-usage-attribution-ids` value. */
+  private get attributionIds(): string {
+    return resolveAttributionIds(
+               this.attributionIdsConsumer.value,
+               this.additionalAttributionIds,
+               )
+        .join(',');
+  }
 
   get map3dElement(): HTMLElement&Map3DElement {
     return this.renderRoot.querySelector('gmp-map-3d') as HTMLElement &
@@ -348,38 +375,34 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
     const props = this.controller.props;
     if (!props || !this.map3dElement) return;
 
-    // Clear existing markers
-    this.markers.forEach((marker) => marker.remove());
-    this.markers = [];
-
     const markers = this.resolveMarkers();
     const anchorMarker = props.anchorMarker;
     const destination = props.destination;
     const routes = props.routes || [];
 
-    // Add markers from props.markers
-    for (const {lat, lng, label, placePrimaryType} of markers) {
-      const marker = new PlacePinMarker({
+    const elements = markers.map(
+        ({lat, lng, label, placePrimaryType}) => new PlacePinMarker({
+                                                   position: {lat, lng},
+                                                   label,
+                                                   placePrimaryType,
+                                                 }).getElement());
+
+    if (anchorMarker && !routes.length) {
+      const {lat, lng} = anchorMarker as MapPinProps;
+      const anchor = new AnchorMarker({
                        position: {lat, lng},
-                       label,
-                       placePrimaryType,
+                       label: anchorMarker.label as string,
                      }).getElement();
-      this.map3dElement.appendChild(marker);
-      this.markers.push(marker);
+      // <gmp-marker>s stack in DOM order, so place the anchor among the
+      // north-to-south sorted pins.
+      const index = markers.findIndex((pin) => pin.lat <= lat);
+      elements.splice(index === -1 ? elements.length : index, 0, anchor);
     }
 
-    // Add anchor marker if available and no routes
-    if (anchorMarker && !routes.length) {
-      const marker = new AnchorMarker({
-                       position: {
-                         lat: anchorMarker.lat as number,
-                         lng: anchorMarker.lng as number
-                       },
-                       label: anchorMarker.label as string,
-                       zIndex: 1,
-                     }).getElement();
-      this.map3dElement.appendChild(marker);
-      this.markers.push(marker);
+    this.markers.forEach((marker) => marker.remove());
+    this.markers = elements;
+    for (const element of elements) {
+      this.map3dElement.appendChild(element);
     }
   }
 
@@ -418,10 +441,7 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
 
     return html`
       <section aria-label="${UIStrings.MAP_VIEW}" style=${styleMap(style)}>
-        ${
-        routes.length > 0 && !this.routesLoaded ?
-            nothing :
-            html`<gmp-map-3d
+        ${routes.length > 0 && !this.routesLoaded ? nothing : html`<gmp-map-3d
           center="${lat},${lng},0"
           tilt="${tilt}"
           mode="${mode}"
@@ -429,20 +449,14 @@ export class GoogleMap extends A2uiLitElement<typeof GoogleMapApi> {
           heading="${heading}"
           color-scheme=${this.colorScheme ?? nothing}
           map-id="2d6e1a27a57efe3c9479f6fc"
-          internal-usage-attribution-ids="${
-                (window as any)['A2UI_ATTRIBUTION_ID'] ||
-                'gmp_web_maui_v0.1.10_atoui'}"
-        >${
-                routes.map(
-                    (route: any) => html`
+          internal-usage-attribution-ids="${this.attributionIds}"
+        >${routes.map((route: any) => html`
           <gmp-route-3d
             origin="${route.origin.lat},${route.origin.lng}"
             destination="${route.destination.lat},${route.destination.lng}"
             travel-mode="${props.travelMode || nothing}"
             autofits-camera
-            internal-usage-attribution-ids="${
-                        (window as any)['A2UI_ATTRIBUTION_ID'] ||
-                        'gmp_web_maui_v0.1.10_atoui'}"
+            internal-usage-attribution-ids="${this.attributionIds}"
           ></gmp-route-3d>`)}
         </gmp-map-3d>`}
       </section>
