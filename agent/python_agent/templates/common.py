@@ -14,10 +14,100 @@
 
 """Shared schema models and primitive types for MAUI template bundles."""
 
+import math
 import re
 from typing import Any, Literal
 
 import pydantic
+
+_USER_LOCATION_PREFIX_RE = re.compile(
+    r"(?i)\b(?:my\s+location\s+is|my\s+location|current\s+location|"
+    r"user(?:'s)?\s+location|my\s+coordinates\s+are|my\s+coordinates|"
+    r"i\s+am\s+at)\b"
+)
+
+# Numeric coordinate pair that requires at least one decimal point so that
+# street numbers like "35, 37 West 44th St" are never parsed as coordinates.
+_NUMERIC_COORD_RE = re.compile(
+    r"^[-+]?\d{1,2}\.\d+\s*,\s*[-+]?\d{1,3}\.\d+(?![\d.])"
+)
+
+_DECIMAL_PAIR_RE = re.compile(
+    r"(?<![\d.])(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})(?![\d.])"
+)
+
+_EXPLICIT_METADATA_TAGS_RE = re.compile(
+    r"(?i)\b(?:my\s+location|current\s+location|user(?:'s)?\s+location|"
+    r"my\s+coordinates)\b"
+)
+
+
+def _validate_coordinates(lat: float, lng: float) -> tuple[float, float] | None:
+  """Validates that lat/lng are finite, within bounds, and not Null Island."""
+  if not math.isfinite(lat) or not math.isfinite(lng):
+    return None
+  if lat < -90.0 or lat > 90.0 or lng < -180.0 or lng > 180.0:
+    return None
+  if lat == 0.0 and lng == 0.0:
+    return None
+  return (lat, lng)
+
+
+def parse_user_coordinates(query: str) -> tuple[float, float] | None:
+  """Parses user coordinates (lat, lng) from query.
+
+  Follows a 2-priority parsing strategy:
+  1. Explicit user-location tags (e.g. 'my location: lat, lng', 'i am at ...').
+     Coordinates must have decimal points. If a tag (e.g. 'i am at Landmark')
+     is non-numeric, subsequent explicit matches are checked. If explicit
+     metadata tags ('my location', 'current location', 'user location',
+     'my coordinates') were present and none yielded valid decimal coordinates,
+     returns None without falling through to Priority 2.
+  2. Unlabeled single coordinate pair with >= 3 fractional digits. If multiple
+     coordinate pairs exist, returns None.
+
+  Args:
+    query: User query string.
+
+  Returns:
+    (latitude, longitude) tuple or None if not found or invalid.
+  """
+  if not query or not isinstance(query, str):
+    return None
+
+  # Priority 1: Check for explicit user-location tags using finditer
+  for match in _USER_LOCATION_PREFIX_RE.finditer(query):
+    tail = query[match.end() :].lstrip(" :=(")
+    coord_match = _NUMERIC_COORD_RE.match(tail)
+    if coord_match:
+      try:
+        lat_str, lng_str = coord_match.group(0).split(",")
+        lat = float(lat_str.strip())
+        lng = float(lng_str.strip())
+        valid = _validate_coordinates(lat, lng)
+        if valid is not None:
+          return valid
+      except (ValueError, TypeError):
+        pass
+
+  # If explicit metadata tags were present but none contained valid coords
+  # (e.g. '(my location is: Ha-Dekel St 2, Jerusalem)'), short-circuit to None.
+  if _EXPLICIT_METADATA_TAGS_RE.search(query):
+    return None
+
+  # Priority 2: Unlabeled single decimal coordinate pair with >= 3 fractional
+  # digits
+  matches = _DECIMAL_PAIR_RE.findall(query)
+  if len(matches) == 1:
+    try:
+      lat = float(matches[0][0])
+      lng = float(matches[0][1])
+      return _validate_coordinates(lat, lng)
+    except (ValueError, TypeError):
+      return None
+
+  return None
+
 
 PlacePrimaryType = Literal[
     "food_and_drink",
@@ -104,4 +194,5 @@ __all__ = [
     "PlacePrimaryType",
     "normalize_markdown_text",
     "normalize_name_and_label",
+    "parse_user_coordinates",
 ]
