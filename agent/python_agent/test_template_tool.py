@@ -21,7 +21,6 @@ import unittest
 from a2a.types import DataPart
 from google.adk.tools.tool_context import ToolContext
 
-import a2ui
 import agent
 import template_registry
 import template_tool
@@ -38,25 +37,16 @@ def _make_bundle_tool(name: str, **kwargs):
   return BaseTemplateTool.from_bundle(bundle, **kwargs)
 
 
-def _create_schema_manager():
+def _create_catalog():
   extension_path = (
       pathlib.Path(__file__).parent
       / "shared"
       / "schema"
       / "maps_catalog_extension.json"
   )
-  return a2ui.schema.manager.A2uiSchemaManager(
-      version=a2ui.schema.constants.VERSION_0_9,
-      catalogs=[
-          a2ui.schema.catalog.CatalogConfig(
-              name="maps-agentic-ui-catalog",
-              provider=agent.MergedCatalogProvider(
-                  a2ui.schema.constants.VERSION_0_9, str(extension_path)
-              ),
-          )
-      ],
-      schema_modifiers=[a2ui.schema.common_modifiers.remove_strict_validation],
-  )
+  return agent.MergedCatalogProvider(
+      agent.VERSION_0_9, str(extension_path)
+  ).load()
 
 
 class MockToolContext:
@@ -71,20 +61,17 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
 
   def setUp(self):
     super().setUp()
-    self.schema_manager = _create_schema_manager()
+    self.catalog = _create_catalog()
     self.tool_context = MockToolContext()
 
   async def test_render_local_search_template_success(self):
     tool = _make_bundle_tool(
-        "local_search", schema_manager=self.schema_manager, max_list_size=3
+        "local_search", catalog=self.catalog, max_list_size=3
     )
 
     args = {
         "heading": "Nearby Places",
         "summary": "Here are 2 coffee shops.",
-        "center_lat": 47.6062,
-        "center_lng": -122.3321,
-        "zoom": 14,
         "places": [
             {
                 "placeId": "ChIJ111",
@@ -130,15 +117,12 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
 
   async def test_render_local_search_template_with_heading(self):
     tool = _make_bundle_tool(
-        "local_search", schema_manager=self.schema_manager, max_list_size=3
+        "local_search", catalog=self.catalog, max_list_size=3
     )
 
     args = {
         "heading": "Top Coffee Shops in Seattle",
         "summary": "Here are 2 coffee shops.",
-        "center_lat": 47.6062,
-        "center_lng": -122.3321,
-        "zoom": 14,
         "places": [
             {
                 "placeId": "ChIJ111",
@@ -159,13 +143,38 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
     )
     self.assertEqual(heading_comp["text"], "### Top Coffee Shops in Seattle")
 
-  async def test_render_local_search_template_validation_failure(self):
-    tool = _make_bundle_tool("local_search", schema_manager=self.schema_manager)
-
-    # Missing mandatory center_lat and center_lng
+  async def test_render_local_search_template_sorts_closest_first(self):
+    """Verifies that local search template sorts places closest first for superlative query."""
+    tool = _make_bundle_tool(
+        "local_search", catalog=self.catalog, max_list_size=5
+    )
+    origin = (47.6205, -122.3493)
     args = {
-        "summary": "Places without center coordinates",
-        "places": [{"placeId": "1", "name": "P1", "lat": 1.0, "lng": 2.0}],
+        "heading": "Nearby Venues",
+        "summary": "- Far: 5 mi\n- Near: 0.1 mi",
+        "places": [
+            {"placeId": "p1", "name": "Far", "lat": 47.7000, "lng": -122.3493},
+            {"placeId": "p2", "name": "Near", "lat": 47.6220, "lng": -122.3493},
+        ],
+    }
+    self.tool_context.state["user_query"] = (
+        f"find nearest venues near {origin[0]}, {origin[1]}"
+    )
+    result = await tool.run_async(args=args, tool_context=self.tool_context)
+    self.assertEqual(result["status"], "success")
+    parts = self.tool_context.state[STATE_RENDERED_A2UI_PARTS]
+    update_data_model = parts[2].root.data["updateDataModel"]["value"]
+    # Should be sorted closest first
+    self.assertEqual(update_data_model["places"][0]["name"], "Near")
+    self.assertEqual(update_data_model["places"][1]["name"], "Far")
+
+  async def test_render_local_search_template_validation_failure(self):
+    tool = _make_bundle_tool("local_search", catalog=self.catalog)
+
+    # Missing mandatory places
+    args = {
+        "heading": "Places without places list",
+        "summary": "Places without places list",
     }
 
     result = await tool.run_async(args=args, tool_context=self.tool_context)
@@ -175,13 +184,11 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
   async def test_render_local_search_template_missing_heading_validation_failure(
       self,
   ):
-    tool = _make_bundle_tool("local_search", schema_manager=self.schema_manager)
+    tool = _make_bundle_tool("local_search", catalog=self.catalog)
 
     # Missing mandatory heading
     args = {
         "summary": "Places without heading",
-        "center_lat": 47.6062,
-        "center_lng": -122.3321,
         "places": [{"placeId": "1", "name": "P1", "lat": 1.0, "lng": 2.0}],
     }
 
@@ -190,14 +197,11 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
     self.assertIn("Validation failed for tool", result["error"])
 
   async def test_render_directions_template_success(self):
-    tool = _make_bundle_tool("directions", schema_manager=self.schema_manager)
+    tool = _make_bundle_tool("directions", catalog=self.catalog)
 
     args = {
         "heading": "Driving directions from San Francisco to Oakland",
         "summary": "Commute is 30 minutes.",
-        "center_lat": 37.7749,
-        "center_lng": -122.4194,
-        "zoom": 12,
         "routes": [{
             "origin": {
                 "lat": 37.7749,
@@ -241,13 +245,10 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(len(map_comp["routes"]), 1)
 
   async def test_render_directions_template_missing_heading_fails(self):
-    tool = _make_bundle_tool("directions", schema_manager=self.schema_manager)
+    tool = _make_bundle_tool("directions", catalog=self.catalog)
 
     args = {
         "summary": "Commute is 30 minutes.",
-        "center_lat": 37.7749,
-        "center_lng": -122.4194,
-        "zoom": 12,
         "routes": [{
             "origin": {"lat": 37.7749, "lng": -122.4194, "label": "A"},
             "destination": {"lat": 37.8044, "lng": -122.2712, "label": "B"},
@@ -260,13 +261,10 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
     self.assertIn("Validation failed for tool", result["error"])
 
   async def test_render_directions_template_invalid_travel_mode_fails(self):
-    tool = _make_bundle_tool("directions", schema_manager=self.schema_manager)
+    tool = _make_bundle_tool("directions", catalog=self.catalog)
 
     args = {
         "summary": "Commute",
-        "center_lat": 37.7,
-        "center_lng": -122.4,
-        "zoom": 12,
         "routes": [{
             "origin": {"lat": 37.7, "lng": -122.4, "label": "A"},
             "destination": {"lat": 37.8, "lng": -122.3, "label": "B"},
@@ -278,7 +276,7 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
     self.assertIn("error", result)
 
   async def test_render_text_only_template_success(self):
-    tool = RenderTextOnlyTemplateTool(schema_manager=self.schema_manager)
+    tool = RenderTextOnlyTemplateTool(catalog=self.catalog)
 
     args = {
         "text": "Hello world from text-only template.",
@@ -296,9 +294,7 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(text_comp["text"], "Hello world from text-only template.")
 
   async def test_template_toolset_returns_tools(self):
-    toolset = TemplateToolset(
-        schema_manager=self.schema_manager, max_list_size=3
-    )
+    toolset = TemplateToolset(catalog=self.catalog, max_list_size=3)
     tools = await toolset.get_tools()
 
     self.assertEqual(len(tools), len(toolset.template_registry.bundles) + 1)
@@ -308,7 +304,7 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
     self.assertIn("render_text_only_template", tool_names)
 
   async def test_template_toolset_defaults_to_maps_catalog_id(self):
-    toolset = TemplateToolset(schema_manager=self.schema_manager)
+    toolset = TemplateToolset(catalog=self.catalog)
     tools = await toolset.get_tools()
 
     for tool in tools:
@@ -318,9 +314,7 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
   async def test_template_toolset_propagates_catalog_id(self):
     """A host names its catalog once; every tool in the set must honor it."""
     host_catalog = "https://example.test/host_catalog.json"
-    toolset = TemplateToolset(
-        schema_manager=self.schema_manager, catalog_id=host_catalog
-    )
+    toolset = TemplateToolset(catalog=self.catalog, catalog_id=host_catalog)
     tools = await toolset.get_tools()
 
     self.assertEqual(len(tools), len(toolset.template_registry.bundles) + 1)
@@ -330,7 +324,7 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
 
   async def test_template_toolset_with_tool_filter(self):
     toolset = TemplateToolset(
-        schema_manager=self.schema_manager,
+        catalog=self.catalog,
         max_list_size=3,
         tool_filter=[
             "render_local_search_template",
@@ -347,21 +341,17 @@ class TestTemplateTools(unittest.IsolatedAsyncioTestCase):
     )
 
   def test_tool_declarations_valid(self):
-    tool_ls = _make_bundle_tool(
-        "local_search", schema_manager=self.schema_manager
-    )
+    tool_ls = _make_bundle_tool("local_search", catalog=self.catalog)
     decl_ls = tool_ls._get_declaration()
     self.assertIsNotNone(decl_ls)
     self.assertEqual(decl_ls.name, "render_local_search_template")
 
-    tool_dir = _make_bundle_tool(
-        "directions", schema_manager=self.schema_manager
-    )
+    tool_dir = _make_bundle_tool("directions", catalog=self.catalog)
     decl_dir = tool_dir._get_declaration()
     self.assertIsNotNone(decl_dir)
     self.assertEqual(decl_dir.name, "render_directions_template")
 
-    tool_text = RenderTextOnlyTemplateTool(schema_manager=self.schema_manager)
+    tool_text = RenderTextOnlyTemplateTool(catalog=self.catalog)
     decl_text = tool_text._get_declaration()
     self.assertIsNotNone(decl_text)
     self.assertEqual(decl_text.name, "render_text_only_template")

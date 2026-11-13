@@ -32,6 +32,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import copy
 import inspect
+import json
 import logging
 import pathlib
 import time
@@ -46,15 +47,20 @@ from google.adk.tools.base_toolset import BaseToolset, ToolPredicate
 from google.adk.tools.set_model_response_tool import _merge_json_schema_descriptions
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
+import jsonschema
 import pydantic
 
-from a2ui.schema.manager import A2uiSchemaManager
+from a2ui.inference_formats.direct_json import DirectJsonParser
+from a2ui.core.catalog import CatalogApi
+from a2ui.core.exceptions import A2uiError
+from after_tools_callback import extract_user_query
 from merger import DEFAULT_CATALOG_ID
 from merger import merge_template
 from template_registry import (
     TemplateBundle,
     TemplateRegistry,
 )
+from templates.common import sort_extracted_places_by_proximity
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +92,7 @@ class BaseTemplateTool(BaseTool):
       description: str | None = None,
       template_name: str | None = None,
       schema_class: type[pydantic.BaseModel] | None = None,
-      schema_manager: A2uiSchemaManager | None = None,
+      catalog: CatalogApi | None = None,
       max_list_size: int = 5,
       surface_id_prefix: str | None = None,
       catalog_id: str = DEFAULT_CATALOG_ID,
@@ -99,7 +105,9 @@ class BaseTemplateTool(BaseTool):
     self.schema_class = (
         schema_class if schema_class is not None else self.schema_class
     )
-    self.schema_manager = schema_manager
+    self.catalog = catalog
+    self._parser: DirectJsonParser | None = None
+    self._parser_catalog: CatalogApi | None = None
     self.max_list_size = max_list_size
     self.catalog_id = catalog_id
     self.on_rendered = on_rendered
@@ -113,7 +121,7 @@ class BaseTemplateTool(BaseTool):
       cls,
       bundle: TemplateBundle,
       *,
-      schema_manager: A2uiSchemaManager | None = None,
+      catalog: CatalogApi | None = None,
       max_list_size: int = 5,
       catalog_id: str = DEFAULT_CATALOG_ID,
       on_rendered: RenderedMessagesHook | None = None,
@@ -126,7 +134,7 @@ class BaseTemplateTool(BaseTool):
         "template_name": bundle.name,
         "schema_class": bundle.schema_cls,
         "surface_id_prefix": bundle.surface_prefix,
-        "schema_manager": schema_manager,
+        "catalog": catalog,
         "max_list_size": max_list_size,
         "catalog_id": catalog_id,
         "on_rendered": on_rendered,
@@ -218,6 +226,10 @@ class BaseTemplateTool(BaseTool):
     if self.schema_class is not None:
       try:
         model_instance = self.schema_class.model_validate(args)
+        query = extract_user_query(tool_context)
+        model_instance = sort_extracted_places_by_proximity(
+            model_instance, query
+        )
         validated_data = model_instance.model_dump(exclude_none=True)
       except pydantic.ValidationError as e:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -258,26 +270,31 @@ class BaseTemplateTool(BaseTool):
       return {"error": f"Failed to merge template '{self.template_name}': {e}"}
 
     # 4. Catalog schema validation
-    if self.schema_manager:
-      selected_catalog = self.schema_manager.get_selected_catalog()
-      if selected_catalog:
-        try:
-          selected_catalog.validator.validate(merged_actions)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-          elapsed_ms = (time.perf_counter() - start_time) * 1000
-          logger.warning(
-              "--- TEMPLATE_TOOL: Catalog validation failed for '%s' in %.2f"
-              " ms: %s ---",
-              self.template_name,
-              elapsed_ms,
-              e,
-          )
-          return {
-              "error": (
-                  f"A2UI catalog schema validation failed: {e}. "
-                  "Please fix the parameters and retry."
-              )
-          }
+    if self.catalog is not None:
+      try:
+        if self._parser is None or self._parser_catalog is not self.catalog:
+          self._parser = DirectJsonParser([self.catalog])
+          self._parser_catalog = self.catalog
+        self._parser.parse_response(json.dumps(merged_actions), wrapped=False)
+      except (
+          A2uiError,
+          jsonschema.exceptions.ValidationError,
+          TypeError,
+      ) as e:
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.warning(
+            "--- TEMPLATE_TOOL: Catalog validation failed for '%s' in %.2f"
+            " ms: %s ---",
+            self.template_name,
+            elapsed_ms,
+            e,
+        )
+        return {
+            "error": (
+                f"A2UI catalog schema validation failed: {e}. "
+                "Please fix the parameters and retry."
+            )
+        }
 
     # 5. Hand the messages to the host's hook, or by default convert them to
     #    A2A Parts and persist them to session state.
@@ -343,7 +360,7 @@ class RenderTextOnlyTemplateTool(BaseTemplateTool):
       *,
       name: str | None = None,
       description: str | None = None,
-      schema_manager: A2uiSchemaManager | None = None,
+      catalog: CatalogApi | None = None,
       surface_id_prefix: str = "text-only-surface",
       catalog_id: str = DEFAULT_CATALOG_ID,
       on_rendered: RenderedMessagesHook | None = None,
@@ -351,7 +368,7 @@ class RenderTextOnlyTemplateTool(BaseTemplateTool):
     super().__init__(
         name=name,
         description=description,
-        schema_manager=schema_manager,
+        catalog=catalog,
         max_list_size=1,
         surface_id_prefix=surface_id_prefix,
         catalog_id=catalog_id,
@@ -366,7 +383,7 @@ class TemplateToolset(BaseToolset):
       self,
       *,
       template_registry: TemplateRegistry | None = None,
-      schema_manager: A2uiSchemaManager | None = None,
+      catalog: CatalogApi | None = None,
       max_list_size: int = 5,
       tool_filter: Optional[Union[ToolPredicate, list[str]]] = None,
       tool_name_prefix: Optional[str] = None,
@@ -374,7 +391,7 @@ class TemplateToolset(BaseToolset):
       on_rendered: RenderedMessagesHook | None = None,
   ) -> None:
     super().__init__(tool_filter=tool_filter, tool_name_prefix=tool_name_prefix)
-    self.schema_manager = schema_manager
+    self.catalog = catalog
     self.max_list_size = max_list_size
     self.catalog_id = catalog_id
     self.on_rendered = on_rendered
@@ -384,7 +401,7 @@ class TemplateToolset(BaseToolset):
       self._tools.append(
           BaseTemplateTool.from_bundle(
               bundle,
-              schema_manager=self.schema_manager,
+              catalog=self.catalog,
               max_list_size=self.max_list_size,
               catalog_id=self.catalog_id,
               on_rendered=self.on_rendered,
@@ -392,7 +409,7 @@ class TemplateToolset(BaseToolset):
       )
     self._tools.append(
         RenderTextOnlyTemplateTool(
-            schema_manager=self.schema_manager,
+            catalog=self.catalog,
             catalog_id=self.catalog_id,
             on_rendered=self.on_rendered,
         )

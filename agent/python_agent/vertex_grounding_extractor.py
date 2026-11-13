@@ -24,12 +24,86 @@ from google.genai import types
 import pydantic
 
 from agent import GROUNDED_TEXT_BASE_INSTRUCTION
+from templates.common import parse_user_coordinates
+from templates.common import sort_extracted_places_by_proximity
 
 logger = logging.getLogger(__name__)
+
+
+def build_retrieval_tool_config(query: str) -> types.ToolConfig | None:
+  """Builds a ToolConfig with user coordinate biasing if parsed from query.
+
+  Args:
+      query: User query string.
+
+  Returns:
+      ToolConfig with RetrievalConfig lat_lng populated, or None if coordinates
+      are not present.
+  """
+  coords = parse_user_coordinates(query)
+  if coords is None:
+    return None
+  lat, lng = coords
+  return types.ToolConfig(
+      retrieval_config=types.RetrievalConfig(
+          lat_lng=types.LatLng(latitude=lat, longitude=lng)
+      )
+  )
+
 
 T = TypeVar("T", bound=pydantic.BaseModel)
 
 _DATA_BLOCK_RE = re.compile(r"<data>(.*?)</data>", re.DOTALL | re.IGNORECASE)
+
+DUAL_GROUNDING_INSTRUCTIONS = """\
+## Dual-Tool Grounding Rules (Google Maps + Google Search)
+1. **Parallel Dual-Tool Co-Invocation**: Call Google Maps in parallel for every named venue, route endpoint, corridor stop, or search area; in parallel, call Google Search whenever the query needs live web details, schedules or transit options, policies, pricing, payment methods, or specific services and amenities not guaranteed in static Maps records.
+2. **Maps-Backed Entity Resolution**: Google Maps is the exclusive authority for place existence, verbatim Place IDs, coordinates, addresses, ratings, and travel metrics. If Search surfaces a venue not yet retrieved from Maps, call Google Maps to verify its verbatim Place ID and metrics—or emit only Maps-verified venues.
+3. **Evidence Hierarchy & Web Enrichment**: Always preserve Google Maps numeric distances (miles/km/ft) and estimated travel or detour times alongside live web specifics from Search; fall back to general norms only when a requested detail is absent from both tools.
+"""
+
+
+def log_grounding_metadata(
+    response: Any,
+    enable_search_grounding: bool,
+) -> None:
+  """Logs grounding metadata and chunk counts for Search observability.
+
+  Args:
+      response: Response object from generate_content.
+      enable_search_grounding: Whether Search grounding was requested.
+  """
+  try:
+    web_search_queries: list[str] = []
+    maps_chunks = 0
+    web_chunks = 0
+
+    candidates = getattr(response, "candidates", None)
+    if isinstance(candidates, (list, tuple)) and candidates:
+      candidate = candidates[0]
+      meta = getattr(candidate, "grounding_metadata", None)
+      if meta is not None:
+        raw_queries = getattr(meta, "web_search_queries", None)
+        if isinstance(raw_queries, (list, tuple)):
+          web_search_queries = [q for q in raw_queries if isinstance(q, str)]
+        raw_chunks = getattr(meta, "grounding_chunks", None)
+        if isinstance(raw_chunks, (list, tuple)):
+          for chunk in raw_chunks:
+            if getattr(chunk, "maps", None) is not None:
+              maps_chunks += 1
+            if getattr(chunk, "web", None) is not None:
+              web_chunks += 1
+
+    logger.info(
+        "Vertex Grounding: enable_search_grounding=%s,"
+        " web_search_queries=%s, maps_chunks=%d, web_chunks=%d",
+        enable_search_grounding,
+        web_search_queries,
+        maps_chunks,
+        web_chunks,
+    )
+  except Exception as e:  # pylint: disable=broad-except
+    logger.debug("Failed to log grounding metadata: %s", e)
 
 
 class VertexGroundingExtractor:
@@ -41,11 +115,37 @@ class VertexGroundingExtractor:
       model_id: str = "gemini-3.7-flash",
       shared_guidelines: str = "",
       thinking_budget: int = 0,
+      enable_search_grounding: bool = True,
   ):
+    """Initializes VertexGroundingExtractor.
+
+    Args:
+        client: GenAI client instance.
+        model_id: Model ID for grounded extraction.
+        shared_guidelines: Style and formatting guidelines string.
+        thinking_budget: Thinking budget for reasoning models.
+        enable_search_grounding: Whether to enable Google Search grounding
+          alongside Google Maps. Defaults to True.
+    """
     self.client = client
     self.model_id = model_id.removeprefix("gemini/").removeprefix("models/")
     self.shared_guidelines = shared_guidelines
     self.thinking_budget = thinking_budget
+    self.enable_search_grounding = enable_search_grounding
+
+  def _log_grounding_metadata(self, response: Any) -> None:
+    """Logs grounding metadata and chunk counts for Search observability."""
+    log_grounding_metadata(
+        response=response,
+        enable_search_grounding=self.enable_search_grounding,
+    )
+
+  def _build_tools(self) -> list[types.Tool]:
+    """Builds the list of tools for grounded extraction."""
+    tools = [types.Tool(google_maps=types.GoogleMaps())]
+    if self.enable_search_grounding:
+      tools.append(types.Tool(google_search=types.GoogleSearch()))
+    return tools
 
   def _build_instruction(
       self,
@@ -55,11 +155,11 @@ class VertexGroundingExtractor:
   ) -> str:
     """Builds the system instruction for a free-text grounded extraction.
 
-    The request deliberately does not set `response_schema`. Structured output
-    suppresses Maps `groundingChunks` entirely, because the citation pipeline
-    has no natural-language spans to attach sources to. Asking for prose plus a
-    delimited data block keeps the response free-text, so grounding survives,
-    while still yielding a machine-readable payload.
+    The request deliberately does not set `response_schema`, which suppresses
+    Google Maps grounding tool execution in Vertex AI. Asking for a delimited
+    `<data>...</data>` JSON block keeps the response free-text so the grounding
+    tool executes and returns verified place IDs and facts, while still yielding
+    a machine-readable payload.
 
     Args:
         schema_cls: Pydantic model the data block must satisfy.
@@ -75,17 +175,16 @@ class VertexGroundingExtractor:
     )
     schema_json = json.dumps(schema_cls.model_json_schema(), indent=2)
 
+    dual_grounding_block = (
+        f"\n\n{DUAL_GROUNDING_INSTRUCTIONS}"
+        if self.enable_search_grounding
+        else ""
+    )
+
     return f"""You are an expert location specialist.
-You MUST call the Google Maps tool to answer the user's location request.
-Do not rely on your internal knowledge.
+You MUST call the Google Maps tool to answer the user's location request and follow the Grounding & Tool-Calling Policy.{dual_grounding_block}
 
-Respond in TWO parts, in this order.
-
-PART 1: A natural-language summary that mentions EVERY place you found, by
-name, with one short sentence about each. Do not omit any place. This part is
-required: it is what the grounding engine attaches its Maps citations to.
-
-PART 2: A machine-readable block wrapped in <data> and </data> tags, containing
+Respond with a machine-readable block wrapped in <data> and </data> tags, containing
 a single JSON object conforming to this JSON Schema:
 
 {schema_json}
@@ -94,9 +193,8 @@ CRITICAL RULES:
 1. For geographic coordinates (latitude and longitude), provide accurate coordinates based on the tool findings.
 2. Strictly honor user constraints (e.g., outdoor vs indoor, ratings, price, dietary restrictions, and travel modes).
 3. If extracting a list of places, limit the results to at most {max_places} places.
-4. Every place named in PART 1 MUST appear in PART 2, and vice versa.
-5. If extracting directions or routes, you MUST populate 'routes' with RouteSegment items connecting the origin, any waypoints, and the destination with accurate latitude and longitude coordinates.
-6. Emit nothing after the closing </data> tag.{guidelines_block}{skill_block}
+4. If extracting directions or routes, you MUST populate 'routes' with RouteSegment items connecting the origin, any waypoints, and the destination with accurate latitude and longitude coordinates.
+5. Emit nothing outside the <data> and </data> tags.{guidelines_block}{skill_block}
 """
 
   def _parse_data_block(self, response_text: str) -> str:
@@ -145,8 +243,11 @@ CRITICAL RULES:
         "system_instruction": self._build_instruction(
             schema_cls, max_places, skill_instructions=skill_instructions
         ),
-        "tools": [types.Tool(google_maps=types.GoogleMaps())],
+        "tools": self._build_tools(),
     }
+    tool_config = build_retrieval_tool_config(query)
+    if tool_config is not None:
+      config_kwargs["tool_config"] = tool_config
     if self.thinking_budget > 0:
       config_kwargs["thinking_config"] = types.ThinkingConfig(
           thinking_budget=self.thinking_budget
@@ -157,6 +258,7 @@ CRITICAL RULES:
         contents=query,
         config=types.GenerateContentConfig(**config_kwargs),
     )
+    self._log_grounding_metadata(response)
 
     data_block = self._parse_data_block(response.text)
     try:
@@ -164,7 +266,8 @@ CRITICAL RULES:
     except (json.JSONDecodeError, TypeError) as e:
       raise ValueError(f"<data> block was not valid JSON: {e}") from e
 
-    return schema_cls.model_validate(data)
+    validated = schema_cls.model_validate(data)
+    return sort_extracted_places_by_proximity(validated, query)
 
   async def generate_grounded_text(
       self,
@@ -182,17 +285,22 @@ CRITICAL RULES:
         The generated text, or an empty string on error or safety block.
     """
     if system_instruction is None:
+      base_inst = GROUNDED_TEXT_BASE_INSTRUCTION
+      if self.enable_search_grounding:
+        base_inst = f"{base_inst}\n\n{DUAL_GROUNDING_INSTRUCTIONS}"
       if self.shared_guidelines:
         system_instruction = (
-            f"{GROUNDED_TEXT_BASE_INSTRUCTION}\n\n"
-            f"## Style Guidelines\n{self.shared_guidelines}"
+            f"{base_inst}\n\n## Style Guidelines\n{self.shared_guidelines}"
         )
       else:
-        system_instruction = GROUNDED_TEXT_BASE_INSTRUCTION
+        system_instruction = base_inst
     config_kwargs: dict[str, Any] = {
         "system_instruction": system_instruction,
-        "tools": [types.Tool(google_maps=types.GoogleMaps())],
+        "tools": self._build_tools(),
     }
+    tool_config = build_retrieval_tool_config(query)
+    if tool_config is not None:
+      config_kwargs["tool_config"] = tool_config
     if self.thinking_budget > 0:
       config_kwargs["thinking_config"] = types.ThinkingConfig(
           thinking_budget=self.thinking_budget
@@ -204,6 +312,7 @@ CRITICAL RULES:
           contents=query,
           config=types.GenerateContentConfig(**config_kwargs),
       )
+      self._log_grounding_metadata(response)
       return response.text or ""
     except Exception as e:
       logger.exception("Error generating grounded text with Vertex AI: %s", e)
