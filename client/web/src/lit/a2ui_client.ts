@@ -82,8 +82,23 @@ export class A2UIClient {
     return [{ kind: "text", text: message }];
   }
 
-  private async addContentTokens(tokens: string[]): Promise<void> {
-    if (tokens.length === 0) return;
+  private async addContentTokens(tokens: unknown): Promise<void> {
+    if (tokens == null || typeof tokens !== 'object' || Array.isArray(tokens)) {
+      return;
+    }
+    const tokenSet = new Set<string>();
+    for (const value of Object.values(tokens)) {
+      if (typeof value === 'string' && value.length > 0) {
+        tokenSet.add(value);
+      } else if (Array.isArray(value)) {
+        for (const item of value) {
+          if (typeof item === 'string' && item.length > 0) {
+            tokenSet.add(item);
+          }
+        }
+      }
+    }
+    if (tokenSet.size === 0) return;
     let settingsClass =
         typeof google !== 'undefined' ? google.maps?.Settings : undefined;
     if (!settingsClass) {
@@ -99,7 +114,7 @@ export class A2UIClient {
       addContentTokens?: (tokens: Iterable<string>) => void;
     }
     |undefined;
-    settings?.addContentTokens?.(tokens);
+    settings?.addContentTokens?.(Array.from(tokenSet));
   }
 
   async send(message: any|string): Promise<
@@ -128,10 +143,9 @@ export class A2UIClient {
           const partObj = part as {
             root?: {metadata?: Record<string, unknown>};
           };
-          const tokens = partObj.root?.metadata?.['maps_tools_content_tokens'];
-          if (Array.isArray(tokens)) {
-            await this.addContentTokens(tokens);
-          }
+          await this.addContentTokens(
+              partObj.root?.metadata?.['maps_tools_content_tokens'],
+          );
           orderedParts.push({type: 'a2ui', message: part.data});
         } else if (part.kind === 'text') {
           orderedParts.push({ type: "text", text: part.text });
@@ -177,10 +191,9 @@ export class A2UIClient {
           const partObj = part as {
             root?: {metadata?: Record<string, unknown>};
           };
-          const tokens = partObj.root?.metadata?.['maps_tools_content_tokens'];
-          if (Array.isArray(tokens)) {
-            await this.addContentTokens(tokens);
-          }
+          await this.addContentTokens(
+              partObj.root?.metadata?.['maps_tools_content_tokens'],
+          );
           const payloadStr = JSON.stringify(part.data);
           if (!yieldedDataPayloads.has(payloadStr)) {
             yield { type: "a2ui", message: part.data };

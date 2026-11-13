@@ -55,11 +55,11 @@ class VertexGroundingExtractor:
   ) -> str:
     """Builds the system instruction for a free-text grounded extraction.
 
-    The request deliberately does not set `response_schema`. Structured output
-    suppresses Maps `groundingChunks` entirely, because the citation pipeline
-    has no natural-language spans to attach sources to. Asking for prose plus a
-    delimited data block keeps the response free-text, so grounding survives,
-    while still yielding a machine-readable payload.
+    The request deliberately does not set `response_schema`, which suppresses
+    Google Maps grounding tool execution in Vertex AI. Asking for a delimited
+    `<data>...</data>` JSON block keeps the response free-text so the grounding
+    tool executes and returns verified place IDs and facts, while still yielding
+    a machine-readable payload.
 
     Args:
         schema_cls: Pydantic model the data block must satisfy.
@@ -76,16 +76,9 @@ class VertexGroundingExtractor:
     schema_json = json.dumps(schema_cls.model_json_schema(), indent=2)
 
     return f"""You are an expert location specialist.
-You MUST call the Google Maps tool to answer the user's location request.
-Do not rely on your internal knowledge.
+You MUST call the Google Maps tool to answer the user's location request and follow the Grounding & Tool-Calling Policy.
 
-Respond in TWO parts, in this order.
-
-PART 1: A natural-language summary that mentions EVERY place you found, by
-name, with one short sentence about each. Do not omit any place. This part is
-required: it is what the grounding engine attaches its Maps citations to.
-
-PART 2: A machine-readable block wrapped in <data> and </data> tags, containing
+Respond with a machine-readable block wrapped in <data> and </data> tags, containing
 a single JSON object conforming to this JSON Schema:
 
 {schema_json}
@@ -94,9 +87,8 @@ CRITICAL RULES:
 1. For geographic coordinates (latitude and longitude), provide accurate coordinates based on the tool findings.
 2. Strictly honor user constraints (e.g., outdoor vs indoor, ratings, price, dietary restrictions, and travel modes).
 3. If extracting a list of places, limit the results to at most {max_places} places.
-4. Every place named in PART 1 MUST appear in PART 2, and vice versa.
-5. If extracting directions or routes, you MUST populate 'routes' with RouteSegment items connecting the origin, any waypoints, and the destination with accurate latitude and longitude coordinates.
-6. Emit nothing after the closing </data> tag.{guidelines_block}{skill_block}
+4. If extracting directions or routes, you MUST populate 'routes' with RouteSegment items connecting the origin, any waypoints, and the destination with accurate latitude and longitude coordinates.
+5. Emit nothing outside the <data> and </data> tags.{guidelines_block}{skill_block}
 """
 
   def _parse_data_block(self, response_text: str) -> str:

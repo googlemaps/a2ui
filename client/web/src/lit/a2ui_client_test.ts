@@ -74,7 +74,12 @@ describe('A2UIClient', () => {
                 data: {createSurface: {surfaceId: 'map_1'}},
                 root: {
                   metadata: {
-                    maps_tools_content_tokens: ['token_1', 'token_2'],
+                    maps_tools_content_tokens: {
+                      place_1: 'token_1',
+                      place_2: 'token_2',
+                      place_3: 'token_1',
+                      '': ['fallback_token_1', 'token_1'],
+                    },
                   },
                 },
               },
@@ -95,6 +100,7 @@ describe('A2UIClient', () => {
     expect(mockAddContentTokens).toHaveBeenCalledOnceWith([
       'token_1',
       'token_2',
+      'fallback_token_1',
     ]);
   });
 
@@ -121,7 +127,9 @@ describe('A2UIClient', () => {
                        data: {updateDataModel: {foo: 'bar'}},
                        root: {
                          metadata: {
-                           maps_tools_content_tokens: ['stream_token_1'],
+                           maps_tools_content_tokens: {
+                             place_1: 'stream_token_1',
+                           },
                          },
                        },
                      },
@@ -151,7 +159,7 @@ describe('A2UIClient', () => {
        ]);
      });
 
-  it('should not call addContentTokens when maps_tools_content_tokens is absent',
+  it('should not call addContentTokens when maps_tools_content_tokens is absent, empty, or invalid',
      async () => {
        mockA2AClient.sendMessage.and.resolveTo({
          result: {
@@ -160,6 +168,29 @@ describe('A2UIClient', () => {
              message: {
                parts: [
                  {kind: 'data', data: {createSurface: {surfaceId: 'map_1'}}},
+                 {
+                   kind: 'data',
+                   data: {createSurface: {surfaceId: 'map_2'}},
+                   root: {metadata: {maps_tools_content_tokens: {}}},
+                 },
+                 {
+                   kind: 'data',
+                   data: {createSurface: {surfaceId: 'map_3'}},
+                   root: {metadata: {maps_tools_content_tokens: ['token_1']}},
+                 },
+                 {
+                   kind: 'data',
+                   data: {createSurface: {surfaceId: 'map_4'}},
+                   root: {
+                     metadata: {
+                       maps_tools_content_tokens: {
+                         place_1: 123,
+                         place_2: null,
+                         place_3: '',
+                       },
+                     },
+                   },
+                 },
                ],
              },
            },
@@ -199,7 +230,9 @@ describe('A2UIClient', () => {
                    data: {createSurface: {surfaceId: 'map_1'}},
                    root: {
                      metadata: {
-                       maps_tools_content_tokens: ['lazy_token_1'],
+                       maps_tools_content_tokens: {
+                         place_1: 'lazy_token_1',
+                       },
                      },
                    },
                  },
@@ -238,7 +271,9 @@ describe('A2UIClient', () => {
                 data: {createSurface: {surfaceId: 'map_1'}},
                 root: {
                   metadata: {
-                    maps_tools_content_tokens: ['lazy_token_1'],
+                    maps_tools_content_tokens: {
+                      place_1: 'lazy_token_1',
+                    },
                   },
                 },
               },
