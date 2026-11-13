@@ -22,14 +22,15 @@ from a2a.types import DataPart
 from google import genai
 
 from a2ui.a2a.parts import create_a2ui_part
-from a2ui.schema.constants import VERSION_0_9
 import agent_config
 import agent_with_grounding
+from agent import VERSION_0_9
 from router import VertexIntentClassifier
 from template_registry import INTENT_OTHER_SPATIAL, INTENT_TEXT_ONLY
 from templates.common import Pin
 from templates.directions.schema import DirectionsExtractorSchema, RouteSegment
 from templates.local_search.schema import LocalSearchExtractorSchema, PlacePin
+from vertex_grounding_extractor import DUAL_GROUNDING_INSTRUCTIONS
 
 AgentConfig = agent_config.AgentConfig
 FallbackMode = agent_config.FallbackMode
@@ -191,8 +192,6 @@ class MAUIAgentWithGroundingTest(unittest.IsolatedAsyncioTestCase):
         return_value=LocalSearchExtractorSchema(
             heading="Coffee Shops in Seattle",
             summary="Found coffee shops.",
-            center_lat=47.6,
-            center_lng=-122.3,
             places=[
                 PlacePin(
                     name="Coffee Shop A",
@@ -236,8 +235,6 @@ class MAUIAgentWithGroundingTest(unittest.IsolatedAsyncioTestCase):
     mock_extractor.extract = mock.AsyncMock(
         return_value=DirectionsExtractorSchema(
             summary="Directions from Times Sq to Central Park.",
-            center_lat=40.77,
-            center_lng=-73.97,
             travel_mode="walking",
             heading="Walking Directions",
             routes=[
@@ -427,7 +424,170 @@ class MAUIAgentWithGroundingTest(unittest.IsolatedAsyncioTestCase):
     self.assertIsInstance(guidelines, str)
     self.assertGreater(len(guidelines), 0)
 
+  def test_agent_config_enable_search_grounding_default_true(self):
+    """Verifies AgentConfig.enable_search_grounding defaults to True."""
+    cfg = AgentConfig()
+    self.assertTrue(cfg.enable_search_grounding)
+
+  def test_agent_config_enable_search_grounding_opt_out(self):
+    """Verifies AgentConfig.enable_search_grounding can be explicitly disabled."""
+    cfg = AgentConfig(enable_search_grounding=False)
+    self.assertFalse(cfg.enable_search_grounding)
+
+  def test_maui_agent_with_grounding_enable_search_grounding_precedence(self):
+    """Verifies constructor parameter and template_config precedence for enable_search_grounding."""
+    # 1. Default without config -> True
+    agent1 = MAUIAgentWithGrounding(base_url=self.base_url)
+    self.assertTrue(agent1.enable_search_grounding)
+
+    # 2. Config with False -> False (opt-out preserved)
+    agent2 = MAUIAgentWithGrounding(
+        base_url=self.base_url,
+        template_config=AgentConfig(enable_search_grounding=False),
+    )
+    self.assertFalse(agent2.enable_search_grounding)
+
+    # 3. Config with True -> True
+    agent3 = MAUIAgentWithGrounding(
+        base_url=self.base_url,
+        template_config=AgentConfig(enable_search_grounding=True),
+    )
+    self.assertTrue(agent3.enable_search_grounding)
+
+    # 4. Explicit constructor flag True overrides config False
+    agent4 = MAUIAgentWithGrounding(
+        base_url=self.base_url,
+        template_config=AgentConfig(enable_search_grounding=False),
+        enable_search_grounding=True,
+    )
+    self.assertTrue(agent4.enable_search_grounding)
+
+    # 5. Explicit constructor flag False overrides config True (kills
+    # truthiness mutants and preserves opt-out).
+    agent5 = MAUIAgentWithGrounding(
+        base_url=self.base_url,
+        template_config=AgentConfig(enable_search_grounding=True),
+        enable_search_grounding=False,
+    )
+    self.assertFalse(agent5.enable_search_grounding)
+
+    # 6. Explicit constructor flag False without config -> False
+    agent6 = MAUIAgentWithGrounding(
+        base_url=self.base_url,
+        enable_search_grounding=False,
+    )
+    self.assertFalse(agent6.enable_search_grounding)
+
+  def test_vertex_extractor_lazily_created_with_search_grounding(self):
+    """Verifies _get_vertex_extractor forwards enable_search_grounding to extractor."""
+    agent = MAUIAgentWithGrounding(
+        base_url=self.base_url,
+        template_config=AgentConfig(enable_search_grounding=True),
+    )
+    with mock.patch.dict(
+        os.environ,
+        {"GOOGLE_CLOUD_PROJECT": "test-p1", "GOOGLE_CLOUD_LOCATION": "global"},
+        clear=True,
+    ):
+      extractor = agent._get_vertex_extractor()  # pylint: disable=protected-access
+      self.assertTrue(extractor.enable_search_grounding)
+
+  @mock.patch("google.genai.Client")
+  async def test_query_vertex_map_attaches_dual_tools_by_default(
+      self, mock_client_cls
+  ):
+    """Verifies query_vertex_map defaults to dual tools (GoogleMaps + GoogleSearch)."""
+    from agent_with_grounding import query_vertex_map  # pylint: disable=g-import-not-at-top
+
+    mock_client = mock.MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_client.models.generate_content.return_value = mock.MagicMock(
+        text="<a2ui-json>{}</a2ui-json>"
+    )
+
+    with mock.patch.dict(
+        os.environ,
+        {"GOOGLE_CLOUD_PROJECT": "test-p1", "GOOGLE_CLOUD_LOCATION": "global"},
+        clear=True,
+    ):
+      await query_vertex_map("coffee in Seattle")
+
+    call_kwargs = mock_client.models.generate_content.call_args.kwargs
+    tools = call_kwargs["config"].tools
+    self.assertEqual(len(tools), 2)
+    has_maps = any(t.google_maps is not None for t in tools)
+    has_search = any(t.google_search is not None for t in tools)
+    self.assertTrue(has_maps)
+    self.assertTrue(has_search)
+    instruction = call_kwargs["config"].system_instruction
+    self.assertIn(DUAL_GROUNDING_INSTRUCTIONS, instruction)
+
+  @mock.patch("google.genai.Client")
+  async def test_query_vertex_map_attaches_maps_only_when_search_disabled(
+      self, mock_client_cls
+  ):
+    """Verifies query_vertex_map attaches only GoogleMaps tool when search is disabled."""
+    from agent_with_grounding import query_vertex_map  # pylint: disable=g-import-not-at-top
+
+    mock_client = mock.MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_client.models.generate_content.return_value = mock.MagicMock(
+        text="<a2ui-json>{}</a2ui-json>"
+    )
+
+    with mock.patch.dict(
+        os.environ,
+        {"GOOGLE_CLOUD_PROJECT": "test-p1", "GOOGLE_CLOUD_LOCATION": "global"},
+        clear=True,
+    ):
+      await query_vertex_map("coffee in Seattle", enable_search_grounding=False)
+
+    call_kwargs = mock_client.models.generate_content.call_args.kwargs
+    tools = call_kwargs["config"].tools
+    self.assertEqual(len(tools), 1)
+    self.assertIsNotNone(tools[0].google_maps)
+    self.assertIsNone(tools[0].google_search)
+    instruction = call_kwargs["config"].system_instruction
+    self.assertNotIn(DUAL_GROUNDING_INSTRUCTIONS, instruction)
+    self.assertNotIn("Google Search", instruction)
+
+  @mock.patch("google.genai.Client")
+  async def test_query_vertex_map_logs_grounding_metadata(
+      self, mock_client_cls
+  ):
+    """Verifies query_vertex_map logs grounding metadata at INFO level."""
+    from agent_with_grounding import query_vertex_map  # pylint: disable=g-import-not-at-top
+
+    mock_client = mock.MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_response = mock.MagicMock()
+    mock_response.text = "<a2ui-json>{}</a2ui-json>"
+    mock_meta = mock.MagicMock()
+    mock_meta.web_search_queries = ["coffee near me"]
+    mock_meta.grounding_chunks = []
+    mock_candidate = mock.MagicMock()
+    mock_candidate.grounding_metadata = mock_meta
+    mock_response.candidates = [mock_candidate]
+    mock_client.models.generate_content.return_value = mock_response
+
+    with mock.patch.dict(
+        os.environ,
+        {"GOOGLE_CLOUD_PROJECT": "test-p1", "GOOGLE_CLOUD_LOCATION": "global"},
+        clear=True,
+    ):
+      with self.assertLogs(
+          "vertex_grounding_extractor",
+          level="INFO",
+      ) as log_ctx:
+        await query_vertex_map(
+            "coffee in Seattle", enable_search_grounding=True
+        )
+
+    log_output = "\n".join(log_ctx.output)
+    self.assertIn("Vertex Grounding:", log_output)
+    self.assertIn("enable_search_grounding=True", log_output)
+    self.assertIn("web_search_queries=['coffee near me']", log_output)
+
 
 if __name__ == "__main__":
   unittest.main()
-
