@@ -86,11 +86,6 @@ class NearbyPlacesDepthExtractorSchema(BaseModel):
           " conversational filler."
       ),
   )
-  center_lat: float = Field(description="Latitude of the center of results")
-  center_lng: float = Field(description="Longitude of the center of results")
-  zoom: int = Field(
-      default=14, description="Recommended map zoom level (typically 14)"
-  )
   places: list[NearbyPlaceItem] = Field(
       min_length=1,
       description=(

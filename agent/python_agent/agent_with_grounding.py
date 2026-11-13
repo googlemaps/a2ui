@@ -30,15 +30,18 @@ from google.adk.tools.function_tool import FunctionTool
 from google.genai import types
 
 from a2ui.a2a.parts import create_a2ui_part
-from a2ui.schema.catalog import CatalogConfig
-from a2ui.schema.common_modifiers import remove_strict_validation
-from a2ui.schema.constants import VERSION_0_9
-from a2ui.schema.manager import A2uiSchemaManager
+from a2ui.inference_formats.direct_json import DirectJsonFormatFactory
+from a2ui.processor import A2uiRequestProcessor
 import merger
-from agent import AGENT_INSTRUCTION, MAUIAgent, MergedCatalogProvider
+from agent import AGENT_INSTRUCTION
+from agent import MAUIAgent
+from agent import MergedCatalogProvider
+from agent import VERSION_0_9
 from agent_config import AgentConfig, FallbackMode
 from router import VertexIntentClassifier
 from template_registry import INTENT_OTHER_SPATIAL, INTENT_TEXT_ONLY, TemplateRegistry
+from vertex_grounding_extractor import DUAL_GROUNDING_INSTRUCTIONS
+from vertex_grounding_extractor import log_grounding_metadata
 from vertex_grounding_extractor import VertexGroundingExtractor
 
 logger = logging.getLogger(__name__)
@@ -61,12 +64,15 @@ else:
 async def query_vertex_map(
     query: str,
     model_id: str = "gemini-3-flash-preview",
+    enable_search_grounding: bool = True,
 ) -> str:
   """Query Google Maps via Vertex Grounding and return cleaned response.
 
   Args:
       query: The location query or question.
       model_id: The model ID to use for Vertex Grounding.
+      enable_search_grounding: Whether to enable Google Search grounding
+        alongside Google Maps. Defaults to True.
 
   Returns:
       The grounded and cleaned A2UI response string.
@@ -105,29 +111,25 @@ async def query_vertex_map(
         / "maps_catalog_extension.json"
     )
 
-  schema_manager = A2uiSchemaManager(
-      version=VERSION_0_9,
-      catalogs=[
-          CatalogConfig(
-              name="maps-agentic-ui-catalog",
-              provider=MergedCatalogProvider(VERSION_0_9, str(extension_path)),
-          )
-      ],
-      schema_modifiers=[remove_strict_validation],
+  catalog = MergedCatalogProvider(VERSION_0_9, str(extension_path)).load()
+  processor = A2uiRequestProcessor(
+      catalogs=[catalog],
+      format_factory=DirectJsonFormatFactory(),
   )
+  generated_prompt = f"{base_instruction}\n\n{processor.prompt_snippet}"
 
-  generated_prompt = schema_manager.generate_system_prompt(
-      role_description=base_instruction,
-      include_schema=True,
-      include_examples=False,
-      validate_examples=False,
-  )
+  tools = [types.Tool(google_maps=types.GoogleMaps())]
+  if enable_search_grounding:
+    tools.append(types.Tool(google_search=types.GoogleSearch()))
+    dual_grounding_instructions = f"\n\n{DUAL_GROUNDING_INSTRUCTIONS}"
+  else:
+    dual_grounding_instructions = ""
 
-  final_instruction = """You MUST use the Google Maps tool to answer the user's query. Do not rely on your internal knowledge.
+  final_instruction = f"""You MUST use the Google Maps tool to answer the user's query. Always use available tool outputs as the source of truth for places, routes, and any attributes they provide; only when a requested detail is absent from available tool outputs, answer using general knowledge with a brief caveat if not confident.
     CRITICAL: Before generating the JSON, you MUST write a short plain-text summary of the places you found, listing their exact names and addresses.
     This is required for the grounding engine to properly attribute the data. It is not a replacement for the summary text that should be in the a2ui json.
     IMPORTANT: When generating the A2UI JSON response, you MUST include the "<a2ui-json> ...content... </a2ui-json>" tags immediately around the JSON content.
-    Failure to do so will prevent the UI from rendering the map.
+    Failure to do so will prevent the UI from rendering the map.{dual_grounding_instructions}
     """
 
   instruction = f"{generated_prompt}\n\n{skill_content}\n\n{final_instruction}"
@@ -138,8 +140,12 @@ async def query_vertex_map(
       contents=query,
       config=types.GenerateContentConfig(
           system_instruction=instruction,
-          tools=[types.Tool(google_maps=types.GoogleMaps())],
+          tools=tools,
       ),
+  )
+  log_grounding_metadata(
+      response,
+      enable_search_grounding=enable_search_grounding,
   )
 
   final_response_content = response.text
@@ -166,6 +172,7 @@ class MAUIAgentWithGrounding(MAUIAgent):
       base_url: str,
       model_name: str = "gemini/gemini-3-flash-preview",
       template_config: AgentConfig | None = None,
+      enable_search_grounding: bool | None = None,
   ):
     """Initializes MAUIAgentWithGrounding.
 
@@ -174,6 +181,9 @@ class MAUIAgentWithGrounding(MAUIAgent):
       model_name: Model used for unconstrained dynamic UI generation.
       template_config: Optional configuration enabling template-based intent
         routing and extraction.
+      enable_search_grounding: Optional override enabling Google Search
+        grounding alongside Google Maps. If None, derived from
+        template_config.enable_search_grounding (defaults to True).
     """
     super().__init__(
         base_url,
@@ -181,6 +191,13 @@ class MAUIAgentWithGrounding(MAUIAgent):
         model_name=model_name,
     )
     self.template_config = template_config
+    if enable_search_grounding is not None:
+      self.enable_search_grounding = enable_search_grounding
+    elif template_config is not None:
+      self.enable_search_grounding = template_config.enable_search_grounding
+    else:
+      self.enable_search_grounding = True
+
     self._genai_client: genai.Client | None = None
     self._router_classifier: VertexIntentClassifier | None = None
     self._vertex_extractor: VertexGroundingExtractor | None = None
@@ -233,6 +250,7 @@ class MAUIAgentWithGrounding(MAUIAgent):
           model_id=self.template_config.template_model,
           shared_guidelines=self._load_shared_guidelines(),
           thinking_budget=self.template_config.extractor_thinking_budget,
+          enable_search_grounding=self.enable_search_grounding,
       )
     return self._vertex_extractor
 
@@ -389,10 +407,14 @@ class MAUIAgentWithGrounding(MAUIAgent):
         The grounded and cleaned A2UI response string.
     """
     model_id = self._model_name.removeprefix("gemini/").removeprefix("models/")
-    return await query_vertex_map(query, model_id=model_id)
+    return await query_vertex_map(
+        query,
+        model_id=model_id,
+        enable_search_grounding=self.enable_search_grounding,
+    )
 
   def _build_llm_agent(
-      self, schema_manager: A2uiSchemaManager | None = None
+      self, processor: A2uiRequestProcessor | None = None
   ) -> LlmAgent:
     """Builds the LLM agent for the MAUI agent with grounding."""
 
@@ -419,13 +441,8 @@ class MAUIAgentWithGrounding(MAUIAgent):
 
         CRITICAL: Return the output of the query_vertex_map tool EXACTLY as it is received, without any summarization, explanation, or modification. Your final response should be just the output of the tool."""
 
-    if schema_manager:
-      instruction = schema_manager.generate_system_prompt(
-          role_description=agent_instruction,
-          include_schema=True,
-          include_examples=False,
-          validate_examples=False,
-      )
+    if processor:
+      instruction = f"{agent_instruction}\n\n{processor.prompt_snippet}"
     else:
       instruction = agent_instruction
 

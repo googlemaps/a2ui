@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 from typing import Any
 import uuid
 
@@ -45,31 +46,34 @@ from google.genai import types
 import jsonschema
 
 import a2ui.a2a.extension as a2ui_extension
-from a2ui.a2a.parts import create_a2ui_part, parse_response_to_parts, stream_response_to_parts
-from a2ui.basic_catalog.provider import BundledCatalogProvider
-from a2ui.parser.constants import (
-    MSG_TYPE_CREATE_SURFACE,
-    MSG_TYPE_DELETE_SURFACE,
-    MSG_TYPE_UPDATE_COMPONENTS,
-    MSG_TYPE_UPDATE_DATA_MODEL,
-)
-from a2ui.parser.parser import parse_response
-from a2ui.parser.streaming import A2uiStreamParser
-from a2ui.schema.catalog import CatalogConfig
-from a2ui.schema.catalog_provider import A2uiCatalogProvider
-from a2ui.schema.common_modifiers import remove_strict_validation
-from a2ui.schema.constants import (
-    A2UI_CLOSE_TAG,
-    A2UI_OPEN_TAG,
-    SURFACE_ID_KEY,
-    VERSION_0_9,
-)
-from a2ui.schema.manager import A2uiSchemaManager
-from after_tools_callback import (
-    _add_maps_tools_tokens_to_part,
-    after_tools_callback,
-)
+from a2ui.a2a.parts import create_a2ui_part
+from a2ui.a2a.parts import stream_response_to_parts
+from a2ui.a2a.parts import to_a2a_parts
+from a2ui.constants import A2UI_CLOSE_TAG
+from a2ui.constants import A2UI_OPEN_TAG
+from a2ui.constants import SURFACE_ID_KEY
+from a2ui.inference_formats.direct_json import DirectJsonFormatFactory
+from a2ui.parser import A2uiPart
+from a2ui.parser import RawA2uiPart
+from a2ui.parser import TextPart as ParserTextPart
+from a2ui.parser.constants import MSG_TYPE_CREATE_SURFACE
+from a2ui.parser.constants import MSG_TYPE_DELETE_SURFACE
+from a2ui.parser.constants import MSG_TYPE_UPDATE_COMPONENTS
+from a2ui.parser.constants import MSG_TYPE_UPDATE_DATA_MODEL
+from a2ui.processor import A2uiRequestProcessor
+from a2ui.processor import CatalogProvider
+from a2ui.core.basic_catalog import BasicCatalog
+from a2ui.core.catalog import Catalog
+from a2ui.core.catalog import CatalogApi
+from a2ui.core.common import to_protocol_version
+from a2ui.core.exceptions import A2uiError
+from a2ui.core.schema import ProtocolVersion
+from after_tools_callback import _add_maps_tools_tokens_to_part
+from after_tools_callback import after_tools_callback
 from merger import merge_template
+
+VERSION_0_9 = ProtocolVersion.V0_9.value
+_SURFACE_ID_PATTERN = re.compile(r'"surfaceId"\s*:\s*"([^"]+)"')
 
 logger = logging.getLogger(__name__)
 
@@ -126,25 +130,32 @@ GROUNDED_TEXT_BASE_INSTRUCTION = """\
 You are an expert location and navigation assistant with access to Google Maps tools.
 
 ## Core Rules
-1. **Accuracy & Grounding**: Use Google Maps tools to look up real-time places, business hours, amenities, contact details, routes, and weather. NEVER hallucinate place facts, locations, or operational details.
+1. **Accuracy & Grounding**: Use Google Maps tools to look up real-time places, business hours, amenities, contact details, routes, and weather, following the Grounding & Tool-Calling Policy.
 2. **Parallel Tool Execution**: When researching multiple entities, neighborhoods, routes, or options, emit ALL independent tool calls in parallel within your initial response turn. Only serialize calls when Step 2 strictly depends on data returned by Step 1.
 3. **Minimize Round-Trips**: Gather necessary place facts efficiently and emit independent queries in parallel. Only perform follow-up tool turns when subsequent calls strictly depend on data returned from earlier steps (e.g., retrieving details for specific place IDs or searching along a computed route polyline). Avoid redundant follow-up queries for details already retrieved.
-4. **Helpful & Actionable Answers**: Fully address all constraints in the user's prompt (e.g., parking, pricing, specific dietary options, bag policies). If tools return generic listings that lack specific policy details, supplement with known facts while noting any uncertainty.
-5. **No A2UI Tags**: Return standard plain text/markdown only. Do NOT output A2UI tags or JSON surfaces.
+4. **No A2UI Tags**: Return standard plain text/markdown only. Do NOT output A2UI tags or JSON surfaces.
 """
 
 
-class MergedCatalogProvider(A2uiCatalogProvider):
+class MergedCatalogProvider(CatalogProvider):
   """Dynamically loads the bundled basic catalog and extends it with local definitions."""
 
-  def __init__(self, version: str, extension_catalog_path: str):
-    self.version = version
+  def __init__(
+      self, version: str | ProtocolVersion, extension_catalog_path: str
+  ):
+    """Initializes the provider.
+
+    Args:
+      version: The A2UI protocol version.
+      extension_catalog_path: Filesystem path to the extension catalog JSON.
+    """
+    self.version = to_protocol_version(version)
     self.extension_catalog_path = extension_catalog_path
 
-  def load(self) -> dict[str, Any]:
+  def load(self) -> CatalogApi:
+    """Loads the base A2UI catalog merged with local Maps extension schemas."""
     # 1. Load the bundled base catalog from the package
-    base_provider = BundledCatalogProvider(self.version)
-    catalog = base_provider.load()
+    catalog = BasicCatalog(self.version).to_json()
 
     # 2. Load extension definitions from local JSON
     with open(self.extension_catalog_path, "r") as f:
@@ -167,7 +178,7 @@ class MergedCatalogProvider(A2uiCatalogProvider):
     if "catalogId" in overrides:
       catalog["catalogId"] = overrides["catalogId"]
 
-    return catalog
+    return Catalog.from_json(catalog, protocol_version=self.version)
 
 
 def extract_surface_id(data: Any) -> str | None:
@@ -209,13 +220,13 @@ class MAUIAgent:
         self._build_llm_agent()
     )
 
-    self._schema_managers: dict[str, A2uiSchemaManager] = {}
+    self._processors: dict[str, A2uiRequestProcessor] = {}
     self._ui_runners: dict[str, Runner] = {}
 
     for version in [VERSION_0_9]:
-      schema_manager = self._build_schema_manager(version)
-      self._schema_managers[version] = schema_manager
-      agent = self._build_llm_agent(schema_manager)
+      processor = self._build_processor(version)
+      self._processors[version] = processor
+      agent = self._build_llm_agent(processor)
       self._ui_runners[version] = self._build_runner(agent)
 
     self._agent_card = self._build_agent_card()
@@ -224,8 +235,8 @@ class MAUIAgent:
   def agent_card(self) -> AgentCard:
     return self._agent_card
 
-  def _build_schema_manager(self, version: str) -> A2uiSchemaManager:
-    """Builds the schema manager for a specific protocol version."""
+  def _build_processor(self, version: str) -> A2uiRequestProcessor:
+    """Builds the A2UI request processor for a specific protocol version."""
     # Try sibling directory first (local dev)
     extension_path = (
         pathlib.Path(__file__).parent.parent
@@ -242,15 +253,10 @@ class MAUIAgent:
           / "maps_catalog_extension.json"
       )
 
-    return A2uiSchemaManager(
-        version=version,
-        catalogs=[
-            CatalogConfig(
-                name="maps-agentic-ui-catalog",
-                provider=MergedCatalogProvider(version, str(extension_path)),
-            )
-        ],
-        schema_modifiers=[remove_strict_validation],
+    catalog = MergedCatalogProvider(version, str(extension_path)).load()
+    return A2uiRequestProcessor(
+        catalogs=[catalog],
+        format_factory=DirectJsonFormatFactory(),
     )
 
   def make_grounding_lite_mcp(self):
@@ -274,12 +280,15 @@ class MAUIAgent:
   def _build_agent_card(self) -> AgentCard:
     """Builds the A2UI agent card with streaming and extension capabilities."""
     extensions = []
-    if self._schema_managers:
-      for version, sm in self._schema_managers.items():
+    if self._processors:
+      for version, processor in self._processors.items():
+        supported_catalog_ids = [
+            cat.catalog_id for cat in processor.active_catalogs
+        ]
         ext = a2ui_extension.get_a2ui_agent_extension(
             version,
-            sm.accepts_inline_catalogs,
-            sm.supported_catalog_ids,
+            False,
+            supported_catalog_ids,
         )
         extensions.append(ext)
 
@@ -341,7 +350,7 @@ class MAUIAgent:
     return [create_a2ui_part(action) for action in merged_actions]
 
   def _build_llm_agent(
-      self, schema_manager: A2uiSchemaManager | None = None
+      self, processor: A2uiRequestProcessor | None = None
   ) -> LlmAgent:
     """Builds the LLM agent for the Agentic UI ToolKit."""
     skill_names = [
@@ -354,13 +363,8 @@ class MAUIAgent:
     skill_manager_tool = skill_toolset.SkillToolset(skills=skills)
     grounding_lite_mcp = self.make_grounding_lite_mcp()
 
-    if schema_manager:
-      instruction = schema_manager.generate_system_prompt(
-          role_description=AGENT_INSTRUCTION,
-          include_schema=True,
-          include_examples=False,
-          validate_examples=False,
-      )
+    if processor:
+      instruction = f"{AGENT_INSTRUCTION}\n\n{processor.prompt_snippet}"
     else:
       instruction = AGENT_INSTRUCTION
 
@@ -377,21 +381,39 @@ class MAUIAgent:
     )
 
   async def stream(
-      self, query, session_id, ui_version: str | None = None
+      self,
+      query: str,
+      session_id: str,
+      ui_version: str | ProtocolVersion | None = None,
   ) -> AsyncIterable[dict[str, Any]]:
-    """Streams responses for a user query."""
+    """Streams responses for a user query.
+
+    Args:
+      query: The user query text to execute.
+      session_id: Unique identifier for the conversation session.
+      ui_version: Optional A2UI protocol version to activate UI generation and
+        schema validation. If None, falls back to the text-only runner without
+        A2UI validation.
+
+    Yields:
+      Streaming and final response chunk dictionaries containing
+      `is_task_complete` and either A2A `parts` or plain text `updates`.
+    """
     session_state = {"base_url": self.base_url, "expression": "{expression}"}
 
     # Determine which runner to use based on active UI extension version.
     if ui_version:
-      runner = self._ui_runners[ui_version]
-      schema_manager = self._schema_managers[ui_version]
+      version_key = to_protocol_version(ui_version).value
+      runner = self._ui_runners[version_key]
+      processor = self._processors.get(version_key)
       selected_catalog = (
-          schema_manager.get_selected_catalog() if schema_manager else None
+          processor.active_catalogs[0]
+          if processor and processor.active_catalogs
+          else None
       )
     else:
       runner = self._text_runner
-      schema_manager = None
+      processor = None
       selected_catalog = None
 
     session = await runner.session_service.get_session(
@@ -468,15 +490,15 @@ class MAUIAgent:
                 full_content_list.append(p.text)
                 yield p.text
 
-      parser = None
+      stream_parser = None
       session_surface_id = None
-      if selected_catalog:
+      if selected_catalog and processor:
         logger.info(
             "--- MAUIAgent.stream: Using A2UI stream parser for catalog %s ---",
             selected_catalog.catalog_id,
         )
 
-        parser = A2uiStreamParser(selected_catalog)
+        stream_parser = processor.open_stream()
 
         logger.info(
             "--- MAUIAgent.stream: Streamed part: %s ---", token_stream()
@@ -485,7 +507,7 @@ class MAUIAgent:
         # This ensures execution falls through to the deleteSurface/retry loop below.
         try:
           async for part in stream_response_to_parts(
-              parser,
+              stream_parser,
               token_stream(),
           ):
             _add_maps_tools_tokens_to_part(part, session)
@@ -518,8 +540,9 @@ class MAUIAgent:
 
       is_valid = False
       error_message = ""
+      response_parts = []
 
-      if ui_version:
+      if ui_version and processor:
         logger.info(
             "--- MAUIAgent.stream: Validating UI response (Attempt %d)... ---",
             attempt,
@@ -529,32 +552,31 @@ class MAUIAgent:
               "--- MAUIAgent.stream: Final response content: %s ---",
               final_response_content,
           )
-          response_parts = parse_response(final_response_content)
-
-          for part in response_parts:
-            if not part.a2ui_json:
-              continue
-
-            parsed_json_data = part.a2ui_json
-
-            # --- Validation Steps ---
-            # Check if it validates against the A2UI_SCHEMA
-            # This will raise jsonschema.exceptions.ValidationError if it fails
-            logger.info(
-                "--- MAUIAgent.stream: Validating against A2UI_SCHEMA... ---"
-            )
-            selected_catalog.validator.validate(parsed_json_data)
-            # --- End Validation Steps ---
-
-            logger.info(
-                "--- MAUIAgent.stream: UI JSON successfully parsed AND"
-                " validated against schema. Validation OK (Attempt %d). ---",
-                attempt,
-            )
-            is_valid = True
+          block_parser = processor.parser
+          raw_parts = block_parser.unwrap(final_response_content)
+          for raw_part in raw_parts:
+            if isinstance(raw_part.part, ParserTextPart):
+              response_parts.append(raw_part.part)
+            elif isinstance(raw_part.part, RawA2uiPart):
+              logger.info(
+                  "--- MAUIAgent.stream: Validating against A2UI_SCHEMA... ---"
+              )
+              parsed_block_parts = processor.parse_response(
+                  raw_part.part.a2ui_raw, wrapped=False
+              )
+              for parsed_part in parsed_block_parts:
+                if isinstance(parsed_part, A2uiPart) and parsed_part.a2ui:
+                  response_parts.append(parsed_part)
+                  logger.info(
+                      "--- MAUIAgent.stream: UI JSON successfully parsed AND"
+                      " validated against schema. Validation OK (Attempt"
+                      " %d). ---",
+                      attempt,
+                  )
+                  is_valid = True
 
         except (
-            ValueError,
+            A2uiError,
             json.JSONDecodeError,
             jsonschema.exceptions.ValidationError,
         ) as e:
@@ -584,9 +606,13 @@ class MAUIAgent:
             " (Attempt %d). ---",
             attempt,
         )
-        final_parts = parse_response_to_parts(
-            final_response_content, fallback_text="OK."
-        )
+        if selected_catalog:
+          final_parts = to_a2a_parts(response_parts)
+          if not final_parts:
+            final_parts = [Part(root=TextPart(text="OK."))]
+        else:
+          text = final_response_content.strip() or "OK."
+          final_parts = to_a2a_parts([ParserTextPart(text=text)])
 
         logger.info(
             "--- MAUIAgent.stream: Final response parts: %s ---", final_parts
@@ -619,7 +645,15 @@ class MAUIAgent:
       # --- If we're here, it means validation failed ---
       # Extract surfaceId to clear the failed UI card on the client regardless
       # of whether further retries remain.
-      surface_id = session_surface_id or getattr(parser, "surface_id", None)
+      surface_id = session_surface_id or (
+          stream_parser.state.surface_ids[0]
+          if stream_parser and stream_parser.state.surface_ids
+          else None
+      )
+      if not surface_id and final_response_content:
+        match = _SURFACE_ID_PATTERN.search(final_response_content)
+        if match:
+          surface_id = match.group(1)
 
       if surface_id:
         logger.info(

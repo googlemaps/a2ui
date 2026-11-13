@@ -131,7 +131,7 @@ The SDK encapsulates all complex parsing and rendering logic into four core comp
 
 The `GoogleMapsA2UI` library relies on a pre-built HTML bundle (`index.html`) which is shipped inside its `assets` folder. This bundle compiles the core A2UI web components together with the Android platform-specific shell logic at `a2ui/client/android/web_build/`.
 
-If you have customized your `internal-usage-attribution-ids` or modified the underlying web components, you must recompile the HTML payload and bundle it back into this Android Library.
+If you have customized the usage attribution IDs (`platformAttributionIds` in `a2ui/client/android/web_build/src/main.ts`) or modified the underlying web components, you must recompile the HTML payload and bundle it back into this Android Library.
 
 Steps to update the web components with your customizations:
 
