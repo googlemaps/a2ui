@@ -39,6 +39,8 @@ class AgentConfig:
       extractor_thinking_budget: Thinking budget for extraction model.
       fallback_mode: Fallback strategy when specialized template extraction is
         not used or fails (e.g. for unsupported intents or validation failures).
+      enable_search_grounding: Whether to enable Google Search grounding
+        alongside Google Maps in Vertex AI. Defaults to True.
   """
 
   max_list_size: int = 5
@@ -48,6 +50,7 @@ class AgentConfig:
   router_thinking_budget: int = 0
   extractor_thinking_budget: int = 0
   fallback_mode: FallbackMode = FallbackMode.TEXT
+  enable_search_grounding: bool = True
 
   def __post_init__(self):
     if not isinstance(self.fallback_mode, FallbackMode):

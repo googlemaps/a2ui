@@ -20,6 +20,10 @@ class TestA2UICoreShell extends A2UICoreShell {
   readonly resizedHeights: number[] = [];
   jsReadyCalls = 0;
 
+  protected override readonly platformAttributionIds = [
+    'test_platform_attribution_id',
+  ];
+
   protected override notifyWebpageResized(height: number): void {
     this.resizedHeights.push(height);
   }
@@ -340,6 +344,46 @@ describe('A2UICoreShell', () => {
          ]);
        });
 
+    it('passes platform attribution IDs to rendered MAUI components without a window global',
+       async () => {
+         const shell = await mountShell();
+
+         shell.processA2uiMessages([
+           {
+             createSurface: {
+               surfaceId: 'surf-attribution',
+               catalogId: 'a2ui://maps-agentic-ui-catalog.json',
+             },
+             version: 'v0.9',
+           },
+           {
+             updateComponents: {
+               surfaceId: 'surf-attribution',
+               components: [{
+                 id: 'root',
+                 component: 'GoogleMap',
+                 center: {lat: 37.7749, lng: -122.4194},
+               }],
+             },
+             version: 'v0.9',
+           },
+         ]);
+         await shell.updateComplete;
+         const surfaceEl =
+             shell.shadowRoot!.querySelector<LitElement>('a2ui-surface')!;
+         await surfaceEl.updateComplete;
+         const mapEl =
+             surfaceEl.shadowRoot!.querySelector<LitElement>('a2ui-googlemap')!;
+         await mapEl.updateComplete;
+
+         const gmpMap3d = mapEl.renderRoot.querySelector('gmp-map-3d')!;
+         expect(gmpMap3d.getAttribute('internal-usage-attribution-ids'))
+             .toBe('gmp_web_maui_v0.1.11_atoui,test_platform_attribution_id');
+         expect((window as unknown as
+                 Record<string, unknown>)['A2UI_ATTRIBUTION_ID'])
+             .toBeUndefined();
+       });
+
     it('accumulates globalDataModel across chunks, resolves GoogleMap center paths, and preserves unresolved paths',
        async () => {
          const shell = await mountShell();
@@ -653,6 +697,20 @@ describe('A2UICoreShell', () => {
              .toBeDefined();
          expect(shell.shadowRoot!.querySelectorAll('a2ui-surface').length)
              .toBe(2);
+       });
+
+    it('delegates addContentTokens to A2UIRenderer.addContentTokens',
+       async () => {
+         const shell = await mountShell();
+         const addTokensSpy =
+             spyOn(shell.getRenderer(), 'addContentTokens').and.resolveTo();
+
+         shell.addContentTokens({place_1: 'token-1', place_2: 'token-2'});
+
+         expect(addTokensSpy).toHaveBeenCalledOnceWith({
+           place_1: 'token-1',
+           place_2: 'token-2',
+         });
        });
   });
 });

@@ -57,7 +57,7 @@ def after_maps_tools_callback(
         and _state_invocation_ids[state_id] != invocation_id
     ):
       if "maps_tools_content_tokens" in tool_context.state:
-        tool_context.state["maps_tools_content_tokens"] = []
+        tool_context.state["maps_tools_content_tokens"] = {}
     _state_invocation_ids[state_id] = invocation_id
 
   if not tool_response or not isinstance(tool_response, dict):
@@ -65,28 +65,48 @@ def after_maps_tools_callback(
 
   # 2. Extract contentToken from the Maps Grounding Lite MCP tool response.
   structured_content = tool_response.get("structuredContent")
-  token = (
-      structured_content.get("contentToken")
-      if isinstance(structured_content, dict)
-      else None
-  )
+  if not isinstance(structured_content, dict):
+    return None
+  token = structured_content.get("contentToken")
+  places = structured_content.get("places")
+  results = structured_content.get("results")
+  if isinstance(places, list):
+    # SearchTextResponse
+    entities = places
+  elif isinstance(results, list):
+    # SearchAlongRouteResponse
+    entities = [r.get("place") or r for r in results if isinstance(r, dict)]
+  else:
+    entities = []
+
   if isinstance(token, str) and token:
-    content_tokens = tool_context.state.get("maps_tools_content_tokens", [])
-    # If content_tokens is not a list, initialize it to an empty list.
-    if not isinstance(content_tokens, list):
-      content_tokens = []
-    if token not in content_tokens:
-      content_tokens.append(token)
-    tool_context.state["maps_tools_content_tokens"] = content_tokens
-    logger.info(
-        "--- after_maps_tools_callback: Aggregated content token into"
-        " content_tokens. ---"
-    )
+    content_tokens = tool_context.state.get("maps_tools_content_tokens", {})
+    # If content_tokens is not a dict, initialize it to an empty dict.
+    if not isinstance(content_tokens, dict):
+      content_tokens = {}
+    if not entities:
+      # Add token to the empty string key if there are no entities to support
+      # other types of responses.
+      fallback_tokens = content_tokens.setdefault("", [])
+      if token not in fallback_tokens:
+        fallback_tokens.append(token)
+    else:
+      for entity in entities:
+        if isinstance(entity, dict):
+          place_id = entity.get("id")
+          if isinstance(place_id, str) and place_id:
+            content_tokens[place_id] = token
+    if content_tokens:
+      tool_context.state["maps_tools_content_tokens"] = content_tokens
+      logger.info(
+          "--- after_maps_tools_callback: Aggregated content token into"
+          " content_tokens. ---"
+      )
 
   return None
 
 
-def _add_maps_tools_tokens_to_part(part: Any, session: Any) -> None:
+def add_maps_tools_tokens_to_part(part: Any, session: Any) -> None:
   """Adds maps_tools_content_tokens from session state to part metadata."""
   if session is None or getattr(session, "state", None) is None:
     return

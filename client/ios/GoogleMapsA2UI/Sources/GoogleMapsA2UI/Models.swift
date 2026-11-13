@@ -19,12 +19,16 @@ import Foundation
 /// Metadata associated with a message part.
 public struct ParsedA2AEventMetadata {
   public let mimeType: String?
+  public let contentTokens: String?
 
   /// Initializes the metadata.
   ///
-  /// - Parameter mimeType: The optional MIME type of the payload.
-  public init(mimeType: String? = nil) {
+  /// - Parameters:
+  ///   - mimeType: The optional MIME type of the payload.
+  ///   - contentTokens: Content tokens associated with the payload.
+  public init(mimeType: String? = nil, contentTokens: String? = nil) {
     self.mimeType = mimeType
+    self.contentTokens = contentTokens
   }
 }
 

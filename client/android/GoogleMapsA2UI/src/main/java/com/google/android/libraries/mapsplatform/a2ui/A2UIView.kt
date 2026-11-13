@@ -16,14 +16,13 @@ package com.google.android.libraries.mapsplatform.a2ui
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
-import android.os.Build
 import android.util.AttributeSet
 import android.util.Log
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.net.toUri
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -43,6 +42,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 
   private var indexHtml: String = ""
   var a2uiJson: String = ""
+  var metadata: ParsedA2AEventMetadata? = null
   private var startTime: Long? = null
   var onRenderComplete: ((latencyMs: Long, status: String) -> Unit)? = null
   var onUserAction: ((actionJson: String) -> Unit)? = null
@@ -61,14 +61,10 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     settings.javaScriptEnabled = true
     settings.allowFileAccess = true
     settings.allowContentAccess = true
-    settings.allowFileAccessFromFileURLs = true
-    settings.allowUniversalAccessFromFileURLs = true
 
     addJavascriptInterface(webAppInterface, "Android")
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-      setWebContentsDebuggingEnabled(true)
-    }
+    setWebContentsDebuggingEnabled(true)
 
     webViewClient =
       object : WebViewClient() {
@@ -78,7 +74,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         ): Boolean {
           val url = request?.url?.toString() ?: return false
           if (url.startsWith(HTTP_SCHEME) || url.startsWith(HTTPS_SCHEME)) {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            val intent = Intent(Intent.ACTION_VIEW, url.toUri())
             if (url.contains(MAPS_HOST) || url.contains(MAPS_PATH)) {
               intent.setPackage(MAPS_PACKAGE)
               if (intent.resolveActivity(context.packageManager) == null) {
@@ -118,10 +114,12 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     }
   }
 
-  fun render(json: String, startTimeMs: Long? = null) {
+  @JvmOverloads
+  fun render(json: String, startTimeMs: Long? = null, metadata: ParsedA2AEventMetadata? = null) {
     Log.d(A2UI_DEBUG_TAG, "Rendering A2UI JSON")
     this.startTime = startTimeMs ?: System.currentTimeMillis()
     this.a2uiJson = json
+    this.metadata = metadata
     this.isJsReady = false
     this.lastInjectedElementCount = 0
     val apiKey = A2UIServices.apiKey
@@ -129,9 +127,13 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     loadDataWithBaseURL("file:///android_asset/", htmlToLoad, "text/html", "UTF-8", null)
   }
 
-  fun updateA2uiJson(newJson: String) {
+  @JvmOverloads
+  fun updateA2uiJson(newJson: String, newMetadata: ParsedA2AEventMetadata? = this.metadata) {
     this.a2uiJson = newJson
+    this.metadata = newMetadata
     if (!isJsReady) return
+
+    newMetadata?.contentTokens?.let { addContentTokens(it) }
 
     webAppInterface.resized = false
 
@@ -157,6 +159,32 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         evaluateJavascript(script, null)
       } catch (e: Exception) {
         Log.e(A2UI_ERROR_TAG, "Error processing a2ui update", e)
+      }
+    }
+  }
+
+  fun addContentTokens(tokensJson: String) {
+    if (tokensJson.isEmpty() || !isJsReady) return
+
+    post {
+      try {
+        val script =
+          """
+                try {
+                  const shell = document.querySelector('a2ui-shell');
+                  if (shell) {
+                    shell.addContentTokens($tokensJson);
+                  } else {
+                    console.error('a2ui-shell not found');
+                  }
+                } catch (e) {
+                  console.error('Error registering content tokens: ' + e);
+                }
+                """
+            .trimIndent()
+        evaluateJavascript(script, null)
+      } catch (e: Exception) {
+        Log.e(A2UI_ERROR_TAG, "Error registering content tokens", e)
       }
     }
   }
