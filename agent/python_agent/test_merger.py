@@ -24,13 +24,11 @@ import shutil
 import sys
 import tempfile
 import unittest
-from unittest import mock
 import zipfile
 
 from a2ui.inference_formats.direct_json import DirectJsonParser
 import agent
 import merger
-import template_registry
 
 merge_template = merger.merge_template
 
@@ -955,99 +953,6 @@ class TestMergerEdgeCases(unittest.TestCase):
     result = merge_template("local_search", data)
     surface_id = result[0]["createSurface"]["surfaceId"]
     self.assertTrue(surface_id.startswith("fallback-surface_"))
-
-
-class TestMergerCaching(unittest.TestCase):
-  """Covers the per-process caching that keeps merges off package data reads.
-
-  Served from a zip-imported archive, rebuilding the template registry and
-  re-reading `layout.json` on every merge cost seconds per template tool call.
-  """
-
-  _LOCAL_SEARCH_DATA = {
-      "heading": "Coffee near the market",
-      "summary": "Coffee near the market.",
-      "places": [{
-          "placeId": "ChIJ111",
-          "name": "Storyville",
-          "lat": 47.6092,
-          "lng": -122.3418,
-      }],
-  }
-
-  def setUp(self):
-    super().setUp()
-    for cached in (
-        template_registry.default_registry,
-        merger._read_packaged_layout,  # pylint: disable=protected-access
-    ):
-      cached.cache_clear()
-      self.addCleanup(cached.cache_clear)
-
-  def test_repeated_merges_build_the_registry_once(self):
-    with mock.patch.object(
-        template_registry,
-        "TemplateRegistry",
-        wraps=template_registry.TemplateRegistry,
-    ) as registry_cls:
-      for _ in range(3):
-        merge_template("local_search", dict(self._LOCAL_SEARCH_DATA))
-
-    registry_cls.assert_called_once_with()
-
-  def test_given_bundle_is_used_without_a_registry_lookup(self):
-    """A bundle passed by the caller skips the registry entirely."""
-    bundle = template_registry.TemplateRegistry().get_bundle("local_search")
-
-    with mock.patch.object(
-        template_registry,
-        "default_registry",
-        side_effect=AssertionError("registry should not be consulted"),
-    ):
-      result = merge_template(
-          "local_search", dict(self._LOCAL_SEARCH_DATA), bundle=bundle
-      )
-
-    self.assertEqual(
-        result[0]["createSurface"]["catalogId"], merger.DEFAULT_CATALOG_ID
-    )
-
-  def test_layout_is_read_once_per_template(self):
-    for _ in range(3):
-      merge_template("local_search", dict(self._LOCAL_SEARCH_DATA))
-
-    info = merger._read_packaged_layout.cache_info()  # pylint: disable=protected-access
-    # One miss for `local_search`; a schema failure would add a `text_only` one.
-    self.assertEqual(info.misses, 1)
-    self.assertEqual(info.hits, 2)
-
-  def test_preload_layouts_warms_every_built_in_template(self):
-    merger.preload_layouts()
-
-    merge_template("local_search", dict(self._LOCAL_SEARCH_DATA))
-
-    info = merger._read_packaged_layout.cache_info()  # pylint: disable=protected-access
-    self.assertEqual(
-        info.misses,
-        len(template_registry.default_registry().bundles) + 1,  # + text_only
-    )
-    self.assertEqual(info.hits, 1)
-
-  def test_preload_layouts_warms_only_named_templates(self):
-    merger.preload_layouts(["local_search"])
-
-    info = merger._read_packaged_layout.cache_info()  # pylint: disable=protected-access
-    self.assertEqual(info.misses, 1)
-
-  def test_cached_layout_is_not_shared_between_merges(self):
-    first = merge_template("local_search", dict(self._LOCAL_SEARCH_DATA))
-    first[0]["createSurface"]["catalogId"] = "mutated"
-
-    second = merge_template("local_search", dict(self._LOCAL_SEARCH_DATA))
-
-    self.assertEqual(
-        second[0]["createSurface"]["catalogId"], merger.DEFAULT_CATALOG_ID
-    )
 
 
 class TestMergerZipImportedPackage(unittest.TestCase):

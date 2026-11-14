@@ -34,10 +34,6 @@ const MAPS_JS_API_SCRIPT_SELECTOR =
 /** Set by `configureMapsJsApi` when MAUI installed the bootstrap. */
 let configuredImportLibrary: typeof google.maps.importLibrary|undefined;
 let warnedUnavailable = false;
-/**
- * In-flight content-token registrations that non-`core` library loads wait for.
- */
-const pendingContentTokens = new Set<Promise<void>>();
 
 /**
  * Opts in to MAUI loading the Maps JS API the first time a component needs a
@@ -62,7 +58,6 @@ export function configureMapsJsApi(options: MapsJsApiOptions): void {
 export function resetMapsJsApiLoaderForTesting(): void {
   configuredImportLibrary = undefined;
   warnedUnavailable = false;
-  pendingContentTokens.clear();
 }
 
 function getImportLibrary(): typeof google.maps.importLibrary|null {
@@ -116,77 +111,12 @@ loadMapsLibraries<const T extends readonly MapsLibraryName[]>(
 }
 
 /**
- * Registers Maps content tokens on `google.maps.Settings`, loading the `core`
- * library first if `google.maps.Settings` is not yet available.
- */
-export function addContentTokens(
-    tokens: Record<string, unknown>,
-    ): Promise<void> {
-  const tokenSet = new Set<string>();
-  for (const value of Object.values(tokens)) {
-    if (typeof value === 'string' && value.length > 0) {
-      tokenSet.add(value);
-    } else if (Array.isArray(value)) {
-      for (const token of value) {
-        if (typeof token === 'string' && token.length > 0) {
-          tokenSet.add(token);
-        }
-      }
-    }
-  }
-  if (tokenSet.size === 0) {
-    return Promise.resolve();
-  }
-
-  const registerTokens =
-      (settingsClass: typeof google.maps.Settings|undefined) => {
-        const settings = settingsClass?.getInstance() as unknown as | {
-          addContentTokens?: (tokens: Iterable<string>) => void;
-        }
-        |undefined;
-        settings?.addContentTokens?.(Array.from(tokenSet));
-      };
-
-  const settingsClass =
-      typeof google !== 'undefined' ? google.maps?.Settings : undefined;
-  if (settingsClass) {
-    registerTokens(settingsClass);
-    return Promise.resolve();
-  }
-
-  let resolveRegistration!: () => void;
-  const registration = new Promise<void>((resolve) => {
-    resolveRegistration = resolve;
-  });
-  pendingContentTokens.add(registration);
-
-  void (async () => {
-    try {
-      const coreLib = await loadMapsLibrary('core');
-      registerTokens(coreLib?.Settings);
-    } catch (err) {
-      console.error('Failed to load Google Maps Core library:', err);
-    } finally {
-      pendingContentTokens.delete(registration);
-      resolveRegistration();
-    }
-  })();
-
-  return registration;
-}
-
-/**
  * Loads a Maps JS API library. Resolves to the library, or `null` if the Maps
  * JS API is unavailable.
  */
 export async function loadMapsLibrary<K extends MapsLibraryName>(
     library: K,
     ): Promise<google.maps.ImportLibraryMap[K]|null> {
-  if (library !== 'core') {
-    while (pendingContentTokens.size > 0) {
-      await Promise.all(pendingContentTokens);
-    }
-  }
   const importLibrary = await ensureImportLibrary();
   if (!importLibrary) {
     return null;

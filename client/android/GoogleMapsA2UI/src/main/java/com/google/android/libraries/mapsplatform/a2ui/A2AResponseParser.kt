@@ -41,7 +41,7 @@ sealed class A2AParserException(message: String, cause: Throwable? = null) :
   ) : A2AParserException(message)
 }
 
-data class ParsedA2AEventMetadata(val mimeType: String? = null, val contentTokens: String? = null)
+data class ParsedA2AEventMetadata(val mimeType: String?)
 
 sealed interface ParsedA2AEvent {
   data class Text(val text: String) : ParsedA2AEvent
@@ -72,8 +72,6 @@ object A2AResponseParser {
   private const val KEY_RESULT = "result"
   private const val KEY_ERROR = "error"
   private const val KEY_CODE = "code"
-  private const val KEY_METADATA = "metadata"
-  private const val KEY_CONTENT_TOKENS = "maps_tools_content_tokens"
 
   /** A2A event kinds that may legitimately carry no message parts, e.g. a final status update. */
   private val PARTLESS_EVENT_KINDS = setOf("task", "status-update", "artifact-update")
@@ -138,38 +136,30 @@ object A2AResponseParser {
     val partsList = mutableListOf<ParsedA2AEvent>()
     var currentTextBuilder = java.lang.StringBuilder()
     var currentUiElements = JSONArray()
-    val metadata = extractMetadata(partsArray)
 
     for (i in 0 until partsArray.length()) {
       val part = partsArray.getJSONObject(i)
       val textPart =
-        when {
-          part.has(KEY_TEXT) -> part.optString(KEY_TEXT)
-          part.optString(KEY_KIND) == KEY_TEXT -> part.optString(KEY_TEXT)
-          else -> null
-        }
+        if (part.has(KEY_TEXT)) part.optString(KEY_TEXT)
+        else if (part.optString(KEY_KIND) == KEY_TEXT) part.optString(KEY_TEXT) else null
 
       if (textPart != null) {
         if (currentUiElements.length() > 0) {
-          partsList.add(ParsedA2AEvent.Data(currentUiElements.toString(), metadata))
+          partsList.add(ParsedA2AEvent.Data(currentUiElements.toString()))
           currentUiElements = JSONArray()
         }
 
-        when {
-          "<a2ui-json>" in textPart -> extractJsonBlocks(textPart, currentTextBuilder, partsList)
-          textPart.isNotEmpty() -> {
-            if (currentTextBuilder.isNotEmpty()) currentTextBuilder.append("\n")
-            currentTextBuilder.append(textPart)
-          }
+        if (textPart.contains("<a2ui-json>")) {
+          extractJsonBlocks(textPart, currentTextBuilder, partsList)
+        } else if (textPart.isNotEmpty()) {
+          if (currentTextBuilder.isNotEmpty()) currentTextBuilder.append("\n")
+          currentTextBuilder.append(textPart)
         }
       }
 
       val dataPayload =
-        when {
-          part.has(KEY_DATA) -> part.optJSONObject(KEY_DATA)
-          part.optString(KEY_KIND) == KEY_DATA -> part.optJSONObject(KEY_DATA)
-          else -> null
-        }
+        if (part.has(KEY_DATA)) part.optJSONObject(KEY_DATA)
+        else if (part.optString(KEY_KIND) == KEY_DATA) part.optJSONObject(KEY_DATA) else null
       if (dataPayload != null && isUiElement(dataPayload)) {
         if (currentTextBuilder.isNotEmpty()) {
           partsList.add(ParsedA2AEvent.Text(currentTextBuilder.toString()))
@@ -183,7 +173,7 @@ object A2AResponseParser {
       partsList.add(ParsedA2AEvent.Text(currentTextBuilder.toString()))
     }
     if (currentUiElements.length() > 0) {
-      partsList.add(ParsedA2AEvent.Data(currentUiElements.toString(), metadata))
+      partsList.add(ParsedA2AEvent.Data(currentUiElements.toString()))
     }
 
     val deduplicatedParts = mutableListOf<ParsedA2AEvent>()
@@ -210,7 +200,7 @@ object A2AResponseParser {
             val obj = array.getJSONObject(i)
             val sid = obj.optJSONObject(KEY_CREATE_SURFACE)?.optString(KEY_SURFACE_ID)
             if (sid != null) {
-              if (sid in seenSurfaces) {
+              if (seenSurfaces.contains(sid)) {
                 continue
               }
               seenSurfaces.add(sid)
@@ -218,7 +208,7 @@ object A2AResponseParser {
             newArray.put(obj)
           }
           if (newArray.length() > 0) {
-            deduplicatedParts.add(ParsedA2AEvent.Data(newArray.toString(), metadata))
+            deduplicatedParts.add(ParsedA2AEvent.Data(newArray.toString(), part.metadata))
           }
         } catch (e: Exception) {
           if (part.data.isNotEmpty()) {
@@ -229,17 +219,6 @@ object A2AResponseParser {
     }
 
     return deduplicatedParts
-  }
-
-  private fun extractMetadata(partsArray: JSONArray): ParsedA2AEventMetadata? {
-    for (i in partsArray.length() - 1 downTo 0) {
-      val part = partsArray.getJSONObject(i)
-      val tokensObj = part.optJSONObject(KEY_METADATA)?.optJSONObject(KEY_CONTENT_TOKENS)
-      if (tokensObj != null && tokensObj.length() > 0) {
-        return ParsedA2AEventMetadata(contentTokens = tokensObj.toString())
-      }
-    }
-    return null
   }
 
   private fun isUiElement(obj: JSONObject): Boolean {
@@ -320,33 +299,30 @@ object A2AResponseParser {
 
       val jsonString = match.groupValues[1].trim()
       try {
-        when (jsonString.firstOrNull()) {
-          '[' -> {
-            val array = JSONArray(jsonString)
-            val localUiElements = JSONArray()
-            for (i in 0 until array.length()) {
-              localUiElements.put(array.getJSONObject(i))
-            }
-            if (textBuilder.isNotEmpty()) {
-              partsList.add(ParsedA2AEvent.Text(textBuilder.toString()))
-              textBuilder.clear()
-            }
-            partsList.add(ParsedA2AEvent.Data(localUiElements.toString()))
+        val firstChar = jsonString.firstOrNull()
+        if (firstChar == '[') {
+          val array = JSONArray(jsonString)
+          val localUiElements = JSONArray()
+          for (i in 0 until array.length()) {
+            localUiElements.put(array.getJSONObject(i))
           }
-          '{' -> {
-            val jsonObj = JSONObject(jsonString)
-            if (textBuilder.isNotEmpty()) {
-              partsList.add(ParsedA2AEvent.Text(textBuilder.toString()))
-              textBuilder.clear()
-            }
-            val localUiElements = JSONArray()
-            localUiElements.put(jsonObj)
-            partsList.add(ParsedA2AEvent.Data(localUiElements.toString()))
+          if (textBuilder.isNotEmpty()) {
+            partsList.add(ParsedA2AEvent.Text(textBuilder.toString()))
+            textBuilder.clear()
           }
-          else -> {
-            if (textBuilder.isNotEmpty()) textBuilder.append("\n")
-            textBuilder.append(match.value)
+          partsList.add(ParsedA2AEvent.Data(localUiElements.toString()))
+        } else if (firstChar == '{') {
+          val jsonObj = JSONObject(jsonString)
+          if (textBuilder.isNotEmpty()) {
+            partsList.add(ParsedA2AEvent.Text(textBuilder.toString()))
+            textBuilder.clear()
           }
+          val localUiElements = JSONArray()
+          localUiElements.put(jsonObj)
+          partsList.add(ParsedA2AEvent.Data(localUiElements.toString()))
+        } else {
+          if (textBuilder.isNotEmpty()) textBuilder.append("\n")
+          textBuilder.append(match.value)
         }
       } catch (e: Exception) {
         if (textBuilder.isNotEmpty()) textBuilder.append("\n")

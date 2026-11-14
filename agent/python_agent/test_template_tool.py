@@ -17,7 +17,6 @@
 import pathlib
 from types import SimpleNamespace
 import unittest
-from unittest import mock
 
 from a2a.types import DataPart
 from google.adk.tools.tool_context import ToolContext
@@ -448,34 +447,6 @@ class TestOnRenderedHook(unittest.IsolatedAsyncioTestCase):
     for tool in await TemplateToolset().get_tools():
       with self.subTest(tool=tool.name):
         self.assertIsNone(tool.on_rendered)
-
-
-class TestBundleHandOff(unittest.IsolatedAsyncioTestCase):
-  """The tool hands its bundle to the merger instead of a fresh lookup."""
-
-  async def test_from_bundle_passes_its_bundle_to_the_merger(self):
-    """from_bundle() tools forward their bundle to merge_template."""
-    bundle = template_registry.TemplateRegistry().get_bundle("local_search")
-    assert bundle is not None
-    tool = BaseTemplateTool.from_bundle(bundle)
-    args = {
-        "heading": "Nearby Places",
-        "summary": "Here is a coffee shop.",
-        "places": [{
-            "placeId": "ChIJ111",
-            "name": "Espresso Vivace",
-            "lat": 47.62,
-            "lng": -122.32,
-        }],
-    }
-
-    with mock.patch.object(
-        template_tool, "merge_template", wraps=template_tool.merge_template
-    ) as merge:
-      result = await tool.run_async(args=args, tool_context=MockToolContext())
-
-    self.assertEqual(result["status"], "success")
-    self.assertIs(merge.call_args.kwargs["bundle"], bundle)
 
 
 if __name__ == "__main__":

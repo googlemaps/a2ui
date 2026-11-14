@@ -102,8 +102,12 @@ export class PlaceDetailsCompact extends
       :host {
         display: block;
         width: 100%;
+        min-width: 0;
       }
       gmp-place-details-compact {
+        width: 100%;
+        max-width: 500px;
+        box-sizing: border-box;
         color-scheme: var(--color-scheme);
         --gmpx-color-scheme: var(--color-scheme);
         border: var(

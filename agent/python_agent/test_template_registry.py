@@ -25,7 +25,6 @@ import shutil
 import sys
 import tempfile
 import unittest
-from unittest import mock
 import zipfile
 
 import pydantic
@@ -496,50 +495,6 @@ class EffectiveToolDescriptionTest(unittest.TestCase):
               ),
           ],
       )
-
-
-class DefaultRegistryTest(unittest.TestCase):
-  """Tests for the shared, lazily built default registry."""
-
-  def setUp(self):
-    super().setUp()
-    template_registry.default_registry.cache_clear()
-    self.addCleanup(template_registry.default_registry.cache_clear)
-
-  def test_returns_built_in_bundles(self):
-    registry = template_registry.default_registry()
-
-    self.assertIsInstance(registry, template_registry.TemplateRegistry)
-    self.assertIn("local_search", registry.bundles)
-    self.assertIn("directions", registry.bundles)
-
-  def test_discovers_bundles_once_per_process(self):
-    with mock.patch.object(
-        template_registry,
-        "TemplateRegistry",
-        wraps=template_registry.TemplateRegistry,
-    ) as registry_cls:
-      first = template_registry.default_registry()
-      second = template_registry.default_registry()
-
-    self.assertIs(first, second)
-    registry_cls.assert_called_once_with()
-
-  def test_shared_registry_rejects_new_bundles(self):
-    registry = template_registry.default_registry()
-    bundle = registry.get_bundle("local_search")
-
-    with self.assertRaisesRegex(RuntimeError, "frozen"):
-      registry.register_bundle(bundle)
-    self.assertIs(registry.get_bundle("local_search"), bundle)
-
-  def test_separate_registry_still_accepts_bundles(self):
-    bundle = template_registry.default_registry().get_bundle("local_search")
-    registry = template_registry.TemplateRegistry()
-
-    registry.register_bundle(bundle)
-
-    self.assertIs(registry.get_bundle("local_search"), bundle)
 
 
 class ZipImportedPackageTest(unittest.TestCase):

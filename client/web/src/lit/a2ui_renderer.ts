@@ -24,7 +24,6 @@ import {property} from 'lit/decorators.js';
 
 import {mapsAgenticUICatalog} from './catalog';
 import {attributionIdsContext, attributionIdsConverter} from './custom-components/attribution';
-import {addContentTokens} from './custom-components/maps_api_loader';
 
 export class MAUIProviders extends LitElement {
   private attributionIdsValue: readonly string[] = [];
@@ -127,27 +126,9 @@ export class A2UIRenderer {
   }
 
   /**
-   * Registers Maps content tokens on `google.maps.Settings`.
-   */
-  addContentTokens(
-      tokens: Record<string, unknown>,
-      ): Promise<void> {
-    return addContentTokens(tokens);
-  }
-
-  /**
    * Processes a response from the A2UI client and updates the timeline.
    */
-  processResponse(
-      orderedParts: Array<|{
-        type: 'text';
-        text: string
-      }|{
-        type: 'a2ui';
-        message: any;
-        contentTokens?: Record<string, unknown>;
-      }>,
-  ) {
+  processResponse(orderedParts: Array<{ type: "text", text: string } | { type: "a2ui", message: any }>) {
     const uiMessages: any[] = [];
     const newItems: TimelineItem[] = [];
 
@@ -177,9 +158,6 @@ export class A2UIRenderer {
           newItems.push({ type: "text", text: part.text });
         }
       } else if (part.type === "a2ui") {
-        if (part.contentTokens) {
-          void this.addContentTokens(part.contentTokens);
-        }
         const msg = part.message;
         const rawSurfaceId = this.getSurfaceId(msg);
         if (msg.createSurface && this.getSurface(rawSurfaceId)) {

@@ -95,14 +95,11 @@ class BaseTemplateTool(BaseTool):
       surface_id_prefix: str | None = None,
       catalog_id: str = DEFAULT_CATALOG_ID,
       on_rendered: RenderedMessagesHook | None = None,
-      bundle: TemplateBundle | None = None,
   ) -> None:
     tool_name = name or self.name
     tool_desc = description or self.description
     super().__init__(name=tool_name, description=tool_desc)
     self.template_name = template_name or self.template_name
-    # Handed to `merge_template` so it does not look the bundle up again.
-    self.bundle = bundle
     self.schema_class = (
         schema_class if schema_class is not None else self.schema_class
     )
@@ -139,7 +136,6 @@ class BaseTemplateTool(BaseTool):
         "max_list_size": max_list_size,
         "catalog_id": catalog_id,
         "on_rendered": on_rendered,
-        "bundle": bundle,
     }
     params.update(kwargs)
     return cls(**params)
@@ -256,7 +252,6 @@ class BaseTemplateTool(BaseTool):
           validated_data,
           max_list_size=self.max_list_size,
           catalog_id=self.catalog_id,
-          bundle=self.bundle,
       )
     except Exception as e:  # pylint: disable=broad-exception-caught
       elapsed_ms = (time.perf_counter() - start_time) * 1000

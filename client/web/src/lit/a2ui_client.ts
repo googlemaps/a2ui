@@ -18,6 +18,8 @@ import {Part, SendMessageSuccessResponse, Task} from '@a2a-js/sdk';
 import {A2AClient} from '@a2a-js/sdk/client';
 import * as v0_9 from '@a2ui/web_core/v0_9';
 
+import {loadMapsLibrary} from './custom-components/maps_api_loader';
+
 const A2UI_MIME_TYPE = "application/json+a2ui";
 
 export class A2UIClient {
@@ -80,16 +82,43 @@ export class A2UIClient {
     return [{ kind: "text", text: message }];
   }
 
-  async send(message: any|string): Promise < Array <|{
-    type: 'text';
-    text: string
+  private async addContentTokens(tokens: unknown): Promise<void> {
+    if (tokens == null || typeof tokens !== 'object' || Array.isArray(tokens)) {
+      return;
+    }
+    const tokenSet = new Set<string>();
+    for (const value of Object.values(tokens)) {
+      if (typeof value === 'string' && value.length > 0) {
+        tokenSet.add(value);
+      } else if (Array.isArray(value)) {
+        for (const item of value) {
+          if (typeof item === 'string' && item.length > 0) {
+            tokenSet.add(item);
+          }
+        }
+      }
+    }
+    if (tokenSet.size === 0) return;
+    let settingsClass =
+        typeof google !== 'undefined' ? google.maps?.Settings : undefined;
+    if (!settingsClass) {
+      try {
+        const coreLib = await loadMapsLibrary('core');
+        settingsClass = coreLib?.Settings;
+      } catch (err) {
+        console.error('Failed to load Google Maps Core library:', err);
+        return;
+      }
+    }
+    const settings = settingsClass?.getInstance() as unknown as | {
+      addContentTokens?: (tokens: Iterable<string>) => void;
+    }
+    |undefined;
+    settings?.addContentTokens?.(Array.from(tokenSet));
   }
-  |{
-    type: 'a2ui';
-    message: any;
-    contentTokens?: Record<string, unknown>;
-  }
-  >> {
+
+  async send(message: any|string): Promise<
+      Array<{type: 'text', text: string}|{type: 'a2ui', message: any}>> {
     const client = await this.getClient();
     const parts = this._buildMessageParts(message);
 
@@ -108,32 +137,16 @@ export class A2UIClient {
 
     const result = (response as SendMessageSuccessResponse).result as Task;
     if (result.kind === "task" && result.status.message?.parts) {
-      const orderedParts: Array <|{
-        type: 'text';
-        text: string
-      }
-      |{
-        type: 'a2ui';
-        message: any;
-        contentTokens?: Record<string, unknown>;
-      }
-      > = [];
+      const orderedParts: Array<{ type: "text", text: string } | { type: "a2ui", message: any }> = [];
       for (const part of result.status.message.parts) {
         if (part.kind === 'data') {
           const partObj = part as {
-            metadata?: Record<string, unknown>;
+            root?: {metadata?: Record<string, unknown>};
           };
-          const metadata = partObj.metadata;
-          const rawTokens = metadata?.['maps_tools_content_tokens'];
-          const contentTokens = rawTokens && typeof rawTokens === 'object' &&
-                  !Array.isArray(rawTokens) ?
-              (rawTokens as Record<string, unknown>) :
-              undefined;
-          orderedParts.push(
-              contentTokens ?
-                  {type: 'a2ui', message: part.data, contentTokens} :
-                  {type: 'a2ui', message: part.data},
+          await this.addContentTokens(
+              partObj.root?.metadata?.['maps_tools_content_tokens'],
           );
+          orderedParts.push({type: 'a2ui', message: part.data});
         } else if (part.kind === 'text') {
           orderedParts.push({ type: "text", text: part.text });
         }
@@ -144,16 +157,9 @@ export class A2UIClient {
     return [];
   }
 
-  async * sendStream(message: any|string): AsyncGenerator <|{
-    type: 'text';
-    text: string
-  }
-  |{
-    type: 'a2ui';
-    message: any;
-    contentTokens?: Record<string, unknown>;
-  }
-  > {
+  async *sendStream(
+    message: any | string
+  ): AsyncGenerator<{ type: "text"; text: string } | { type: "a2ui"; message: any }> {
     const client = await this.getClient();
     const parts = this._buildMessageParts(message);
 
@@ -183,19 +189,14 @@ export class A2UIClient {
           }
         } else if (part.kind === 'data' && part.data) {
           const partObj = part as {
-            metadata?: Record<string, unknown>;
+            root?: {metadata?: Record<string, unknown>};
           };
-          const metadata = partObj.metadata;
-          const rawTokens = metadata?.['maps_tools_content_tokens'];
-          const contentTokens = rawTokens && typeof rawTokens === 'object' &&
-                  !Array.isArray(rawTokens) ?
-              (rawTokens as Record<string, unknown>) :
-              undefined;
+          await this.addContentTokens(
+              partObj.root?.metadata?.['maps_tools_content_tokens'],
+          );
           const payloadStr = JSON.stringify(part.data);
           if (!yieldedDataPayloads.has(payloadStr)) {
-            yield contentTokens ?
-                {type: 'a2ui', message: part.data, contentTokens} :
-                {type: 'a2ui', message: part.data};
+            yield { type: "a2ui", message: part.data };
             yieldedDataPayloads.add(payloadStr);
           }
         }

@@ -46,11 +46,10 @@ public struct A2UIView: View {
   }
 
   public var body: some View {
-    if case .data(let payloadData, let metadata) = part {
+    if case .data(let payloadData, _) = part {
       A2UIMessageInnerWrapper(
         webViewID: id,
         payload: payloadData,
-        metadata: metadata,
         onUserAction: onUserAction,
         onRenderComplete: onRenderComplete
       )
@@ -65,7 +64,6 @@ public struct A2UIView: View {
 struct A2UIMessageInnerWrapper: View {
   let webViewID: String
   let payload: Any
-  let metadata: ParsedA2AEventMetadata?
   let onUserAction: (String) -> Void
   let onRenderComplete: ((String, Double, String) -> Void)?
 
@@ -75,7 +73,6 @@ struct A2UIMessageInnerWrapper: View {
     A2UIMessageRepresentableView(
       webViewID: webViewID,
       payload: payload,
-      metadata: metadata,
       dynamicHeight: $height,
       onUserAction: onUserAction,
       onRenderComplete: onRenderComplete
@@ -92,7 +89,6 @@ struct A2UIMessageInnerWrapper: View {
 struct A2UIMessageRepresentableView: UIViewRepresentable {
   let webViewID: String
   let payload: Any
-  var metadata: ParsedA2AEventMetadata? = nil
   @Binding var dynamicHeight: CGFloat
   let onUserAction: (String) -> Void
   let onRenderComplete: ((String, Double, String) -> Void)?
@@ -192,9 +188,7 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
   ///   - uiView: The WKWebView instance to update.
   ///   - coordinator: The coordinator tracking the JavaScript ready state.
   func updateWebView(_ uiView: WKWebView, coordinator: Coordinator) {
-    coordinator.parent = self
     if coordinator.isJSReady {
-      coordinator.injectContentTokens(uiView, tokens: metadata?.contentTokens)
       coordinator.injectJSON(uiView, payload: payload)
     }
   }
@@ -209,7 +203,6 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
     var parent: A2UIMessageRepresentableView
     var isJSReady = false
     var lastInjectedPayload: String?
-    var lastInjectedContentTokens: String?
     var startTime: CFAbsoluteTime? = CFAbsoluteTimeGetCurrent()
 
     /// Initializes the coordinator with a reference to its parent view.
@@ -303,36 +296,6 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
       webView.evaluateJavaScript(script)
     }
 
-    func injectContentTokens(_ webView: WKWebView, tokens: String?) {
-      guard let tokens, !tokens.isEmpty else { return }
-      if tokens == lastInjectedContentTokens { return }
-
-      let encodedString: String
-      if let encodedData = try? JSONEncoder().encode(tokens),
-        let str = String(data: encodedData, encoding: .utf8)
-      {
-        encodedString = str
-      } else {
-        return
-      }
-
-      lastInjectedContentTokens = tokens
-
-      let script = """
-            try {
-                const shell = document.querySelector('a2ui-shell');
-                if (shell) {
-                    shell.addContentTokens(\(encodedString));
-                } else {
-                    console.error('iOS Native Bridge: a2ui-shell not found');
-                }
-            } catch (e) {
-                console.error('iOS WebKit ContentToken Injection Error: ' + e.message);
-            }
-        """
-      webView.evaluateJavaScript(script)
-    }
-
     /// Receives messages sent from JavaScript via the `window.webkit.messageHandlers` bridge.
     /// Handles logging, errors, height observation, and custom user actions.
     /// - Parameters:
@@ -368,7 +331,6 @@ struct A2UIMessageRepresentableView: UIViewRepresentable {
         case "onJsReady":
           isJSReady = true
           if let webView = message.webView {
-            injectContentTokens(webView, tokens: parent.metadata?.contentTokens)
             injectJSON(webView, payload: parent.payload)
           }
         default:

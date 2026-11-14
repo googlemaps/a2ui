@@ -13,10 +13,6 @@ Grounding with Google Maps and Google Search via Vertex AI.
     template-driven agent utilizing intent classification (`LOCAL_SEARCH`,
     `DIRECTIONS`, `PLACE_ANSWER_FACTUAL`, `NEARBY_PLACES_DEPTH`) and structured
     parameter extraction for low latency.
-*   `after_tools_callback.py`: Aggregates `contentToken`
-    values per prompt turn into session state as a place-ID-to-token map
-    (`maps_tools_content_tokens`) for Grounding Lite MCP responses, and attaches them to outgoing A2A part
-    metadata.
 *   `agent_with_grounding.py`: Contains `MAUIAgentWithGrounding`, extending the
     base agent with Vertex AI Grounding with Google Maps and Google Search
     capabilities (and supporting template-based routing via `template_config:

@@ -698,24 +698,5 @@ describe('A2UICoreShell', () => {
          expect(shell.shadowRoot!.querySelectorAll('a2ui-surface').length)
              .toBe(2);
        });
-
-    it('parses JSON string and delegates addContentTokens to A2UIRenderer.addContentTokens',
-       async () => {
-         const shell = await mountShell();
-         const addTokensSpy =
-             spyOn(shell.getRenderer(), 'addContentTokens').and.resolveTo();
-
-         shell.addContentTokens(JSON.stringify({
-           place_1: 'token-1',
-           place_2: 'token-2',
-           '': ['fallback-1'],
-         }));
-
-         expect(addTokensSpy).toHaveBeenCalledOnceWith({
-           place_1: 'token-1',
-           place_2: 'token-2',
-           '': ['fallback-1'],
-         });
-       });
   });
 });

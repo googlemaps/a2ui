@@ -17,19 +17,14 @@
 import {A2AClient} from '@a2a-js/sdk/client';
 
 import {A2UIClient} from './a2ui_client';
-import {A2UIRenderer} from './a2ui_renderer';
-import {loadMapsLibrary, resetMapsJsApiLoaderForTesting} from './custom-components/maps_api_loader';
-import {addContentTokens} from './index';
 
 describe('A2UIClient', () => {
   let client: A2UIClient;
-  let renderer: A2UIRenderer;
   let mockA2AClient: any;
   let mockAddContentTokens: jasmine.Spy;
   let originalGoogle: unknown;
 
   beforeEach(() => {
-    resetMapsJsApiLoaderForTesting();
     if (!globalThis.crypto) {
       (globalThis as any).crypto = {};
     }
@@ -49,8 +44,6 @@ describe('A2UIClient', () => {
     };
 
     client = new A2UIClient('http://fake-server.com');
-    renderer = new A2UIRenderer();
-    spyOn(renderer.processor, 'processMessages');
 
     mockA2AClient = {
       sendMessage: jasmine.createSpy('sendMessage'),
@@ -66,16 +59,9 @@ describe('A2UIClient', () => {
   afterEach(() => {
     const windowWithGlobals = window as unknown as Record<string, unknown>;
     windowWithGlobals['google'] = originalGoogle;
-    resetMapsJsApiLoaderForTesting();
   });
 
   it('should process traditional blocking response correctly', async () => {
-    const contentTokens = {
-      place_1: 'token_1',
-      place_2: 'token_2',
-      place_3: 'token_1',
-      '': ['fallback_token_1', 'token_1'],
-    };
     mockA2AClient.sendMessage.and.resolveTo({
       result: {
         kind: 'task',
@@ -86,8 +72,15 @@ describe('A2UIClient', () => {
               {
                 kind: 'data',
                 data: {createSurface: {surfaceId: 'map_1'}},
-                metadata: {
-                  maps_tools_content_tokens: contentTokens,
+                root: {
+                  metadata: {
+                    maps_tools_content_tokens: {
+                      place_1: 'token_1',
+                      place_2: 'token_2',
+                      place_3: 'token_1',
+                      '': ['fallback_token_1', 'token_1'],
+                    },
+                  },
                 },
               },
             ],
@@ -103,10 +96,7 @@ describe('A2UIClient', () => {
     expect(result[1]).toEqual({
       type: 'a2ui',
       message: {createSurface: {surfaceId: 'map_1'}},
-      contentTokens,
     });
-
-    renderer.processResponse(result);
     expect(mockAddContentTokens).toHaveBeenCalledOnceWith([
       'token_1',
       'token_2',
@@ -116,9 +106,6 @@ describe('A2UIClient', () => {
 
   it('should parse and yield chunked stream correctly, handling text deltas and dropping status updates',
      async () => {
-       const contentTokens = {
-         place_1: 'stream_token_1',
-       };
        mockA2AClient.sendMessageStream.and.returnValue(
            (async function*() {
              yield {
@@ -137,23 +124,13 @@ describe('A2UIClient', () => {
                    parts: [
                      {
                        kind: 'data',
-                       data: {createSurface: {surfaceId: 'stream_map'}},
-                     },
-                   ],
-                 },
-               },
-             };
-
-             yield {
-               kind: 'status-update',
-               status: {
-                 message: {
-                   parts: [
-                     {
-                       kind: 'data',
                        data: {updateDataModel: {foo: 'bar'}},
-                       metadata: {
-                         maps_tools_content_tokens: contentTokens,
+                       root: {
+                         metadata: {
+                           maps_tools_content_tokens: {
+                             place_1: 'stream_token_1',
+                           },
+                         },
                        },
                      },
                    ],
@@ -170,23 +147,15 @@ describe('A2UIClient', () => {
          yieldedItems.push(item);
        }
 
-       expect(yieldedItems.length).toBe(4);
+       expect(yieldedItems.length).toBe(3);
        expect(yieldedItems[0]).toEqual({type: 'text', text: 'Hello '});
        expect(yieldedItems[1]).toEqual({type: 'text', text: 'World!'});
        expect(yieldedItems[2]).toEqual({
          type: 'a2ui',
-         message: {createSurface: {surfaceId: 'stream_map'}},
-       });
-       expect('contentTokens' in yieldedItems[2]).toBeFalse();
-       expect(yieldedItems[3]).toEqual({
-         type: 'a2ui',
          message: {updateDataModel: {foo: 'bar'}},
-         contentTokens,
        });
-
-       renderer.processResponse(yieldedItems);
        expect(mockAddContentTokens).toHaveBeenCalledOnceWith([
-         'stream_token_1',
+         'stream_token_1'
        ]);
      });
 
@@ -202,21 +171,23 @@ describe('A2UIClient', () => {
                  {
                    kind: 'data',
                    data: {createSurface: {surfaceId: 'map_2'}},
-                   metadata: {maps_tools_content_tokens: {}},
+                   root: {metadata: {maps_tools_content_tokens: {}}},
                  },
                  {
                    kind: 'data',
                    data: {createSurface: {surfaceId: 'map_3'}},
-                   metadata: {maps_tools_content_tokens: ['token_1']},
+                   root: {metadata: {maps_tools_content_tokens: ['token_1']}},
                  },
                  {
                    kind: 'data',
                    data: {createSurface: {surfaceId: 'map_4'}},
-                   metadata: {
-                     maps_tools_content_tokens: {
-                       place_1: 123,
-                       place_2: null,
-                       place_3: '',
+                   root: {
+                     metadata: {
+                       maps_tools_content_tokens: {
+                         place_1: 123,
+                         place_2: null,
+                         place_3: '',
+                       },
                      },
                    },
                  },
@@ -226,10 +197,7 @@ describe('A2UIClient', () => {
          },
        });
 
-       const result = await client.send('Show me a map');
-       expect('contentTokens' in result[0]).toBeFalse();
-       expect('contentTokens' in result[2]).toBeFalse();
-       renderer.processResponse(result);
+       await client.send('Show me a map');
 
        expect(mockAddContentTokens).not.toHaveBeenCalled();
      });
@@ -251,9 +219,30 @@ describe('A2UIClient', () => {
          },
        };
 
-       await renderer.addContentTokens({
-         place_1: 'lazy_token_1',
+       mockA2AClient.sendMessage.and.resolveTo({
+         result: {
+           kind: 'task',
+           status: {
+             message: {
+               parts: [
+                 {
+                   kind: 'data',
+                   data: {createSurface: {surfaceId: 'map_1'}},
+                   root: {
+                     metadata: {
+                       maps_tools_content_tokens: {
+                         place_1: 'lazy_token_1',
+                       },
+                     },
+                   },
+                 },
+               ],
+             },
+           },
+         },
        });
+
+       await client.send('Show me a map');
 
        expect(importLibrarySpy).toHaveBeenCalledOnceWith('core');
        expect(mockAddContentTokens).toHaveBeenCalledOnceWith(['lazy_token_1']);
@@ -271,9 +260,30 @@ describe('A2UIClient', () => {
     };
     const consoleErrorSpy = spyOn(console, 'error');
 
-    await renderer.addContentTokens({
-      place_1: 'lazy_token_1',
+    mockA2AClient.sendMessage.and.resolveTo({
+      result: {
+        kind: 'task',
+        status: {
+          message: {
+            parts: [
+              {
+                kind: 'data',
+                data: {createSurface: {surfaceId: 'map_1'}},
+                root: {
+                  metadata: {
+                    maps_tools_content_tokens: {
+                      place_1: 'lazy_token_1',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
     });
+
+    await client.send('Show me a map');
 
     expect(importLibrarySpy).toHaveBeenCalledOnceWith('core');
     expect(consoleErrorSpy)
@@ -283,54 +293,4 @@ describe('A2UIClient', () => {
         );
     expect(mockAddContentTokens).not.toHaveBeenCalled();
   });
-
-  it('should export standalone addContentTokens and gate places library loads on cold boot',
-     async () => {
-       const callOrder: string[] = [];
-       const windowWithGlobals = window as unknown as Record<string, unknown>;
-       const importLibrarySpy =
-           jasmine.createSpy('importLibrary').and.callFake((lib: string) => {
-             callOrder.push(`import:${lib}`);
-             if (lib === 'core') {
-               return Promise.resolve({
-                 Settings: {
-                   getInstance: () => ({
-                     addContentTokens: (tokens: string[]) => {
-                       callOrder.push('addContentTokens');
-                       mockAddContentTokens(tokens);
-                     },
-                   }),
-                 },
-               });
-             }
-             return Promise.resolve({loaded: true});
-           });
-       windowWithGlobals['google'] = {
-         maps: {importLibrary: importLibrarySpy},
-       };
-
-       renderer.processResponse([
-         {
-           type: 'a2ui',
-           message: {createSurface: {surfaceId: 'map_1'}},
-           contentTokens: {place_1: 'cold_boot_token'},
-         },
-       ]);
-       await loadMapsLibrary('places');
-
-       expect(callOrder).toEqual([
-         'import:core',
-         'addContentTokens',
-         'import:places',
-       ]);
-       expect(mockAddContentTokens).toHaveBeenCalledOnceWith([
-         'cold_boot_token',
-       ]);
-
-       mockAddContentTokens.calls.reset();
-       await addContentTokens({place_2: 'standalone_token'});
-       expect(mockAddContentTokens).toHaveBeenCalledOnceWith([
-         'standalone_token',
-       ]);
-     });
 });
