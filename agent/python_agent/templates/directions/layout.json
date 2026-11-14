@@ -25,11 +25,6 @@
         {
           "id": "map",
           "component": "GoogleMap",
-          "center": {
-            "lat": "{{center_lat}}",
-            "lng": "{{center_lng}}"
-          },
-          "zoom": "{{zoom}}",
           "routes": "{{routes}}",
           "travelMode": "{{travel_mode}}"
         },
