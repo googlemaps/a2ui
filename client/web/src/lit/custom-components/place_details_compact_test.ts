@@ -13,38 +13,106 @@
 // limitations under the License.
 
 import './place_details_compact';
+import '../a2ui_renderer';
 
 import {type PlaceDetailsCompact, PlaceDetailsCompactApi, type PlaceDetailsCompactProps} from './place_details_compact';
 
 describe('PlaceDetailsCompact Component', () => {
-  it('uses a fallback attribution ID when the global one is missing',
-     async () => {
-       // 1. Explicitly remove any global attribution ID
-       delete (window as any).A2UI_ATTRIBUTION_ID;
+  describe('attribution IDs', () => {
+    const windowWithGlobals = window as unknown as Record<string, unknown>;
+    let originalLegacyId: unknown;
 
-       // 2. Render the component with a place ID
-       const element = document.createElement('a2ui-placedetailscompact') as
-           PlaceDetailsCompact;
-       (element as any)._controller = {
-         props: {placeId: 'ChIJN1t_tDeuEmsRUsoyG83frY4'}
-       };
-       document.body.appendChild(element);
+    beforeEach(() => {
+      originalLegacyId = windowWithGlobals['A2UI_ATTRIBUTION_ID'];
+      delete windowWithGlobals['A2UI_ATTRIBUTION_ID'];
+    });
 
-       // Wait for lit to finish initial render
-       await element.updateComplete;
+    afterEach(() => {
+      windowWithGlobals['A2UI_ATTRIBUTION_ID'] = originalLegacyId;
+    });
 
-       // 3. Query the rendered place details using renderRoot
-       const detailsCompact =
-           element.renderRoot.querySelector('gmp-place-details-compact');
+    async function renderedIds(
+        configure: (element: PlaceDetailsCompact) => void = () => {},
+        parent: HTMLElement = document.body): Promise<string|null> {
+      const element = document.createElement('a2ui-placedetailscompact') as
+          PlaceDetailsCompact;
+      (element as unknown as {
+        _controller: {props: Partial<PlaceDetailsCompactProps>};
+      })._controller = {props: {placeId: 'ChIJN1t_tDeuEmsRUsoyG83frY4'}};
+      configure(element);
+      parent.appendChild(element);
+      await element.updateComplete;
+      const ids =
+          element.renderRoot
+              .querySelector(
+                  'gmp-advanced-place-details-compact, gmp-place-details-compact')!
+              .getAttribute('internal-usage-attribution-ids');
+      element.remove();
+      return ids;
+    }
 
-       // 4. Assert that the attribute has the correct fallback ID
-       const attrId =
-           detailsCompact!.getAttribute('internal-usage-attribution-ids');
-       expect(attrId).toBe('gmp_web_maui_v0.1.10_atoui');
+    it('sends only the MAUI web ID by default', async () => {
+      expect(await renderedIds()).toBe('gmp_web_maui_v0.1.11_atoui');
+    });
 
-       // Cleanup
-       document.body.removeChild(element);
-     });
+    it('appends additionalAttributionIds set as a property', async () => {
+      expect(await renderedIds((card) => {
+        card.additionalAttributionIds = ['host_id'];
+      })).toBe('gmp_web_maui_v0.1.11_atoui,host_id');
+    });
+
+    it('appends additional-attribution-ids set as an attribute', async () => {
+      expect(await renderedIds((card) => {
+        card.setAttribute('additional-attribution-ids', 'a,b');
+      })).toBe('gmp_web_maui_v0.1.11_atoui,a,b');
+    });
+
+    it('merges IDs from <maui-providers> before per-element IDs', async () => {
+      const providers =
+          document.createElement('maui-providers') as HTMLElement &
+          {additionalAttributionIds: readonly string[]};
+      providers.setAttribute('additional-attribution-ids', 'context_id');
+      document.body.appendChild(providers);
+
+      expect(await renderedIds((card) => {
+        card.additionalAttributionIds = ['element_id'];
+      }, providers)).toBe('gmp_web_maui_v0.1.11_atoui,context_id,element_id');
+      providers.remove();
+    });
+
+    it('re-renders when <maui-providers> IDs change', async () => {
+      const providers =
+          document.createElement('maui-providers') as HTMLElement &
+          {additionalAttributionIds: readonly string[]};
+      document.body.appendChild(providers);
+      const card = document.createElement('a2ui-placedetailscompact') as
+          PlaceDetailsCompact;
+      (card as unknown as {
+        _controller: {props: Partial<PlaceDetailsCompactProps>};
+      })._controller = {props: {placeId: 'ChIJN1t_tDeuEmsRUsoyG83frY4'}};
+      providers.appendChild(card);
+      await card.updateComplete;
+
+      providers.additionalAttributionIds = ['late_id'];
+      await card.updateComplete;
+
+      expect(
+          card.renderRoot
+              .querySelector(
+                  'gmp-advanced-place-details-compact, gmp-place-details-compact')!
+              .getAttribute('internal-usage-attribution-ids'))
+          .toBe('gmp_web_maui_v0.1.11_atoui,late_id');
+      providers.remove();
+    });
+
+    it('merges the deprecated window global instead of replacing the MAUI ID',
+       async () => {
+         windowWithGlobals['A2UI_ATTRIBUTION_ID'] = 'legacy_id';
+
+         expect(await renderedIds())
+             .toBe('gmp_web_maui_v0.1.11_atoui,legacy_id');
+       });
+  });
 
   it('declares every schema key in the Closure props interface', () => {
     // Fails to compile if a schema key is added/removed without updating the
@@ -83,7 +151,9 @@ describe('PlaceDetailsCompact Component', () => {
     async function renderedOrientation(element: PlaceDetailsCompact):
         Promise<string|null> {
       await element.updateComplete;
-      return element.renderRoot.querySelector('gmp-place-details-compact')!
+      return element.renderRoot
+          .querySelector(
+              'gmp-advanced-place-details-compact, gmp-place-details-compact')!
           .getAttribute('orientation');
     }
 
@@ -151,8 +221,8 @@ describe('PlaceDetailsCompact Component', () => {
        async () => {
          const card = createCard({});
          await card.updateComplete;
-         const detailsCompact =
-             card.renderRoot.querySelector('gmp-place-details-compact')!;
+         const detailsCompact = card.renderRoot.querySelector(
+             'gmp-advanced-place-details-compact, gmp-place-details-compact')!;
 
          const computed = getComputedStyle(detailsCompact);
 
@@ -170,8 +240,8 @@ describe('PlaceDetailsCompact Component', () => {
          card.style.setProperty(
              '--gmp-card-box-shadow', '0px 0px 20px rgba(0, 0, 0, 0.04)');
          await card.updateComplete;
-         const detailsCompact =
-             card.renderRoot.querySelector('gmp-place-details-compact')!;
+         const detailsCompact = card.renderRoot.querySelector(
+             'gmp-advanced-place-details-compact, gmp-place-details-compact')!;
 
          const computed = getComputedStyle(detailsCompact);
 
@@ -179,6 +249,47 @@ describe('PlaceDetailsCompact Component', () => {
          expect(computed.borderRadius).toBe('20px');
          expect(computed.boxShadow)
              .toBe('rgba(0, 0, 0, 0.04) 0px 0px 20px 0px');
+       });
+  });
+
+  describe('actions', () => {
+    it('renders gmp-advanced-place-details-compact with 4 action links by default',
+       async () => {
+         const card = createCard({});
+         await card.updateComplete;
+
+         const advanced = card.renderRoot.querySelector(
+             'gmp-advanced-place-details-compact');
+         expect(advanced).not.toBeNull();
+         expect(card.renderRoot.querySelector('gmp-place-details-compact'))
+             .toBeNull();
+
+         const links = Array.from(advanced!.querySelectorAll('gmp-place-link'))
+                           .map((el) => ({
+                                  action: el.getAttribute('action'),
+                                  slot: el.getAttribute('slot'),
+                                }));
+         expect(links).toEqual([
+           {action: 'open-directions', slot: 'action-corner'},
+           {action: 'open-map', slot: 'action-main'},
+           {action: 'open-website', slot: 'action-main'},
+           {action: 'call', slot: 'action-main'},
+         ]);
+       });
+
+    it('falls back to gmp-place-details-compact without action links when actions is false',
+       async () => {
+         const card = createCard({actions: false});
+         await card.updateComplete;
+
+         expect(card.renderRoot.querySelector(
+                    'gmp-advanced-place-details-compact'))
+             .toBeNull();
+         const basic =
+             card.renderRoot.querySelector('gmp-place-details-compact');
+         expect(basic).not.toBeNull();
+         expect(card.renderRoot.querySelectorAll('gmp-place-link').length)
+             .toBe(0);
        });
   });
 });

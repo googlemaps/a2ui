@@ -18,13 +18,19 @@ import {customElement} from 'lit/decorators.js';
 import {type PropertyValues} from 'lit';
 import {A2UICoreShell} from './core-shell';
 
-(window as any)['A2UI_ATTRIBUTION_ID'] =
-    'gmp_web_maui_v0.1.10_atoui,gmp_ios_maui_v0.1.10_atoui';
+/**
+ * Maps JS API usage attribution ID identifying the iOS SDK. MAUI components
+ * send it in addition to their own web ID. Bump on release.
+ */
+export const MAUI_IOS_ATTRIBUTION_ID = 'gmp_ios_maui_v0.1.11_atoui';
 
 const PLACE_CARD_THUMBNAIL_MIN_WIDTH = 350;
 
 @customElement('a2ui-shell')
 export class IOSA2UIShell extends A2UICoreShell {
+  protected override readonly platformAttributionIds = [
+    MAUI_IOS_ATTRIBUTION_ID,
+  ];
 
   protected override notifyWebpageResized(height: number): void {
       window.webkit?.messageHandlers?.heightObserver?.postMessage(height);
@@ -64,7 +70,11 @@ export class IOSA2UIShell extends A2UICoreShell {
       PlaceCard.prototype.firstUpdated = function (changedProperties: PropertyValues) {
         if (orig) orig.call(this, changedProperties);
 
-        const compact = this.renderRoot?.querySelector('gmp-place-details-compact') as HTMLElement | null;
+        const compact =
+            this.renderRoot?.querySelector(
+                'gmp-advanced-place-details-compact, gmp-place-details-compact') as
+                HTMLElement |
+            null;
         if (!compact) return;
 
         new ResizeObserver(() => {

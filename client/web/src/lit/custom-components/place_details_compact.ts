@@ -16,12 +16,14 @@
 
 import {A2uiController, A2uiLitElement} from '@a2ui/lit/v0_9';
 import {structuralStyles} from '@a2ui/web_core/v0_8';
-import {ComponentApi, DynamicStringSchema} from '@a2ui/web_core/v0_9';
+import {ComponentApi, DynamicBooleanSchema, DynamicStringSchema} from '@a2ui/web_core/v0_9';
+import {ContextConsumer} from '@lit/context';
 import {css, html, LitElement, nothing} from 'lit';
-import {customElement} from 'lit/decorators.js';
+import {customElement, property} from 'lit/decorators.js';
 import {styleMap} from 'lit/directives/style-map.js';
 import {z} from 'zod';
 
+import {attributionIdsContext, attributionIdsConverter, resolveAttributionIds} from './attribution';
 import {loadMapsLibrary} from './maps_api_loader';
 
 const sheet = new CSSStyleSheet();
@@ -33,20 +35,37 @@ enum UIStrings {
 
 export const PlaceDetailsCompactApi = {
   name: 'PlaceDetailsCompact',
-  schema: z.object({
-             placeId: DynamicStringSchema.describe(
-                 'The ID of the place to display.'),
-             orientation: z.enum(['horizontal', 'vertical'])
-                              .optional()
-                              .default('horizontal')
-                              .describe('The orientation of the place card.'),
-           }).strict(),
+  schema:
+      z.object({
+         placeId:
+             DynamicStringSchema.describe('The ID of the place to display.'),
+         orientation: z.enum(['horizontal', 'vertical'])
+                          .optional()
+                          .default('horizontal')
+                          .describe('The orientation of the place card.'),
+         actions: DynamicBooleanSchema.optional().default(true).describe(
+             'Whether to display place action links (Directions, Map, Website, Call).'),
+       }).strict(),
 } satisfies ComponentApi;
 
 /** Declared so Closure Compiler does not rename these schema keys. */
 export declare interface PlaceDetailsCompactProps {
   placeId: string;
   orientation?: 'horizontal'|'vertical';
+  actions?: boolean;
+}
+
+interface GmpAdvancedPlaceDetailsCompactElement extends HTMLElement {
+  place?: string|object|null;
+  orientation?: string;
+  internalUsageAttributionIds?: string|Iterable<string>;
+  'internal-usage-attribution-ids'?: string;
+}
+
+interface GmpPlaceNameElement extends HTMLElement {}
+
+interface GmpPlaceLinkElement extends HTMLElement {
+  action?: string;
 }
 
 declare global {
@@ -55,6 +74,9 @@ declare global {
       place: string|object|null;
       orientation: 'horizontal'|'vertical';
     };
+    'gmp-advanced-place-details-compact': GmpAdvancedPlaceDetailsCompactElement;
+    'gmp-place-name': GmpPlaceNameElement;
+    'gmp-place-link': GmpPlaceLinkElement;
   }
 }
 
@@ -66,6 +88,22 @@ export class PlaceDetailsCompact extends
     ...LitElement.shadowRootOptions,
     mode: 'closed',
   };
+
+  /**
+   * Maps JS API usage attribution IDs to send in addition to MAUI's own ID,
+   * e.g. to identify the product embedding MAUI.
+   */
+  @property({
+    attribute: 'additional-attribution-ids',
+    converter: attributionIdsConverter,
+  })
+  additionalAttributionIds: readonly string[] = [];
+
+  /** Attribution IDs provided by an ancestor `<maui-providers>`. */
+  private readonly attributionIdsConsumer = new ContextConsumer(this, {
+    context: attributionIdsContext,
+    subscribe: true,
+  });
 
   protected override createController() {
     return new A2uiController(this, PlaceDetailsCompactApi);
@@ -85,7 +123,8 @@ export class PlaceDetailsCompact extends
         display: block;
         width: 100%;
       }
-      gmp-place-details-compact {
+      gmp-place-details-compact,
+      gmp-advanced-place-details-compact {
         color-scheme: var(--color-scheme);
         --gmpx-color-scheme: var(--color-scheme);
         border: var(
@@ -102,7 +141,8 @@ export class PlaceDetailsCompact extends
     const props = this.controller.props;
     if (!props) return nothing;
 
-    const placeId = props.placeId;
+    const placeId = props.placeId?.replace(/^places\//, '');
+    const showActions = props.actions ?? true;
 
     // Default deterministically to 'HORIZONTAL'
     const orientation = (props.orientation ?? 'horizontal').toUpperCase() as
@@ -116,13 +156,44 @@ export class PlaceDetailsCompact extends
       return nothing;
     }
 
+    const attributionIds = resolveAttributionIds(
+                               this.attributionIdsConsumer.value,
+                               this.additionalAttributionIds,
+                               )
+                               .join(',');
+
+    if (showActions) {
+      return html`
+        <section aria-label="${UIStrings.PLACE_DETAILS}" style=${
+          styleMap(style)}>
+          <gmp-advanced-place-details-compact orientation="${orientation}"
+              place="${placeId}"
+              internal-usage-attribution-ids="${attributionIds}">
+            <gmp-place-details-place-request place="${placeId}">
+            </gmp-place-details-place-request>
+            <gmp-place-name></gmp-place-name>
+            <gmp-place-media lightbox-preferred></gmp-place-media>
+            <gmp-place-rating></gmp-place-rating>
+            <gmp-place-type></gmp-place-type>
+            <gmp-place-price></gmp-place-price>
+            <gmp-place-accessible-entrance-icon></gmp-place-accessible-entrance-icon>
+            <gmp-place-attribution
+                light-scheme-color="gray"
+                dark-scheme-color="white"></gmp-place-attribution>
+            <gmp-place-link action="open-directions" slot="action-corner"></gmp-place-link>
+            <gmp-place-link action="open-map" slot="action-main"></gmp-place-link>
+            <gmp-place-link action="open-website" slot="action-main"></gmp-place-link>
+            <gmp-place-link action="call" slot="action-main"></gmp-place-link>
+          </gmp-advanced-place-details-compact>
+        </section>
+      `;
+    }
+
     return html`
       <section aria-label="${UIStrings.PLACE_DETAILS}" style=${styleMap(style)}>
         <gmp-place-details-compact orientation="${orientation}"
             place="${placeId}"
-            internal-usage-attribution-ids="${
-        (window as any)['A2UI_ATTRIBUTION_ID'] ||
-        'gmp_web_maui_v0.1.10_atoui'}">
+            internal-usage-attribution-ids="${attributionIds}">
           <gmp-place-details-place-request place="${placeId}">
           </gmp-place-details-place-request>
             <gmp-place-content-config>
