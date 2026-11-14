@@ -41,7 +41,7 @@ sealed class A2AParserException(message: String, cause: Throwable? = null) :
   ) : A2AParserException(message)
 }
 
-data class ParsedA2AEventMetadata(val mimeType: String?)
+data class ParsedA2AEventMetadata(val mimeType: String? = null, val contentTokens: String? = null)
 
 sealed interface ParsedA2AEvent {
   data class Text(val text: String) : ParsedA2AEvent
@@ -72,6 +72,8 @@ object A2AResponseParser {
   private const val KEY_RESULT = "result"
   private const val KEY_ERROR = "error"
   private const val KEY_CODE = "code"
+  private const val KEY_METADATA = "metadata"
+  private const val KEY_CONTENT_TOKENS = "maps_tools_content_tokens"
 
   /** A2A event kinds that may legitimately carry no message parts, e.g. a final status update. */
   private val PARTLESS_EVENT_KINDS = setOf("task", "status-update", "artifact-update")
@@ -136,6 +138,7 @@ object A2AResponseParser {
     val partsList = mutableListOf<ParsedA2AEvent>()
     var currentTextBuilder = java.lang.StringBuilder()
     var currentUiElements = JSONArray()
+    val metadata = extractMetadata(partsArray)
 
     for (i in 0 until partsArray.length()) {
       val part = partsArray.getJSONObject(i)
@@ -145,7 +148,7 @@ object A2AResponseParser {
 
       if (textPart != null) {
         if (currentUiElements.length() > 0) {
-          partsList.add(ParsedA2AEvent.Data(currentUiElements.toString()))
+          partsList.add(ParsedA2AEvent.Data(currentUiElements.toString(), metadata))
           currentUiElements = JSONArray()
         }
 
@@ -173,7 +176,7 @@ object A2AResponseParser {
       partsList.add(ParsedA2AEvent.Text(currentTextBuilder.toString()))
     }
     if (currentUiElements.length() > 0) {
-      partsList.add(ParsedA2AEvent.Data(currentUiElements.toString()))
+      partsList.add(ParsedA2AEvent.Data(currentUiElements.toString(), metadata))
     }
 
     val deduplicatedParts = mutableListOf<ParsedA2AEvent>()
@@ -208,7 +211,7 @@ object A2AResponseParser {
             newArray.put(obj)
           }
           if (newArray.length() > 0) {
-            deduplicatedParts.add(ParsedA2AEvent.Data(newArray.toString(), part.metadata))
+            deduplicatedParts.add(ParsedA2AEvent.Data(newArray.toString(), metadata))
           }
         } catch (e: Exception) {
           if (part.data.isNotEmpty()) {
@@ -219,6 +222,17 @@ object A2AResponseParser {
     }
 
     return deduplicatedParts
+  }
+
+  private fun extractMetadata(partsArray: JSONArray): ParsedA2AEventMetadata? {
+    for (i in partsArray.length() - 1 downTo 0) {
+      val part = partsArray.optJSONObject(i) ?: continue
+      val tokensObj = part.optJSONObject(KEY_METADATA)?.optJSONObject(KEY_CONTENT_TOKENS)
+      if (tokensObj != null && tokensObj.length() > 0) {
+        return ParsedA2AEventMetadata(contentTokens = tokensObj.toString())
+      }
+    }
+    return null
   }
 
   private fun isUiElement(obj: JSONObject): Boolean {

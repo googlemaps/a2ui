@@ -14,15 +14,21 @@
  limitations under the License.
  */
 
-import * as v0_9 from "@a2ui/web_core/v0_9";
-import { basicCatalog, Context } from "@a2ui/lit/v0_9";
-import { LitElement, html } from "lit";
-import { ContextProvider } from "@lit/context";
-import { renderMarkdown } from "@a2ui/markdown-it";
-import * as Types from "@a2ui/web_core/types/types";
-import { mapsAgenticUICatalog } from "./catalog";
+import {basicCatalog, Context} from '@a2ui/lit/v0_9';
+import {renderMarkdown} from '@a2ui/markdown-it';
+import * as Types from '@a2ui/web_core/types/types';
+import * as v0_9 from '@a2ui/web_core/v0_9';
+import {ContextProvider} from '@lit/context';
+import {html, LitElement} from 'lit';
+import {property} from 'lit/decorators.js';
+
+import {mapsAgenticUICatalog} from './catalog';
+import {attributionIdsContext, attributionIdsConverter} from './custom-components/attribution';
+import {loadMapsLibrary} from './custom-components/maps_api_loader';
 
 export class MAUIProviders extends LitElement {
+  private attributionIdsValue: readonly string[] = [];
+
   private markdownProvider = new ContextProvider(this, {
     context: Context.markdown,
     initialValue: async (
@@ -30,6 +36,35 @@ export class MAUIProviders extends LitElement {
         options?: Types.MarkdownRendererOptions,
         ) => renderMarkdown(markdown, options),
   });
+
+  private attributionIdsProvider = new ContextProvider(this, {
+    context: attributionIdsContext,
+    initialValue: this.attributionIdsValue,
+  });
+
+  /**
+   * Maps JS API usage attribution IDs that every MAUI component inside this
+   * element sends in addition to MAUI's own ID. Also settable as a
+   * comma-separated `additional-attribution-ids` attribute.
+   */
+  @property({
+    attribute: 'additional-attribution-ids',
+    converter: attributionIdsConverter,
+    noAccessor: true,
+  })
+  get additionalAttributionIds(): readonly string[] {
+    return this.attributionIdsValue;
+  }
+
+  set additionalAttributionIds(ids: readonly string[]) {
+    const oldIds = this.attributionIdsValue;
+    this.attributionIdsValue = ids ?? [];
+    // Update consumers synchronously, so that MAUI components rendered in the
+    // same pass see the IDs before they first render. Maps JS API elements may
+    // ignore attribution ID changes after they are instantiated.
+    this.attributionIdsProvider?.setValue(this.attributionIdsValue);
+    this.requestUpdate('additionalAttributionIds', oldIds);
+  }
 
   protected override render() {
     return html`<slot></slot>`;
@@ -92,9 +127,55 @@ export class A2UIRenderer {
   }
 
   /**
+   * Registers Maps content tokens on `google.maps.Settings`.
+   */
+  async addContentTokens(
+      tokens: Record<string, unknown>,
+      ): Promise<void> {
+    const tokenSet = new Set<string>();
+    for (const value of Object.values(tokens)) {
+      if (typeof value === 'string' && value.length > 0) {
+        tokenSet.add(value);
+      } else if (Array.isArray(value)) {
+        value.forEach((t) => {
+          if (typeof t === 'string' && t.length > 0) {
+            tokenSet.add(t);
+          }
+        });
+      }
+    }
+    if (tokenSet.size === 0) return;
+    let settingsClass =
+        typeof google !== 'undefined' ? google.maps?.Settings : undefined;
+    if (!settingsClass) {
+      try {
+        const coreLib = await loadMapsLibrary('core');
+        settingsClass = coreLib?.Settings;
+      } catch (err) {
+        console.error('Failed to load Google Maps Core library:', err);
+        return;
+      }
+    }
+    const settings = settingsClass?.getInstance() as unknown as | {
+      addContentTokens?: (tokens: Iterable<string>) => void;
+    }
+    |undefined;
+    settings?.addContentTokens?.(Array.from(tokenSet));
+  }
+
+  /**
    * Processes a response from the A2UI client and updates the timeline.
    */
-  processResponse(orderedParts: Array<{ type: "text", text: string } | { type: "a2ui", message: any }>) {
+  processResponse(
+      orderedParts: Array<|{
+        type: 'text';
+        text: string
+      }|{
+        type: 'a2ui';
+        message: any;
+        contentTokens?: Record<string, unknown>;
+      }>,
+  ) {
     const uiMessages: any[] = [];
     const newItems: TimelineItem[] = [];
 
@@ -124,6 +205,9 @@ export class A2UIRenderer {
           newItems.push({ type: "text", text: part.text });
         }
       } else if (part.type === "a2ui") {
+        if (part.contentTokens) {
+          void this.addContentTokens(part.contentTokens);
+        }
         const msg = part.message;
         const rawSurfaceId = this.getSurfaceId(msg);
         if (msg.createSurface && this.getSurface(rawSurfaceId)) {

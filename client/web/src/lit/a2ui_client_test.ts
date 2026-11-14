@@ -17,9 +17,11 @@
 import {A2AClient} from '@a2a-js/sdk/client';
 
 import {A2UIClient} from './a2ui_client';
+import {A2UIRenderer} from './a2ui_renderer';
 
 describe('A2UIClient', () => {
   let client: A2UIClient;
+  let renderer: A2UIRenderer;
   let mockA2AClient: any;
   let mockAddContentTokens: jasmine.Spy;
   let originalGoogle: unknown;
@@ -44,6 +46,8 @@ describe('A2UIClient', () => {
     };
 
     client = new A2UIClient('http://fake-server.com');
+    renderer = new A2UIRenderer();
+    spyOn(renderer.processor, 'processMessages');
 
     mockA2AClient = {
       sendMessage: jasmine.createSpy('sendMessage'),
@@ -62,6 +66,12 @@ describe('A2UIClient', () => {
   });
 
   it('should process traditional blocking response correctly', async () => {
+    const contentTokens = {
+      place_1: 'token_1',
+      place_2: 'token_2',
+      place_3: 'token_1',
+      '': ['fallback_token_1', 'token_1'],
+    };
     mockA2AClient.sendMessage.and.resolveTo({
       result: {
         kind: 'task',
@@ -72,10 +82,8 @@ describe('A2UIClient', () => {
               {
                 kind: 'data',
                 data: {createSurface: {surfaceId: 'map_1'}},
-                root: {
-                  metadata: {
-                    maps_tools_content_tokens: ['token_1', 'token_2'],
-                  },
+                metadata: {
+                  maps_tools_content_tokens: contentTokens,
                 },
               },
             ],
@@ -91,15 +99,22 @@ describe('A2UIClient', () => {
     expect(result[1]).toEqual({
       type: 'a2ui',
       message: {createSurface: {surfaceId: 'map_1'}},
+      contentTokens,
     });
+
+    renderer.processResponse(result);
     expect(mockAddContentTokens).toHaveBeenCalledOnceWith([
       'token_1',
       'token_2',
+      'fallback_token_1',
     ]);
   });
 
   it('should parse and yield chunked stream correctly, handling text deltas and dropping status updates',
      async () => {
+       const contentTokens = {
+         place_1: 'stream_token_1',
+       };
        mockA2AClient.sendMessageStream.and.returnValue(
            (async function*() {
              yield {
@@ -119,10 +134,8 @@ describe('A2UIClient', () => {
                      {
                        kind: 'data',
                        data: {updateDataModel: {foo: 'bar'}},
-                       root: {
-                         metadata: {
-                           maps_tools_content_tokens: ['stream_token_1'],
-                         },
+                       metadata: {
+                         maps_tools_content_tokens: contentTokens,
                        },
                      },
                    ],
@@ -145,13 +158,16 @@ describe('A2UIClient', () => {
        expect(yieldedItems[2]).toEqual({
          type: 'a2ui',
          message: {updateDataModel: {foo: 'bar'}},
+         contentTokens,
        });
+
+       renderer.processResponse(yieldedItems);
        expect(mockAddContentTokens).toHaveBeenCalledOnceWith([
-         'stream_token_1'
+         'stream_token_1',
        ]);
      });
 
-  it('should not call addContentTokens when maps_tools_content_tokens is absent',
+  it('should not call addContentTokens when maps_tools_content_tokens is absent, empty, or invalid',
      async () => {
        mockA2AClient.sendMessage.and.resolveTo({
          result: {
@@ -160,13 +176,35 @@ describe('A2UIClient', () => {
              message: {
                parts: [
                  {kind: 'data', data: {createSurface: {surfaceId: 'map_1'}}},
+                 {
+                   kind: 'data',
+                   data: {createSurface: {surfaceId: 'map_2'}},
+                   metadata: {maps_tools_content_tokens: {}},
+                 },
+                 {
+                   kind: 'data',
+                   data: {createSurface: {surfaceId: 'map_3'}},
+                   metadata: {maps_tools_content_tokens: ['token_1']},
+                 },
+                 {
+                   kind: 'data',
+                   data: {createSurface: {surfaceId: 'map_4'}},
+                   metadata: {
+                     maps_tools_content_tokens: {
+                       place_1: 123,
+                       place_2: null,
+                       place_3: '',
+                     },
+                   },
+                 },
                ],
              },
            },
          },
        });
 
-       await client.send('Show me a map');
+       const result = await client.send('Show me a map');
+       renderer.processResponse(result);
 
        expect(mockAddContentTokens).not.toHaveBeenCalled();
      });
@@ -188,28 +226,9 @@ describe('A2UIClient', () => {
          },
        };
 
-       mockA2AClient.sendMessage.and.resolveTo({
-         result: {
-           kind: 'task',
-           status: {
-             message: {
-               parts: [
-                 {
-                   kind: 'data',
-                   data: {createSurface: {surfaceId: 'map_1'}},
-                   root: {
-                     metadata: {
-                       maps_tools_content_tokens: ['lazy_token_1'],
-                     },
-                   },
-                 },
-               ],
-             },
-           },
-         },
+       await renderer.addContentTokens({
+         place_1: 'lazy_token_1',
        });
-
-       await client.send('Show me a map');
 
        expect(importLibrarySpy).toHaveBeenCalledOnceWith('core');
        expect(mockAddContentTokens).toHaveBeenCalledOnceWith(['lazy_token_1']);
@@ -227,28 +246,9 @@ describe('A2UIClient', () => {
     };
     const consoleErrorSpy = spyOn(console, 'error');
 
-    mockA2AClient.sendMessage.and.resolveTo({
-      result: {
-        kind: 'task',
-        status: {
-          message: {
-            parts: [
-              {
-                kind: 'data',
-                data: {createSurface: {surfaceId: 'map_1'}},
-                root: {
-                  metadata: {
-                    maps_tools_content_tokens: ['lazy_token_1'],
-                  },
-                },
-              },
-            ],
-          },
-        },
-      },
+    await renderer.addContentTokens({
+      place_1: 'lazy_token_1',
     });
-
-    await client.send('Show me a map');
 
     expect(importLibrarySpy).toHaveBeenCalledOnceWith('core');
     expect(consoleErrorSpy)

@@ -410,6 +410,55 @@ final class A2AResponseParserTests: XCTestCase {
     let unknownEvents = try A2AResponseParser.parse(jsonString(unknownPartsPayload))
     XCTAssertEqual(unknownEvents.count, 0)
   }
+
+  /// Tests that `maps_tools_content_tokens` in `metadata` (including fallback token lists) are extracted.
+  func testParse_dataPartsWithContentTokens_extractsMetadataContentTokens() throws {
+    let payload: [String: Any] = [
+      "parts": [
+        [
+          "kind": "data",
+          "data": ["createSurface": ["surfaceId": "sushi-seattle"]],
+          "metadata": [
+            "mimeType": "application/json+a2ui",
+            "maps_tools_content_tokens": [
+              "place_1": "ios_token_1",
+              "place_2": "ios_token_2",
+              "": ["fallback_token_1", "fallback_token_2"],
+            ],
+          ],
+        ],
+        [
+          "kind": "data",
+          "data": ["updateComponents": ["surfaceId": "sushi-seattle", "components": []]],
+          "metadata": [
+            "maps_tools_content_tokens": [
+              "place_1": "ios_token_1",
+              "place_2": "ios_token_2",
+              "": ["fallback_token_1", "fallback_token_2"],
+            ]
+          ],
+        ],
+      ]
+    ]
+
+    let events = try A2AResponseParser.parse(jsonString(payload))
+    XCTAssertEqual(events.count, 1)
+    guard case .data(_, let metadata) = events[0] else {
+      XCTFail("Expected .data event")
+      return
+    }
+    XCTAssertEqual(metadata?.mimeType, "application/json+a2ui")
+    let tokensData = try XCTUnwrap(metadata?.contentTokens?.data(using: .utf8))
+    let tokensDict = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: tokensData) as? [String: Any]
+    )
+    XCTAssertEqual(tokensDict["place_1"] as? String, "ios_token_1")
+    XCTAssertEqual(tokensDict["place_2"] as? String, "ios_token_2")
+    XCTAssertEqual(
+      tokensDict[""] as? [String],
+      ["fallback_token_1", "fallback_token_2"]
+    )
+  }
 }
 
 // MARK: - Test Helpers

@@ -88,7 +88,9 @@ export abstract class A2UICoreShell extends LitElement {
   @state()
   protected timeline: TimelineItem[] = [];
 
-  protected rendererRef = new A2UIRenderer();
+  protected rendererRef = new A2UIRenderer() as A2UIRenderer & {
+    addContentTokens(tokens: Record<string, unknown>): Promise<void>;
+  };
   protected globalDataModelRef: Record<string, unknown> = {};
   protected resizeObserver!: ResizeObserver;
   protected timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -168,6 +170,12 @@ export abstract class A2UICoreShell extends LitElement {
 
   protected abstract notifyWebpageResized(height: number): void;
   protected abstract notifyJsReady(): void;
+
+  /**
+   * Maps JS API usage attribution IDs identifying the native platform, sent by
+   * every MAUI component in addition to MAUI's own web ID.
+   */
+  protected abstract readonly platformAttributionIds: readonly string[];
 
   processA2uiMessages(json: unknown) {
     try {
@@ -325,6 +333,21 @@ export abstract class A2UICoreShell extends LitElement {
     }
   }
 
+  addContentTokens(
+      tokens: Record<string, unknown>,
+  ) {
+    try {
+      const parsed =
+          (typeof tokens === 'string' ? JSON.parse(tokens) : tokens) as
+          Record<string, string|readonly string[]>;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        void this.rendererRef.addContentTokens(parsed);
+      }
+    } catch (e) {
+      console.error('Failed to add content tokens:', e);
+    }
+  }
+
   private adoptScrollStylesheets() {
     const sheet = A2UICoreShell.getHorizontalScrollSheet();
     const surfaces = this.shadowRoot?.querySelectorAll('a2ui-surface');
@@ -375,20 +398,24 @@ export abstract class A2UICoreShell extends LitElement {
   override render() {
     return html`
       <div class="chat-messages">
-        <maui-providers>
-          ${this.timeline.length === 0 ? html`<p class="loading">Waiting for payload...</p>` : nothing}
+        <maui-providers .additionalAttributionIds=${
+        this.platformAttributionIds}>
+          ${
+        this.timeline.length === 0 ?
+            html`<p class="loading">Waiting for payload...</p>` :
+            nothing}
           ${this.timeline.map((item) => {
-            if (item.type === 'surface') {
-              const surface = this.rendererRef.getSurface(item.surfaceId);
-              if (!surface) return nothing;
-              return html`
+      if (item.type === 'surface') {
+        const surface = this.rendererRef.getSurface(item.surfaceId);
+        if (!surface) return nothing;
+        return html`
                 <div class="surface-message">
                   <a2ui-surface .surface=${surface}></a2ui-surface>
                 </div>
               `;
-            }
-            return nothing;
-          })}
+      }
+      return nothing;
+    })}
         </maui-providers>
       </div>
     `;

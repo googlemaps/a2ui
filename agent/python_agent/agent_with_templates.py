@@ -29,14 +29,11 @@ from google.adk.runners import Runner
 from google.genai import types
 import pydantic
 
-from a2ui.schema.constants import VERSION_0_9
-from a2ui.schema.manager import (
-    A2uiSchemaManager,
-)
-from agent import (
-    GROUNDED_TEXT_BASE_INSTRUCTION,
-    MAUIAgent,
-)
+from a2ui.core.catalog import CatalogApi
+from after_tools_callback import add_maps_tools_tokens_to_part
+from agent import GROUNDED_TEXT_BASE_INSTRUCTION
+from agent import MAUIAgent
+from agent import VERSION_0_9
 from agent_config import AgentConfig
 from agent_config import FallbackMode
 from template_registry import (
@@ -57,19 +54,18 @@ logger = logging.getLogger(__name__)
 def _normalize_version(version: str | None) -> str:
   """Canonicalizes an A2UI version string to the key used by version maps.
 
-  The A2UI extension URI carries the version as `v0.9`, while the schema
-  constants (and therefore `_schema_managers`) use the bare `0.9`. Callers may
-  pass either form, so both are collapsed to the bare form here.
+  The A2UI extension URI and `VERSION_0_9` carry the version as `v0.9`, while
+  internal version maps use the bare `0.9`. Callers may pass either form, so
+  both are collapsed to the bare form here.
 
   Args:
     version: Requested A2UI version, e.g. `0.9` or `v0.9`. May be None.
 
   Returns:
-    The bare version string, defaulting to `VERSION_0_9` when unspecified.
+    The bare version string, defaulting to normalized `VERSION_0_9` (`0.9`)
+    when unspecified.
   """
-  if not version:
-    return VERSION_0_9
-  return version.removeprefix("v")
+  return (version or VERSION_0_9).removeprefix("v")
 
 
 class MAUIAgentWithTemplates(MAUIAgent):
@@ -94,8 +90,11 @@ class MAUIAgentWithTemplates(MAUIAgent):
     )
     self._fallback_text_runner = self._build_runner(self._fallback_text_agent)
 
-    for version, schema_manager in self._schema_managers.items():
-      agent = self._build_unified_extractor_agent(schema_manager=schema_manager)
+    for version, processor in self._processors.items():
+      catalog = (
+          processor.active_catalogs[0] if processor.active_catalogs else None
+      )
+      agent = self._build_unified_extractor_agent(catalog=catalog)
       key = _normalize_version(version)
       self._extractor_agents[key] = agent
       self._extractor_runners[key] = self._build_runner(agent)
@@ -226,7 +225,7 @@ class MAUIAgentWithTemplates(MAUIAgent):
 
   def _build_unified_extractor_agent(
       self,
-      schema_manager: A2uiSchemaManager | None = None,
+      catalog: CatalogApi | None = None,
   ) -> LlmAgent:
     """Builds a single unified extractor agent with all template rendering tools."""
     raw_instructions = self._build_unified_extractor_instruction()
@@ -236,13 +235,13 @@ class MAUIAgentWithTemplates(MAUIAgent):
       tools.append(
           BaseTemplateTool.from_bundle(
               bundle,
-              schema_manager=schema_manager,
+              catalog=catalog,
               max_list_size=self.config.max_list_size,
           )
       )
     tools.append(
         RenderTextOnlyTemplateTool(
-            schema_manager=schema_manager,
+            catalog=catalog,
             surface_id_prefix="text-only-surface",
         )
     )
@@ -259,9 +258,9 @@ class MAUIAgentWithTemplates(MAUIAgent):
           f" {self.config.extractor_thinking_budget} tokens"
       )
 
-    # Template tools handle template merging and use schema_manager only for
-    # catalog validation. Do not call schema_manager.generate_system_prompt()
-    # here, as it injects raw A2UI schema and <a2ui-json> output instructions.
+    # Template tools handle template merging and use catalog only for
+    # catalog validation. Do not inject raw A2UI schema and <a2ui-json>
+    # output instructions here.
     instruction = raw_instructions
 
     return LlmAgent(
@@ -361,7 +360,8 @@ class MAUIAgentWithTemplates(MAUIAgent):
             if p.text:
               full_content_list.append(p.text)
 
-    if rendered_parts is None and getattr(runner, "session_service", None):
+    session = None
+    if getattr(runner, "session_service", None):
       get_session_fn = getattr(runner.session_service, "get_session", None)
       if callable(get_session_fn):
         try:
@@ -372,11 +372,19 @@ class MAUIAgentWithTemplates(MAUIAgent):
           )
           if inspect.isawaitable(res):
             session = await res
-            if session and getattr(session, "state", None):
+            if (
+                rendered_parts is None
+                and session
+                and getattr(session, "state", None)
+            ):
               rendered_parts = session.state.get(STATE_RENDERED_A2UI_PARTS)
               rendered_data = session.state.get(STATE_RENDERED_A2UI_DATA)
         except Exception as e:  # pylint: disable=broad-exception-caught
           logger.debug("Could not retrieve session from session_service: %s", e)
+
+    if rendered_parts:
+      for p in rendered_parts:
+        add_maps_tools_tokens_to_part(p, session)
 
     return rendered_parts, full_content_list, rendered_data
 
@@ -392,14 +400,15 @@ class MAUIAgentWithTemplates(MAUIAgent):
 
     # 1. Resolve persistent runner and agent, falling back to the default
     # version when the requested one has no pre-built extractor.
+    default_version = _normalize_version(VERSION_0_9)
     if version not in self._extractor_agents:
       logger.warning(
           "No extractor agent built for A2UI version '%s'. Falling back to"
           " '%s'.",
           version,
-          VERSION_0_9,
+          default_version,
       )
-      version = VERSION_0_9
+      version = default_version
     agent = self._extractor_agents[version]
     runner = self._extractor_runners[version]
 

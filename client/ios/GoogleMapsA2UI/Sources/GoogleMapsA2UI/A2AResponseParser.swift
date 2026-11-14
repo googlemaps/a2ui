@@ -118,13 +118,17 @@ public enum A2AResponseParser {
 
     var sdkParts: [ParsedA2AEvent] = []
     var a2uiPayloads: [Any] = []
+    let contentTokens = extractContentTokens(from: parts)
 
     // flushA2UI() batches consecutive A2UI JSON payloads together into a single ParsedA2AEvent.
     func flushA2UI() {
       if !a2uiPayloads.isEmpty {
         let event = ParsedA2AEvent.data(
           a2uiPayloads,
-          metadata: ParsedA2AEventMetadata(mimeType: a2uiJsonMimeType)
+          metadata: ParsedA2AEventMetadata(
+            mimeType: a2uiJsonMimeType,
+            contentTokens: contentTokens
+          )
         )
         sdkParts.append(event)
         a2uiPayloads.removeAll()
@@ -149,7 +153,10 @@ public enum A2AResponseParser {
           flushA2UI()
           let event = ParsedA2AEvent.data(
             dataPayload,
-            metadata: ParsedA2AEventMetadata(mimeType: resolvedMimeType)
+            metadata: ParsedA2AEventMetadata(
+              mimeType: resolvedMimeType,
+              contentTokens: contentTokens
+            )
           )
           sdkParts.append(event)
         }
@@ -159,6 +166,20 @@ public enum A2AResponseParser {
     flushA2UI()
 
     return sdkParts
+  }
+
+  private static func extractContentTokens(from parts: [[String: Any]]) -> String? {
+    for part in parts.reversed() {
+      let metadata = part["metadata"] as? [String: Any]
+      if let rawTokens = metadata?["maps_tools_content_tokens"] as? [String: Any],
+        !rawTokens.isEmpty,
+        let jsonData = try? JSONSerialization.data(withJSONObject: rawTokens),
+        let jsonString = String(data: jsonData, encoding: .utf8)
+      {
+        return jsonString
+      }
+    }
+    return nil
   }
 
   private static let a2uiKeys: Set<String> = [

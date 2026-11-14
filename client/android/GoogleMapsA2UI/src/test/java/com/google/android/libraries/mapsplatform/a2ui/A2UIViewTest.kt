@@ -294,6 +294,9 @@ class A2UIViewTest {
             name = "com.google.android.maps.MapsActivity"
           }
       }
+    // Robolectric ShadowPackageManager.addResolveInfoForIntent is deprecated in favor of
+    // installPackage, but remains the direct way to register a single intent resolution in tests.
+    @Suppress("DEPRECATION")
     shadowOf(activity.packageManager).addResolveInfoForIntent(mapsIntent, resolveInfo)
 
     val request = createMockRequest("https://maps.google.com/?q=coffee")
@@ -316,5 +319,57 @@ class A2UIViewTest {
 
     val lastEvaluatedJs = shadowOf(a2uiView).lastEvaluatedJavascript
     assertThat(lastEvaluatedJs).isNull()
+  }
+
+  /**
+   * Verifies that addContentTokens() passes tokens through to shell.addContentTokens when JS is
+   * ready.
+   */
+  @Test
+  fun addContentTokens_whenJsReady_evaluatesJs() {
+    a2uiView.onJsReadyInternal()
+    a2uiView.addContentTokens(
+      """{"place_1":"token-1","place_2":"token-2","":["fallback-token-1","fallback-token-2"]}"""
+    )
+    ShadowLooper.idleMainLooper()
+
+    val lastEvaluatedJs = shadowOf(a2uiView).lastEvaluatedJavascript
+    assertThat(lastEvaluatedJs).isNotNull()
+    assertThat(lastEvaluatedJs).contains("shell.addContentTokens")
+    assertThat(lastEvaluatedJs).contains("place_1")
+    assertThat(lastEvaluatedJs).contains("token-1")
+    assertThat(lastEvaluatedJs).contains("token-2")
+    assertThat(lastEvaluatedJs).contains("[\"fallback-token-1\",\"fallback-token-2\"]")
+  }
+
+  /** Verifies that addContentTokens() is a no-op when JS is not ready. */
+  @Test
+  fun addContentTokens_whenJsNotReady_doesNotEvaluateJs() {
+    a2uiView.addContentTokens("""{"place_1":"token-1"}""")
+    ShadowLooper.idleMainLooper()
+
+    assertThat(shadowOf(a2uiView).lastEvaluatedJavascript).isNull()
+  }
+
+  /** Verifies that render() stores metadata and injects contentTokens when JS becomes ready. */
+  @Test
+  fun render_withMetadata_storesMetadataAndInjectsTokensOnJsReady() {
+    val metadata = ParsedA2AEventMetadata(contentTokens = """{"place_1":"token-1"}""")
+    val payload = """[{"createSurface": {"surfaceId": "test"}}]"""
+
+    a2uiView.render(payload, metadata = metadata)
+    assertThat(a2uiView.metadata).isEqualTo(metadata)
+    ShadowLooper.idleMainLooper()
+
+    a2uiView.onJsReadyInternal()
+    ShadowLooper.runMainLooperOneTask()
+
+    val lastEvaluatedJs = shadowOf(a2uiView).lastEvaluatedJavascript
+    assertThat(lastEvaluatedJs).isNotNull()
+    assertThat(lastEvaluatedJs).contains("shell.addContentTokens")
+    assertThat(lastEvaluatedJs).contains("place_1")
+    assertThat(lastEvaluatedJs).contains("token-1")
+
+    ShadowLooper.idleMainLooper()
   }
 }
