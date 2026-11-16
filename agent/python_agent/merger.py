@@ -174,7 +174,7 @@ def _merge_fallback(
 def merge_template(
     template_name: str,
     data: dict[str, Any],
-    max_list_size: int = 5,
+    max_list_size: int = 10,
     catalog_id: str = DEFAULT_CATALOG_ID,
 ) -> list[MergedMessage]:
   """Populates a layout skeleton with extracted parameters.
