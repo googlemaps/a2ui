@@ -410,6 +410,91 @@ final class A2AResponseParserTests: XCTestCase {
     let unknownEvents = try A2AResponseParser.parse(jsonString(unknownPartsPayload))
     XCTAssertEqual(unknownEvents.count, 0)
   }
+
+  /// Tests that `maps_tools_content_tokens` in `metadata` (including fallback token lists) are extracted.
+  func testParse_dataPartsWithContentTokens_extractsMetadataContentTokens() throws {
+    let payload: [String: Any] = [
+      "parts": [
+        [
+          "kind": "data",
+          "data": ["createSurface": ["surfaceId": "sushi-seattle"]],
+          "metadata": [
+            "mimeType": "application/json+a2ui",
+            "maps_tools_content_tokens": [
+              "place_1": "ios_token_1",
+              "place_2": "ios_token_2",
+              "": ["fallback_token_1", "fallback_token_2"],
+            ],
+          ],
+        ],
+        [
+          "kind": "data",
+          "data": ["updateComponents": ["surfaceId": "sushi-seattle", "components": []]],
+          "metadata": [
+            "maps_tools_content_tokens": [
+              "place_1": "ios_token_1",
+              "place_2": "ios_token_2",
+              "": ["fallback_token_1", "fallback_token_2"],
+            ]
+          ],
+        ],
+      ]
+    ]
+
+    let events = try A2AResponseParser.parse(jsonString(payload))
+    XCTAssertEqual(events.count, 1)
+    guard case .data(_, let metadata) = events[0] else {
+      XCTFail("Expected .data event")
+      return
+    }
+    XCTAssertEqual(metadata?.mimeType, "application/json+a2ui")
+    let tokensData = try XCTUnwrap(metadata?.contentTokens?.data(using: .utf8))
+    let tokensDict = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: tokensData) as? [String: Any]
+    )
+    XCTAssertEqual(tokensDict["place_1"] as? String, "ios_token_1")
+    XCTAssertEqual(tokensDict["place_2"] as? String, "ios_token_2")
+    XCTAssertEqual(
+      tokensDict[""] as? [String],
+      ["fallback_token_1", "fallback_token_2"]
+    )
+  }
+
+  /// Tests that `<a2ui-json>` payloads embedded in text parts preserve `maps_tools_content_tokens`.
+  func testParse_embeddedA2UIJSONWithContentTokens_preservesContentTokens() throws {
+    let textWithJSON =
+      "Here is the Seattle map <a2ui-json>{\"createSurface\": {\"surfaceId\": \"sushi-seattle\"}}</a2ui-json> Enjoy!"
+    let payload: [String: Any] = [
+      "parts": [
+        [
+          "kind": "text",
+          "text": textWithJSON,
+          "metadata": [
+            "maps_tools_content_tokens": [
+              "place_1": "embedded_token_1",
+              "": ["embedded_fallback_1"],
+            ]
+          ],
+        ]
+      ]
+    ]
+
+    let events = try A2AResponseParser.parse(jsonString(payload))
+    XCTAssertEqual(events.count, 3)
+    XCTAssertEqual(events[0].textValue, "Here is the Seattle map")
+    guard case .data(_, let metadata) = events[1] else {
+      XCTFail("Expected .data event")
+      return
+    }
+    XCTAssertEqual(metadata?.mimeType, "application/json+a2ui")
+    let tokensData = try XCTUnwrap(metadata?.contentTokens?.data(using: .utf8))
+    let tokensDict = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: tokensData) as? [String: Any]
+    )
+    XCTAssertEqual(tokensDict["place_1"] as? String, "embedded_token_1")
+    XCTAssertEqual(tokensDict[""] as? [String], ["embedded_fallback_1"])
+    XCTAssertEqual(events[2].textValue, "Enjoy!")
+  }
 }
 
 // MARK: - Test Helpers

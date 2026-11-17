@@ -16,6 +16,7 @@
     "lib": ["es2023", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
     "useDefineForClassFields": false,
+    "experimentalDecorators": true,
     "rootDir": ".",
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo",
