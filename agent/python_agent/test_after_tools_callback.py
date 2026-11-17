@@ -17,7 +17,7 @@
 import unittest
 from unittest import mock
 
-from after_tools_callback import _add_maps_tools_tokens_to_part, after_maps_tools_callback, after_tools_callback
+from after_tools_callback import add_maps_tools_tokens_to_part, after_maps_tools_callback, after_tools_callback
 
 
 class TestAfterToolsCallback(unittest.TestCase):
@@ -27,7 +27,10 @@ class TestAfterToolsCallback(unittest.TestCase):
     mock_tool_context.state = {}
 
     tool_response_1 = {
-        "structuredContent": {"contentToken": "token_abc_123"},
+        "structuredContent": {
+            "contentToken": "token_abc_123",
+            "places": [{"id": "place_1"}, {"id": "place_2"}],
+        },
     }
     after_tools_callback(
         tool=None,
@@ -37,11 +40,17 @@ class TestAfterToolsCallback(unittest.TestCase):
     )
     self.assertEqual(
         mock_tool_context.state.get("maps_tools_content_tokens"),
-        ["token_abc_123"],
+        {"place_1": "token_abc_123", "place_2": "token_abc_123"},
     )
 
     tool_response_2 = {
-        "structuredContent": {"contentToken": "token_def_456"},
+        "structuredContent": {
+            "contentToken": "token_def_456",
+            "results": [
+                {"place": {"id": "place_3"}},
+                {"id": "place_4"},
+            ],
+        },
     }
     after_tools_callback(
         tool=None,
@@ -51,19 +60,58 @@ class TestAfterToolsCallback(unittest.TestCase):
     )
     self.assertEqual(
         mock_tool_context.state.get("maps_tools_content_tokens"),
-        ["token_abc_123", "token_def_456"],
+        {
+            "place_1": "token_abc_123",
+            "place_2": "token_abc_123",
+            "place_3": "token_def_456",
+            "place_4": "token_def_456",
+        },
     )
 
-    # Calling again with duplicate should not add duplicates
+    # Calling again with duplicate should overwrite with the token
     after_tools_callback(
         tool=None,
         args={},
         tool_context=mock_tool_context,
-        tool_response={"structuredContent": {"contentToken": "token_abc_123"}},
+        tool_response={
+            "structuredContent": {
+                "contentToken": "token_abc_456",
+                "places": [{"id": "place_1"}],
+            }
+        },
     )
     self.assertEqual(
         mock_tool_context.state.get("maps_tools_content_tokens"),
-        ["token_abc_123", "token_def_456"],
+        {
+            "place_1": "token_abc_456",
+            "place_2": "token_abc_123",
+            "place_3": "token_def_456",
+            "place_4": "token_def_456",
+        },
+    )
+
+    # Response with no entities (e.g. compute_routes / lookup_weather) stores
+    # deduplicated fallback tokens under the "" key.
+    for fallback_token in ("token_route_1", "token_route_1", "token_weather_2"):
+      after_tools_callback(
+          tool=None,
+          args={},
+          tool_context=mock_tool_context,
+          tool_response={
+              "structuredContent": {
+                  "contentToken": fallback_token,
+              }
+          },
+      )
+    self.assertEqual(
+        mock_tool_context.state.get("maps_tools_content_tokens"),
+        {
+            "place_1": "token_abc_456",
+            "place_2": "token_abc_123",
+            "place_3": "token_def_456",
+            "place_4": "token_def_456",
+            "": ["token_route_1", "token_weather_2"],
+        },
     )
 
   def test_after_tool_callback_keeps_tokens_only_for_one_prompt(self):
@@ -77,11 +125,16 @@ class TestAfterToolsCallback(unittest.TestCase):
         tool=None,
         args={},
         tool_context=prompt_1_context,
-        tool_response={"structuredContent": {"contentToken": "token_prompt_1"}},
+        tool_response={
+            "structuredContent": {
+                "contentToken": "token_prompt_1",
+                "places": [{"id": "place_1"}],
+            }
+        },
     )
     self.assertEqual(
         shared_state.get("maps_tools_content_tokens"),
-        ["token_prompt_1"],
+        {"place_1": "token_prompt_1"},
     )
 
     # Second prompt with a new invocation_id resets tokens from the first prompt
@@ -93,11 +146,16 @@ class TestAfterToolsCallback(unittest.TestCase):
         tool=None,
         args={},
         tool_context=prompt_2_context,
-        tool_response={"structuredContent": {"contentToken": "token_prompt_2"}},
+        tool_response={
+            "structuredContent": {
+                "contentToken": "token_prompt_2",
+                "places": [{"id": "place_2"}],
+            }
+        },
     )
     self.assertEqual(
         shared_state.get("maps_tools_content_tokens"),
-        ["token_prompt_2"],
+        {"place_2": "token_prompt_2"},
     )
 
     # Third prompt with no contentToken clears previous prompt's tokens
@@ -113,7 +171,7 @@ class TestAfterToolsCallback(unittest.TestCase):
     )
     self.assertEqual(
         shared_state.get("maps_tools_content_tokens"),
-        [],
+        {},
     )
 
   def test_after_tool_callback_with_kwargs(self):
@@ -124,12 +182,17 @@ class TestAfterToolsCallback(unittest.TestCase):
         tool="mock_tool",
         args={"query": "test"},
         tool_context=mock_tool_context,
-        tool_response={"structuredContent": {"contentToken": "token_xyz"}},
+        tool_response={
+            "structuredContent": {
+                "contentToken": "token_xyz",
+                "places": [{"id": "place_xyz"}],
+            }
+        },
         extra_param="unused",
     )
     self.assertEqual(
         mock_tool_context.state.get("maps_tools_content_tokens"),
-        ["token_xyz"],
+        {"place_xyz": "token_xyz"},
     )
 
   def test_after_tools_callback_none_or_empty_response(self):
@@ -234,29 +297,51 @@ class TestAfterToolsCallback(unittest.TestCase):
     )
     self.assertEqual(mock_tool_context.state, {})
 
-  def test_after_maps_tools_callback_non_list_state_content_tokens(self):
+    # Valid contentToken with non-empty entities missing valid string id
+    after_maps_tools_callback(
+        tool_context=mock_tool_context,
+        tool_response={
+            "structuredContent": {
+                "contentToken": "valid_token",
+                "places": [{"name": "No ID"}, {"id": 123}, {"id": ""}],
+            }
+        },
+    )
+    self.assertEqual(mock_tool_context.state, {})
+
+  def test_after_maps_tools_callback_non_dict_state_content_tokens(self):
     mock_tool_context = mock.MagicMock()
 
-    # If state['maps_tools_content_tokens'] is not a list (e.g. a string)
+    # If state['maps_tools_content_tokens'] is not a dict (e.g. a string)
     mock_tool_context.state = {"maps_tools_content_tokens": "invalid_string"}
     after_maps_tools_callback(
         tool_context=mock_tool_context,
-        tool_response={"structuredContent": {"contentToken": "token_1"}},
+        tool_response={
+            "structuredContent": {
+                "contentToken": "token_1",
+                "places": [{"id": "place_1"}],
+            }
+        },
     )
     self.assertEqual(
         mock_tool_context.state.get("maps_tools_content_tokens"),
-        ["token_1"],
+        {"place_1": "token_1"},
     )
 
     # If state['maps_tools_content_tokens'] is None
     mock_tool_context.state = {"maps_tools_content_tokens": None}
     after_maps_tools_callback(
         tool_context=mock_tool_context,
-        tool_response={"structuredContent": {"contentToken": "token_2"}},
+        tool_response={
+            "structuredContent": {
+                "contentToken": "token_2",
+                "places": [{"id": "place_2"}],
+            }
+        },
     )
     self.assertEqual(
         mock_tool_context.state.get("maps_tools_content_tokens"),
-        ["token_2"],
+        {"place_2": "token_2"},
     )
 
 
@@ -267,13 +352,13 @@ class TestAddMapsToolsTokensToPart(unittest.TestCase):
     part.root.metadata = None
 
     # session is None
-    _add_maps_tools_tokens_to_part(part, None)
+    add_maps_tools_tokens_to_part(part, None)
     self.assertIsNone(part.root.metadata)
 
     # session.state is None
     mock_session = mock.MagicMock()
     mock_session.state = None
-    _add_maps_tools_tokens_to_part(part, mock_session)
+    add_maps_tools_tokens_to_part(part, mock_session)
     self.assertIsNone(part.root.metadata)
 
   def test_add_tokens_empty_tokens_in_session(self):
@@ -283,17 +368,17 @@ class TestAddMapsToolsTokensToPart(unittest.TestCase):
     # maps_tools_content_tokens is not in state
     session = mock.MagicMock()
     session.state = {}
-    _add_maps_tools_tokens_to_part(part, session)
+    add_maps_tools_tokens_to_part(part, session)
     self.assertIsNone(part.root.metadata)
 
-    # maps_tools_content_tokens is empty list
-    session.state = {"maps_tools_content_tokens": []}
-    _add_maps_tools_tokens_to_part(part, session)
+    # maps_tools_content_tokens is empty dict
+    session.state = {"maps_tools_content_tokens": {}}
+    add_maps_tools_tokens_to_part(part, session)
     self.assertIsNone(part.root.metadata)
 
     # maps_tools_content_tokens is None
     session.state = {"maps_tools_content_tokens": None}
-    _add_maps_tools_tokens_to_part(part, session)
+    add_maps_tools_tokens_to_part(part, session)
     self.assertIsNone(part.root.metadata)
 
   def test_add_tokens_with_metadata_none(self):
@@ -301,12 +386,22 @@ class TestAddMapsToolsTokensToPart(unittest.TestCase):
     part.root.metadata = None
 
     session = mock.MagicMock()
-    session.state = {"maps_tools_content_tokens": ["token_1", "token_2"]}
+    session.state = {
+        "maps_tools_content_tokens": {
+            "place_1": "token_1",
+            "place_2": "token_2",
+        }
+    }
 
-    _add_maps_tools_tokens_to_part(part, session)
+    add_maps_tools_tokens_to_part(part, session)
     self.assertEqual(
         part.root.metadata,
-        {"maps_tools_content_tokens": ["token_1", "token_2"]},
+        {
+            "maps_tools_content_tokens": {
+                "place_1": "token_1",
+                "place_2": "token_2",
+            }
+        },
     )
 
   def test_add_tokens_with_existing_metadata(self):
@@ -314,14 +409,14 @@ class TestAddMapsToolsTokensToPart(unittest.TestCase):
     part.root.metadata = {"existing_field": "existing_value"}
 
     session = mock.MagicMock()
-    session.state = {"maps_tools_content_tokens": ["token_1"]}
+    session.state = {"maps_tools_content_tokens": {"place_1": "token_1"}}
 
-    _add_maps_tools_tokens_to_part(part, session)
+    add_maps_tools_tokens_to_part(part, session)
     self.assertEqual(
         part.root.metadata,
         {
             "existing_field": "existing_value",
-            "maps_tools_content_tokens": ["token_1"],
+            "maps_tools_content_tokens": {"place_1": "token_1"},
         },
     )
 
@@ -330,10 +425,10 @@ class TestAddMapsToolsTokensToPart(unittest.TestCase):
     part.root = None
 
     session = mock.MagicMock()
-    session.state = {"maps_tools_content_tokens": ["token_1"]}
+    session.state = {"maps_tools_content_tokens": {"place_1": "token_1"}}
 
     # Should not raise AttributeError
-    _add_maps_tools_tokens_to_part(part, session)
+    add_maps_tools_tokens_to_part(part, session)
 
 
 if __name__ == "__main__":

@@ -51,8 +51,7 @@ buildings, landmarks, or addresses on a map (e.g., "Show me GWC2 and google
     returns empty results, retry once with a broader or disambiguated query
     (e.g., adding the campus or city name).
 3.  **Render Partial Results**: As long as at least one place resolves, you
-    MUST populate the output schema with all resolved places in `places` (using
-    the average of resolved coordinates for `center_lat` and `center_lng`) and
+    MUST populate the output schema with all resolved places in `places` and
     note any unresolved place in `summary`.
 
 ## Handling Failures & Empty Results (CRITICAL)

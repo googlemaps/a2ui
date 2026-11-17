@@ -80,7 +80,7 @@ If the user's query requests a scenic bypass or detour:
         must NEVER be omitted. Always supply the normalized mode string
         (`driving`, `walking`, `transit`, or `bicycling`).
     *   Populate `DirectionsExtractorSchema` parameters (`heading`, `summary`,
-        `center_lat`, `center_lng`, `zoom`, `routes`, `travel_mode`).
+        `routes`, `travel_mode`).
 
 ## Handling Routing Failures & Regional Limitations (CRITICAL)
 
@@ -93,40 +93,42 @@ as South Korea). If route computation returns empty results (`{}`) or fails:
     "Google Maps directions are not supported in South Korea"), and set the
     routes list to empty `[]`.
 
+<!-- disableFinding(LINE_OVER_80) -->
+
 ## Examples
 
 ### Example 1: Driving Route
 
 User Query: "Directions from San Francisco to San Jose by car"
 Extracted Parameters:
-`{"heading": "Driving directions from San Francisco to San Jose", "summary": "Driving from **San Francisco** to **San Jose** takes **about 50 minutes** (**48 miles**) via US-101 S.\n\n* **Route details**: Follow US-101 S down the Peninsula, or take I-280 S for a scenic freeway alternative.\n* **Arrival & logistics**: Exiting onto I-880 S or CA-87 S connects directly into downtown San Jose.", "center_lat": 37.55, "center_lng": -122.15, "zoom": 10, "routes": [{"origin": {"lat": 37.7749, "lng": -122.4194, "label": "San Francisco", "placeId": "ChIJIQBpAG2ahYAR_6128GcTUEo"}, "destination": {"lat": 37.3382, "lng": -121.8863, "label": "San Jose", "placeId": "ChIJ9T_nxcC1j4ARmMo7S4ABIdM"}}], "travel_mode": "driving"}`
+`{"heading": "Driving directions from San Francisco to San Jose", "summary": "Driving from **San Francisco** to **San Jose** takes **about 50 minutes** (**48 miles**) via US-101 S.\n\n* **Route details**: Follow US-101 S down the Peninsula, or take I-280 S for a scenic freeway alternative.\n* **Arrival & logistics**: Exiting onto I-880 S or CA-87 S connects directly into downtown San Jose.", "routes": [{"origin": {"lat": 37.7749, "lng": -122.4194, "label": "San Francisco", "placeId": "ChIJIQBpAG2ahYAR_6128GcTUEo"}, "destination": {"lat": 37.3382, "lng": -121.8863, "label": "San Jose", "placeId": "ChIJ9T_nxcC1j4ARmMo7S4ABIdM"}}], "travel_mode": "driving"}`
 
 ### Example 2: Walking Route
 
 User Query: "How do I walk from Central Park to Times Square?"
 Extracted Parameters:
-`{"heading": "Walking route from Central Park to Times Square", "summary": "Walking from **Central Park South** to **Times Square** takes **about 18 minutes** (**0.9 miles**) heading south down 7th Ave.\n\n* **Route details**: Head south from 59th St & 7th Ave straight down 7th Ave or Broadway into the Theater District.\n* **Arrival & logistics**: **Times Square** (Manhattan, NY 10036) is open 24 hours with pedestrian plazas between 42nd and 47th Streets.", "center_lat": 40.765, "center_lng": -73.978, "zoom": 14, "routes": [{"origin": {"lat": 40.768, "lng": -73.974, "label": "Central Park South", "placeId": "ChIJN1t_tDeuEmsRUsoyG83frY4"}, "destination": {"lat": 40.758, "lng": -73.985, "label": "Times Square", "placeId": "ChIJmQJItx6vwokRLxVi2JyuzRo"}}], "travel_mode": "walking"}`
+`{"heading": "Walking route from Central Park to Times Square", "summary": "Walking from **Central Park South** to **Times Square** takes **about 18 minutes** (**0.9 miles**) heading south down 7th Ave.\n\n* **Route details**: Head south from 59th St & 7th Ave straight down 7th Ave or Broadway into the Theater District.\n* **Arrival & logistics**: **Times Square** (Manhattan, NY 10036) is open 24 hours with pedestrian plazas between 42nd and 47th Streets.", "routes": [{"origin": {"lat": 40.768, "lng": -73.974, "label": "Central Park South", "placeId": "ChIJN1t_tDeuEmsRUsoyG83frY4"}, "destination": {"lat": 40.758, "lng": -73.985, "label": "Times Square", "placeId": "ChIJmQJItx6vwokRLxVi2JyuzRo"}}], "travel_mode": "walking"}`
 
 ### Example 3: Bicycling Route
 
 User Query: "Bike directions from Venice Beach to Santa Monica Pier"
 Extracted Parameters:
-`{"heading": "Biking route from Venice Beach to Santa Monica Pier", "summary": "Biking from **Venice Beach** to **Santa Monica Pier** takes **around 15 minutes** (**2.4 miles**) along the beachfront Marvin Braude Bike Trail.\n\n* **Route details**: Follow the paved oceanfront bike path north from Venice Boardwalk directly to the pier ramp.\n* **Arrival & logistics**: **Santa Monica Pier** (200 Santa Monica Pier, Santa Monica, CA 90401) is open daily from 6 AM to 10 PM with bike racks near the entrance.", "center_lat": 33.998, "center_lng": -118.483, "zoom": 13, "routes": [{"origin": {"lat": 33.985, "lng": -118.469, "label": "Venice Beach", "placeId": "ChIJ-wjh2I-6woARx3H-n9uVn4A"}, "destination": {"lat": 34.009, "lng": -118.497, "label": "Santa Monica Pier", "placeId": "ChIJw8g0Xbm7woARQY1Xq41qB2M"}}], "travel_mode": "bicycling"}`
+`{"heading": "Biking route from Venice Beach to Santa Monica Pier", "summary": "Biking from **Venice Beach** to **Santa Monica Pier** takes **around 15 minutes** (**2.4 miles**) along the beachfront Marvin Braude Bike Trail.\n\n* **Route details**: Follow the paved oceanfront bike path north from Venice Boardwalk directly to the pier ramp.\n* **Arrival & logistics**: **Santa Monica Pier** (200 Santa Monica Pier, Santa Monica, CA 90401) is open daily from 6 AM to 10 PM with bike racks near the entrance.", "routes": [{"origin": {"lat": 33.985, "lng": -118.469, "label": "Venice Beach", "placeId": "ChIJ-wjh2I-6woARx3H-n9uVn4A"}, "destination": {"lat": 34.009, "lng": -118.497, "label": "Santa Monica Pier", "placeId": "ChIJw8g0Xbm7woARQY1Xq41qB2M"}}], "travel_mode": "bicycling"}`
 
 ### Example 4: Transit Route
 
 User Query: "Take the subway from Grand Central to Brooklyn Bridge"
 Extracted Parameters:
-`{"heading": "Transit directions from Grand Central to Brooklyn Bridge", "summary": "Taking the subway from **Grand Central Terminal** to **Brooklyn Bridge - City Hall** takes **about 12 minutes** (**3 miles**).\n\n* **Route details**: Board the downtown 4 or 5 express train at Grand Central–42 St and ride 2 stops south to Brooklyn Bridge–City Hall.\n* **Arrival & logistics**: Exit at Centre St to access the **Brooklyn Bridge** pedestrian walkway (open 24 hours).", "center_lat": 40.731, "center_lng": -73.988, "zoom": 12, "routes": [{"origin": {"lat": 40.7527, "lng": -73.9772, "label": "Grand Central Terminal", "placeId": "ChIJ4zBEaKZQwokREuE50bbCGYs"}, "destination": {"lat": 40.7126, "lng": -74.0049, "label": "Brooklyn Bridge - City Hall", "placeId": "ChIJ40i5iRZawokRHqGfF2b_3yI"}}], "travel_mode": "transit"}`
+`{"heading": "Transit directions from Grand Central to Brooklyn Bridge", "summary": "Taking the subway from **Grand Central Terminal** to **Brooklyn Bridge - City Hall** takes **about 12 minutes** (**3 miles**).\n\n* **Route details**: Board the downtown 4 or 5 express train at Grand Central–42 St and ride 2 stops south to Brooklyn Bridge–City Hall.\n* **Arrival & logistics**: Exit at Centre St to access the **Brooklyn Bridge** pedestrian walkway (open 24 hours).", "routes": [{"origin": {"lat": 40.7527, "lng": -73.9772, "label": "Grand Central Terminal", "placeId": "ChIJ4zBEaKZQwokREuE50bbCGYs"}, "destination": {"lat": 40.7126, "lng": -74.0049, "label": "Brooklyn Bridge - City Hall", "placeId": "ChIJ40i5iRZawokRHqGfF2b_3yI"}}], "travel_mode": "transit"}`
 
 ### Example 5: Unspecified Travel Mode (Defaults to Driving)
 
 User Query: "Directions from Austin to San Antonio"
 Extracted Parameters:
-`{"heading": "Driving directions from Austin to San Antonio", "summary": "Driving from **Austin** to **San Antonio** takes **about 1 hour and 20 minutes** (**80 miles**) via I-35 S.\n\n* **Route details**: Follow I-35 S past San Marcos and New Braunfels directly into downtown San Antonio.\n* **Arrival & logistics**: Expect heavier commuter traffic along the I-35 corridor during peak weekday hours.", "center_lat": 29.85, "center_lng": -98.15, "zoom": 9, "routes": [{"origin": {"lat": 30.2672, "lng": -97.7431, "label": "Austin", "placeId": "ChIJLwW05NsQW4YRtxm00DkzqlU"}, "destination": {"lat": 29.4241, "lng": -98.4936, "label": "San Antonio", "placeId": "ChIJrw7QBK9YXIYRowalignfdg4"}}], "travel_mode": "driving"}`
+`{"heading": "Driving directions from Austin to San Antonio", "summary": "Driving from **Austin** to **San Antonio** takes **about 1 hour and 20 minutes** (**80 miles**) via I-35 S.\n\n* **Route details**: Follow I-35 S past San Marcos and New Braunfels directly into downtown San Antonio.\n* **Arrival & logistics**: Expect heavier commuter traffic along the I-35 corridor during peak weekday hours.", "routes": [{"origin": {"lat": 30.2672, "lng": -97.7431, "label": "Austin", "placeId": "ChIJLwW05NsQW4YRtxm00DkzqlU"}, "destination": {"lat": 29.4241, "lng": -98.4936, "label": "San Antonio", "placeId": "ChIJrw7QBK9YXIYRowalignfdg4"}}], "travel_mode": "driving"}`
 
 ### Example 6: Multi-Modal Route Comparison (Transit vs Driving)
 
 User Query: "Traveling from Johannesburg to Sandton: should I take the Gautrain or drive during morning rush hour?"
 Extracted Parameters:
-`{"heading": "Johannesburg to Sandton: Gautrain vs Driving", "summary": "During morning rush hour, taking the **Gautrain** is significantly faster (**~15 minutes**) compared to driving (**45–60+ minutes**) due to heavy highway congestion.\n\n* **Gautrain (Transit)**: Takes **~15 minutes** from **Park Station** to **Sandton Station**. Trains run every 10 minutes during peak hours, completely bypassing highway traffic.\n* **Driving (Car)**: Takes **45 to 60+ minutes** (**14 miles**) via the M1 North under heavy morning commuter gridlock.\n* **Recommendation**: Take the **Gautrain** for a fast, predictable commute during morning peak hours.", "center_lat": -26.15, "center_lng": 28.05, "zoom": 12, "routes": [{"origin": {"lat": -26.196, "lng": 28.041, "label": "Johannesburg Park Station", "placeId": "ChIJb_8q6o4NlR4R-kP-7p3ePzs"}, "destination": {"lat": -26.108, "lng": 28.054, "label": "Sandton Station", "placeId": "ChIJcffh_sMPlR4RvX2hBqV8k78"}}], "travel_mode": "transit"}`
+`{"heading": "Johannesburg to Sandton: Gautrain vs Driving", "summary": "During morning rush hour, taking the **Gautrain** is significantly faster (**~15 minutes**) compared to driving (**45–60+ minutes**) due to heavy highway congestion.\n\n* **Gautrain (Transit)**: Takes **~15 minutes** from **Park Station** to **Sandton Station**. Trains run every 10 minutes during peak hours, completely bypassing highway traffic.\n* **Driving (Car)**: Takes **45 to 60+ minutes** (**14 miles**) via the M1 North under heavy morning commuter gridlock.\n* **Recommendation**: Take the **Gautrain** for a fast, predictable commute during morning peak hours.", "routes": [{"origin": {"lat": -26.196, "lng": 28.041, "label": "Johannesburg Park Station", "placeId": "ChIJb_8q6o4NlR4R-kP-7p3ePzs"}, "destination": {"lat": -26.108, "lng": 28.054, "label": "Sandton Station", "placeId": "ChIJcffh_sMPlR4RvX2hBqV8k78"}}], "travel_mode": "transit"}`
