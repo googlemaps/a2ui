@@ -16,14 +16,13 @@ package com.google.android.libraries.mapsplatform.a2ui
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
-import android.os.Build
 import android.util.AttributeSet
 import android.util.Log
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.net.toUri
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -43,12 +42,14 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 
   private var indexHtml: String = ""
   var a2uiJson: String = ""
+  var metadata: ParsedA2AEventMetadata? = null
   private var startTime: Long? = null
   var onRenderComplete: ((latencyMs: Long, status: String) -> Unit)? = null
   var onUserAction: ((actionJson: String) -> Unit)? = null
 
   private var isJsReady: Boolean = false
   private var lastInjectedElementCount: Int = 0
+  private var lastInjectedContentTokens: String? = null
 
   private val webAppInterface = WebAppInterface(this, this)
 
@@ -61,14 +62,10 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     settings.javaScriptEnabled = true
     settings.allowFileAccess = true
     settings.allowContentAccess = true
-    settings.allowFileAccessFromFileURLs = true
-    settings.allowUniversalAccessFromFileURLs = true
 
     addJavascriptInterface(webAppInterface, "Android")
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-      setWebContentsDebuggingEnabled(true)
-    }
+    setWebContentsDebugging(true)
 
     webViewClient =
       object : WebViewClient() {
@@ -78,8 +75,8 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         ): Boolean {
           val url = request?.url?.toString() ?: return false
           if (url.startsWith(HTTP_SCHEME) || url.startsWith(HTTPS_SCHEME)) {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-            if (url.contains(MAPS_HOST) || url.contains(MAPS_PATH)) {
+            val intent = Intent(Intent.ACTION_VIEW, url.toUri())
+            if (MAPS_HOST in url || MAPS_PATH in url) {
               intent.setPackage(MAPS_PACKAGE)
               if (intent.resolveActivity(context.packageManager) == null) {
                 intent.setPackage(null)
@@ -118,20 +115,30 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     }
   }
 
-  fun render(json: String, startTimeMs: Long? = null) {
+  @JvmOverloads
+  fun render(json: String, startTimeMs: Long? = null, metadata: ParsedA2AEventMetadata? = null) {
     Log.d(A2UI_DEBUG_TAG, "Rendering A2UI JSON")
     this.startTime = startTimeMs ?: System.currentTimeMillis()
     this.a2uiJson = json
+    this.metadata = metadata
     this.isJsReady = false
     this.lastInjectedElementCount = 0
+    this.lastInjectedContentTokens = null
     val apiKey = A2UIServices.apiKey
     val htmlToLoad = indexHtml.replace("\$GOOGLE_MAPS_API_KEY", apiKey)
     loadDataWithBaseURL("file:///android_asset/", htmlToLoad, "text/html", "UTF-8", null)
   }
 
-  fun updateA2uiJson(newJson: String) {
+  @JvmOverloads
+  fun updateA2uiJson(newJson: String, newMetadata: ParsedA2AEventMetadata? = this.metadata) {
     this.a2uiJson = newJson
+    if (newMetadata != null) {
+      val mergedTokens = newMetadata.contentTokens ?: this.metadata?.contentTokens
+      this.metadata = newMetadata.copy(contentTokens = mergedTokens)
+    }
     if (!isJsReady) return
+
+    this.metadata?.contentTokens?.let { addContentTokens(it) }
 
     webAppInterface.resized = false
 
@@ -161,6 +168,34 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     }
   }
 
+  private fun addContentTokens(tokensJson: String) {
+    if (tokensJson.isEmpty() || tokensJson == lastInjectedContentTokens) return
+    lastInjectedContentTokens = tokensJson
+
+    post {
+      try {
+        val escapedJson = org.json.JSONObject.quote(tokensJson)
+        val script =
+          """
+                try {
+                  const shell = document.querySelector('a2ui-shell');
+                  if (shell) {
+                    shell.addContentTokens(${escapedJson});
+                  } else {
+                    console.error('a2ui-shell not found');
+                  }
+                } catch (e) {
+                  console.error('Error registering content tokens: ' + e);
+                }
+                """
+            .trimIndent()
+        evaluateJavascript(script, null)
+      } catch (e: Exception) {
+        Log.e(A2UI_ERROR_TAG, "Error registering content tokens", e)
+      }
+    }
+  }
+
   internal fun onJsReadyInternal() {
     Log.d(A2UI_DEBUG_TAG, "a2ui-shell is fully ready!")
     isJsReady = true
@@ -175,5 +210,11 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
       onRenderComplete?.invoke(latency, "A2UI Render Complete")
       startTime = null
     }
+  }
+
+  internal companion object {
+    @JvmSynthetic
+    internal var setWebContentsDebugging: (Boolean) -> Unit =
+      WebView::setWebContentsDebuggingEnabled
   }
 }

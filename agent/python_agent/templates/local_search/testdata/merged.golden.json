@@ -36,11 +36,6 @@
         {
           "id": "map",
           "component": "GoogleMap",
-          "center": {
-            "lat": 47.6,
-            "lng": -122.3
-          },
-          "zoom": 13,
           "tilt": 0,
           "mode": "roadmap",
           "markers": [
