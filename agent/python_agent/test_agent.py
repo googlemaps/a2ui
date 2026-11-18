@@ -19,8 +19,9 @@ from unittest import mock
 
 from a2a.types import DataPart, TextPart
 
-from a2ui.schema.constants import VERSION_0_9
-from agent import MAUIAgent, extract_surface_id
+from agent import extract_surface_id
+from agent import MAUIAgent
+from agent import VERSION_0_9
 
 
 def _make_event(text: str):
@@ -240,10 +241,9 @@ class MAUIAgentStreamTest(unittest.IsolatedAsyncioTestCase):
     )
 
   async def test_stream_missing_schema_returns_configuration_error(self):
-    schema_mgr = self.agent._schema_managers[VERSION_0_9]
-    with mock.patch.object(
-        schema_mgr, "get_selected_catalog", return_value=None
-    ):
+    # pylint: disable-next=protected-access
+    processor = self.agent._processors[VERSION_0_9]
+    with mock.patch.object(processor, "_active_catalogs", []):
       chunks = [
           chunk
           async for chunk in self.agent.stream(
